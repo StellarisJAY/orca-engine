@@ -1,0 +1,27 @@
+#pragma once
+
+#include "rendering_device.h"
+
+// OpenGL 图形后端。
+//
+// OpenGL 与 Vulkan 的差异很大（没有 instance/逻辑设备/交换链等概念，上下文随窗口创建、
+// 呈现由平台层 swap_buffers 完成），但三阶段生命周期仍然可以一一映射：
+//   init()          加载入口点并校验平台已经创建好的 GL 上下文
+//   init_device()   创建默认资源（当前可空实现）
+//   init_swapchain()配置默认帧缓冲/视口
+class GLRenderingDevice : public RenderingDevice
+{
+    RenderingWindowInfo window_info;
+    void *context = nullptr;
+
+public:
+    RenderingDriverType get_driver_type() const override { return RenderingDriverType::OpenGL; }
+
+    bool init(const RenderingWindowInfo &window) override;
+    bool init_device() override;
+    bool init_swapchain() override;
+    void shutdown() override;
+
+    void *get_handle() const override { return context; }
+    void *get_device_handle() const override { return nullptr; }
+};

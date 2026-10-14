@@ -14,6 +14,6 @@ add_executable(orca-platform-window-test platform/test_window.cpp)
 
 target_link_libraries(orca-tests PRIVATE orca-math doctest)
 # 该测试通过平台抽象（window.h）使用当前后端，无需直接链接具体后端库。
-target_link_libraries(orca-platform-window-test PRIVATE orca-platform)
+target_link_libraries(orca-platform-window-test PRIVATE orca-platform orca-rendering)
 orca_copy_platform_runtime(orca-platform-window-test)
 add_test(NAME orca-tests COMMAND orca-tests)

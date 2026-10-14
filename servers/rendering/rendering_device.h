@@ -1,0 +1,88 @@
+#pragma once
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <vector>
+
+// 图形后端类型。RenderingDevice 只依赖这个枚举，不依赖任何具体后端 API 的类型。
+enum class RenderingDriverType
+{
+    Vulkan,
+    OpenGL,
+};
+
+// 平台层向图形后端传递的原生窗口/上下文信息。
+//
+// 这里所有字段都是后端无关的（void* / uint32_t / 回调），具体含义由平台层与后端约定：
+//   Win32: window = HWND, instance = HINSTANCE, context = HGLRC
+//   X11:   window = xid,  display  = Display*
+// 平台层因此不需要包含任何 Vulkan/OpenGL 头文件，也不需要认识 RenderingDevice 的具体实现；
+// 反过来 RenderingDevice 也不需要认识 GLFW/SDL/Win32。
+struct RenderingWindowInfo
+{
+    void *window = nullptr;   // 原生窗口句柄
+    void *display = nullptr;  // 原生显示/连接
+    void *instance = nullptr; // 原生实例/模块句柄
+    void *context = nullptr;  // 已创建的图形上下文（OpenGL: HGLRC/GLXContext；Vulkan 为空）
+    uint32_t width = 0;
+    uint32_t height = 0;
+
+    // 按名称加载后端入口点。OpenGL 后端依赖它动态加载 GL 函数；Vulkan 后端可忽略。
+    std::function<void *(const char *)> get_proc_address;
+    // 为 Vulkan 创建呈现表面。参数为后端原生 instance（VkInstance），
+    // 输出为 VkSurfaceKHR（以 uint64_t 传输，避免在公共头里暴露 Vulkan 类型）。
+    std::function<bool(void *native_instance, uint64_t &out_surface)> create_vulkan_surface;
+    // 平台声明的 Vulkan 实例扩展名（例如 GLFW 的 glfwGetRequiredInstanceExtensions）。
+    std::vector<const char *> vulkan_instance_extensions;
+};
+
+// 渲染后端抽象基类。
+//
+// 设计原则：基类只描述“所有图形 API 都共有”的生命周期与原语；
+// 任何后端专有概念（Vulkan 的 instance layer/extension、surface、swapchain 等）
+// 都被封装在各自后端的实现里，通过 init() 收到的 RenderingWindowInfo 与私有成员传递，
+// 而不是出现在虚函数签名中。
+//
+// 生命周期分为三个阶段，OpenGL 与 Vulkan 都能映射：
+//   阶段一 init()          Vulkan: instance + 调试层 + surface；OpenGL: 加载入口点、校验上下文
+//   阶段二 init_device()   Vulkan: 选择物理设备 + 逻辑设备；OpenGL: 默认资源（可空实现）
+//   阶段三 init_swapchain()Vulkan: 交换链 + 图像视图；      OpenGL: 默认帧缓冲/视口
+class RenderingDevice
+{
+    static std::shared_ptr<RenderingDevice> singleton;
+
+public:
+    static std::shared_ptr<RenderingDevice> instance() { return singleton; }
+
+    // 使用编译期默认后端创建单例。
+    static void create_singleton();
+    // 显式指定后端创建单例；若该后端未在本次构建中启用则创建失败。
+    static void create_singleton(RenderingDriverType driver);
+    static void destroy_singleton();
+
+    // 查询某后端是否在本次构建中启用。
+    static bool is_driver_supported(RenderingDriverType driver);
+    static RenderingDriverType get_default_driver();
+
+    RenderingDevice() = default;
+    virtual ~RenderingDevice() = default;
+
+    virtual RenderingDriverType get_driver_type() const = 0;
+
+    // 阶段一：初始化后端全局上下文。
+    virtual bool init(const RenderingWindowInfo &window) = 0;
+    // 阶段二：选择/创建逻辑设备。
+    virtual bool init_device() = 0;
+    // 阶段三：创建呈现目标。
+    virtual bool init_swapchain() = 0;
+    // 逆序释放本后端持有的全部资源。
+    virtual void shutdown() = 0;
+
+    // 后端原生句柄，供上层模块桥接其它图形 API 时使用
+    // （Vulkan: instance/device；OpenGL: context/DC）。
+    virtual void *get_handle() const = 0;
+    virtual void *get_device_handle() const = 0;
+};
+
+inline std::shared_ptr<RenderingDevice> RenderingDevice::singleton;

@@ -9,6 +9,12 @@ add_library(orca-platform STATIC
     window.cpp
 )
 target_include_directories(orca-platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(orca-platform PUBLIC orca-rendering)
+
+# 如果使用了vulkan图形后端，窗口创建需要vulkan库
+if(ORCA_RENDERER_VULKAN)
+    target_link_libraries(orca-platform PRIVATE Vulkan::Vulkan)
+endif()
 
 if(ORCA_PLATFORM_GLFW)
     message(STATUS "Using GLFW for window and input")
