@@ -13,3 +13,10 @@ namespace Math
     inline constexpr real_t SQRT13 = 0.57735026918962576450914878050196;
     inline constexpr real_t LN2 = 0.6931471805599453094172321215;
 }
+
+enum EulerOrder{
+    YXZ,
+    XYZ,
+    ZXY,
+    ZYX
+};

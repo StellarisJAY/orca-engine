@@ -15,3 +15,11 @@ add_library(orca-math STATIC
 )
 
 target_include_directories(orca-math PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_library(orca-core STATIC
+    os/time.cpp
+    io/file_access.cpp
+    io/dir_access.cpp
+)
+
+target_include_directories(orca-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

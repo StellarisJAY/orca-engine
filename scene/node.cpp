@@ -19,6 +19,7 @@ Node *Node::get_parent() const
 
 void Node::add_child(Node *child)
 {
+    if(child->parent != nullptr) return;
     for(Node *c : children)
     {
         if(c == child) return;
@@ -26,22 +27,43 @@ void Node::add_child(Node *child)
     children.push_back(child);
     child->parent = this;
     child->scene_tree = scene_tree;
+
+    child->_notification(NOTIFICATION_ENTER_TREE);
+    child->_propagate_enter_tree();
 }
 
 Node *Node::remove_child(uint32_t idx)
 {
     if(idx > children.size()) return nullptr;
-    auto removed = children[idx];
-    children.erase(children.begin()+idx);
-    removed->parent = nullptr;
-    removed->scene_tree->add_node(removed);
-    return removed;
+    Node *child = children[idx];
+    children.erase(children.begin() + idx);
+    child->parent = nullptr;
+    child->scene_tree = nullptr;
+
+    child->_notification(NOTIFICATION_EXIT_TREE);
+    child->_propagate_exit_tree();
+    return child;
 }
 
-void Node::free()
+Node *Node::remove_child(Node *child)
 {
-    scene_tree->remove_node(this);
-    scene_tree = nullptr;
+    int idx = -1;
+    for(int i = 0; i < children.size(); i++)
+    {
+        if(children[i] == child) idx = i; break;
+    }
+    if(idx == -1) return nullptr;
+    children.erase(children.begin() + idx);
+    child->parent = nullptr;
+    child->scene_tree = nullptr;
+    child->_notification(NOTIFICATION_EXIT_TREE);
+    child->_propagate_exit_tree();
+    return child;
+}
+
+void Node::queued_free()
+{
+    parent->remove_child(this);
     // TODO 释放内存
 }
 
@@ -59,4 +81,31 @@ void Node::physics_process(double delta)
 
 void Node::destroyed()
 {
+}
+
+void Node::_propagate_process(double delta)
+{
+    for(Node *child : children)
+    {
+        child->process(delta);
+        child->_propagate_process(delta);
+    }
+}
+
+void Node::_propagate_enter_tree()
+{
+    for(Node *child : children)
+    {
+        child->_notification(NOTIFICATION_ENTER_TREE);
+        child->_propagate_enter_tree();
+    }
+}
+
+void Node::_propagate_exit_tree()
+{
+    for(Node *child : children)
+    {
+        child->_notification(NOTIFICATION_EXIT_TREE);
+        child->_propagate_exit_tree();
+    }
 }

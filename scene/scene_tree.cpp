@@ -1,29 +1,37 @@
 #include "scene_tree.h"
 #include "node.h"
+#include "viewport.h"
+#include "os/time.h"
+#include "os/memory.h"
 #include <algorithm>
 #include <stack>
 
 void SceneTree::init()
 {
+    Viewport *viewport = memnew(Viewport);
+    viewport->init();
+    set_root(viewport);
+
+    last_frame_time = Time::now();
+    last_process_time = 0;
+    last_physics_process_time = 0;
+}
+
+bool SceneTree::tick(double time)
+{
+    if(process(time)) return true;
+    if(physics_process(time)) return true;
+    static_cast<Viewport*>(root)->render();
+    return false;
 }
 
 bool SceneTree::process(double time)
 {
-    double delta = time - last_process_time;
-    for(Node *node : process_nodes) 
-    {
-        node->process(delta);
-    }
     return false;
 }
 
 bool SceneTree::physics_process(double time)
 {
-    double delta = time - last_physics_process_time;
-    for(Node *node : physics_nodes) 
-    {
-        node->physics_process(delta);
-    }
     return false;
 }
 
@@ -31,46 +39,29 @@ void SceneTree::destroy()
 {
 }
 
-void SceneTree::add_node(Node *node)
-{
-    if(node->get_parent() != nullptr) return;
-    for(Node *exist : roots)
-    {
-        if(exist == node) return;
-    }
-    roots.push_back(node);
-}
-
-void SceneTree::remove_node(Node *node)
-{
-    
-}
-
 Node *SceneTree::find_node(const char *path) const
 {
     return nullptr;
 }
 
-void SceneTree::mark_dirty()
+Node *SceneTree::get_root() const
 {
-    dirty = true;
+    return root;
 }
 
-void SceneTree::sort_dirty_tree()
+void SceneTree::set_root(Node *r)
 {
-    if(!dirty) return;
-    process_nodes.clear();
-    physics_nodes.clear();
-    std::stack<Node*> stack;
-    std::vector<Node*> rootset = roots;
-    std::reverse(rootset.begin(), rootset.end());
-    for(Node *node : rootset) stack.push(node);
-    while(stack.size()>0)
-    {
-        Node *node = stack.top();
-        stack.pop();
-        
-        process_nodes.push_back(node);
-        physics_nodes.push_back(node);
-    }
+    root = r;
+}
+
+Node *SceneTree::get_current_scene() const
+{
+    return current_scene;
+}
+
+void SceneTree::set_current_scene(Node *scene)
+{
+    if(current_scene) root->remove_child(current_scene);
+    root->add_child(scene);
+    current_scene = scene;
 }

@@ -4,10 +4,12 @@
 # 每个后端各自编译成一个实现文件，并通过 ORCA_RENDERER_<API> 宏接入工厂。
 add_library(orca-rendering STATIC
     rendering_device.cpp
+    rendering_server.cpp
+    rendering_storage.cpp
 )
 
 target_include_directories(orca-rendering PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(orca-rendering PUBLIC orca-math)
+target_link_libraries(orca-rendering PUBLIC orca-math orca-core)
 
 # 默认后端：把 ORCA_RENDERER_DEFAULT 转成编译期宏，供 RenderingDevice::get_default_driver() 使用。
 string(TOUPPER "${ORCA_RENDERER_DEFAULT}" ORCA_RENDERER_DEFAULT_UPPER)

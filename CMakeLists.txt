@@ -44,6 +44,8 @@ add_subdirectory(core)
 add_subdirectory(servers/rendering)
 add_subdirectory(platform)
 add_subdirectory(scene)
+add_subdirectory("resource")
+add_subdirectory(application)
 
 if(ORCA_BUILD_TESTS)
     enable_testing()

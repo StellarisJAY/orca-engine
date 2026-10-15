@@ -5,7 +5,9 @@
 struct Transform3D
 {
     Basis basis;
-    Vector3 origin;
+    Vector3 origin = Vector3::ZERO;
+
+    Transform3D() {}
 
     Transform3D(const Basis &basis, const Vector3 &origin): basis(basis), origin(origin) {}
     Transform3D(const Vector3& scales, const Vector3& origin);
