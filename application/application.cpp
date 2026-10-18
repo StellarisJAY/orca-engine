@@ -4,13 +4,16 @@
 #include "rendering_server.h"
 #include "os/memory.h"
 #include "os/time.h"
+#include "resource_loader.h"
 #include <iostream>
 
 bool Application::init(const ApplicationInitDesc &desc)
 {
+    // 创建资源加载器
+    ResourceLoader::create_singleton();
     // 创建rendering device
     RenderingDevice::create_singleton();
-    auto device = RenderingDevice::instance();
+    auto device = RenderingDevice::get_singleton();
 
     WindowDesc d;
     d.fullscreen = desc.fullscreen;
@@ -67,6 +70,7 @@ void Application::shutdown()
 
     RenderingServer::destroy_singletone();
     RenderingDevice::destroy_singleton();
+    ResourceLoader::destroy_singleton();
     window->shutdown();
 }
 

@@ -30,6 +30,7 @@ endif()
 
 if(ORCA_RENDERER_OPENGL)
     target_sources(orca-rendering PRIVATE opengl/gl_rendering_device.cpp)
+    target_include_directories(orca-rendering PRIVATE ${PROJECT_SOURCE_DIR}/thirdparty/glad/include)
     # 静态库的 PRIVATE 依赖会以 LINK_ONLY 形式传递给最终可执行文件，因此消费方无需显式链接 GL。
     target_link_libraries(orca-rendering PRIVATE OpenGL::GL)
     target_compile_definitions(orca-rendering PUBLIC ORCA_RENDERER_OPENGL)

@@ -9,6 +9,7 @@ target_link_libraries(orca-application PUBLIC
     orca-scene
     orca-rendering
     orca-platform
+    orca-resource
 )
 
 target_include_directories(orca-application PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

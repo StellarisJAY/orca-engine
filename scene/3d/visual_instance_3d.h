@@ -25,4 +25,6 @@ public:
             break;
         }
     }
+protected:
+    const RID get_instance() const { return instance; }
 };

@@ -2,6 +2,9 @@
 #include "3d/node3d.h"
 #include "3d/camera_3d.h"
 #include "os/memory.h"
+#include "io/file_access.h"
+#include "resource_loader.h"
+#include "mesh/mesh.h"
 
 class Player: public Node3D
 {
@@ -41,9 +44,22 @@ int main()
     desc.fullscreen = false;
     if(!app.init(desc)) return -1;
 
+    Ref<Resource> sphere_res = ResourceLoader::get_singleton()->load("res://sphere.obj");
+    Ref<Resource> monkey_head_res = ResourceLoader::get_singleton()->load("res://monkey_head.obj");
+    if(sphere_res.is_valid())
+    {
+        Ref<Mesh> sphere_mesh = sphere_res.cast<Mesh>();
+        const Mesh::Surface surface = sphere_mesh->get_surface(0);
+        std::printf("sphere, vertices: %d, faces: %d\n", surface.get_vertex_count(), surface.get_triangle_count());
+    }
+    if(monkey_head_res.is_valid())
+    {
+        Ref<Mesh> monkey_head_mesh = monkey_head_res.cast<Mesh>();
+        const Mesh::Surface surface = monkey_head_mesh->get_surface(0);
+        std::printf("monkey head, vertices: %d, faces: %d\n", surface.get_vertex_count(), surface.get_triangle_count());
+    }
     Node *world = build_main_scene();
     app.set_main_scene(world);
-    
     app.run();
     app.shutdown();
     return 0;

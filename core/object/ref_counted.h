@@ -1,8 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include "object.h"
 
-class RefCounted
+class RefCounted: public Object
 {
     std::atomic<uint32_t> refCount{1};
 public:
@@ -43,6 +44,16 @@ public:
     T *operator*() const { return reference; }
 
     T *ptr() const { return reference; }
+
+    // 向下类型转换：将 Ref<T> 转为 Ref<U>（U 必须是 T 的派生类）。
+    // 返回一个新的引用（会增加引用计数），转换失败时返回空的 Ref<U>。
+    template<typename U>
+    Ref<U> cast() const
+    {
+        U* casted = static_cast<U*>(reference);
+        if(casted != nullptr) dynamic_cast<RefCounted*>(casted)->ref();
+        return Ref<U>(casted);
+    }
 
     inline bool is_valid() const { return reference != nullptr; }
     inline bool is_null() const { return reference == nullptr; }

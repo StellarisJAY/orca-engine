@@ -3,6 +3,8 @@
 #include "rendering_storage.h"
 #include "math/transform_3d.h"
 #include "math/projection.h"
+#include "math/vector2.h"
+#include "math/vector3.h"
 
 class RenderingServer
 {
@@ -24,8 +26,12 @@ public:
     // 网格体资源
     
     RID create_mesh();
-    void set_mesh_vertices(RID mesh);
-    void set_mesh_indices(RID mesh, const Transform3D &transform);
+    void set_mesh_vertices(
+        RID mesh, 
+        const std::vector<Vector3> &vertices, 
+        const std::vector<Vector3> &normals, 
+        const std::vector<Vector2> &uvs);
+    void set_mesh_indices(RID mesh, const std::vector<uint32_t> &indices);
 
     // 渲染实例资源
     
@@ -39,7 +45,7 @@ public:
     
     RID create_camera();
     void set_camera_transform(RID camera, const Transform3D &transform);
-    void set_camera_perspective(RID camera, real_t fovy, real_t near, real_t far);
+    void set_camera_perspective(RID camera, real_t fovy, real_t aspect, real_t near, real_t far);
     void set_camera_orthogonal(RID camera, real_t left, real_t right, real_t bottom, real_t top, real_t near, real_t far);
 
     void free(RID rid);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rendering_device.h"
+#include <unordered_map>
 
 // OpenGL 图形后端。
 //
@@ -14,6 +15,14 @@ class GLRenderingDevice : public RenderingDevice
     RenderingWindowInfo window_info;
     void *context = nullptr;
 
+    // GL 下 surface 句柄就是 VAO；VBO/EBO 需要另外记录才能释放。
+    struct GLMeshSurface
+    {
+        uint32_t vertex_buffer = 0;
+        uint32_t index_buffer = 0;
+    };
+    std::unordered_map<uint32_t, GLMeshSurface> mesh_surfaces;
+
 public:
     RenderingDriverType get_driver_type() const override { return RenderingDriverType::OpenGL; }
 
@@ -24,4 +33,12 @@ public:
 
     void *get_handle() const override { return context; }
     void *get_device_handle() const override { return nullptr; }
+
+    uint32_t create_mesh_surface(
+        const std::vector<Vector3> &vertices,
+        const std::vector<Vector3> &normals,
+        const std::vector<Vector2> &uvs,
+        const std::vector<uint32_t> &indices) override;
+
+    void destroy_mesh_surface(uint32_t surface) override;
 };

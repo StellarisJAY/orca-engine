@@ -78,4 +78,13 @@ public:
 
     void *get_handle() const override { return instance; }
     void *get_device_handle() const override { return device; }
+
+
+    // Vulkan 尚未实现
+    uint32_t create_mesh_surface(
+        const std::vector<Vector3> &,
+        const std::vector<Vector3> &,
+        const std::vector<Vector2> &,
+        const std::vector<uint32_t> &) override { return 0; }
+    void destroy_mesh_surface(uint32_t) override {}
 };

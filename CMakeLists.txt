@@ -19,7 +19,7 @@ option(ORCA_PLATFORM_SDL3 "Use SDL3 for window and input" OFF)
 
 # ---- 图形后端选择 ----
 # 可以同时编译多个后端（便于对比/切换），运行时用 RenderingDevice::create_singleton(type) 选择。
-option(ORCA_RENDERER_VULKAN "Enable the Vulkan rendering backend" ON)
+option(ORCA_RENDERER_VULKAN "Enable the Vulkan rendering backend" OFF)
 option(ORCA_RENDERER_OPENGL "Enable the OpenGL rendering backend" ON)
 # 默认后端（RenderingDevice::create_singleton() 无参版本使用）。取值：vulkan 或 opengl。
 set(ORCA_RENDERER_DEFAULT "opengl" CACHE STRING "Default rendering backend (vulkan|opengl)")

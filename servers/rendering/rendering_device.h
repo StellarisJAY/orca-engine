@@ -4,6 +4,8 @@
 #include <functional>
 #include <memory>
 #include <vector>
+#include "math/vector3.h"
+#include "math/vector2.h"
 
 // 图形后端类型。RenderingDevice 只依赖这个枚举，不依赖任何具体后端 API 的类型。
 enum class RenderingDriverType
@@ -53,7 +55,7 @@ class RenderingDevice
     static std::shared_ptr<RenderingDevice> singleton;
 
 public:
-    static std::shared_ptr<RenderingDevice> instance() { return singleton; }
+    static std::shared_ptr<RenderingDevice> get_singleton() { return singleton; }
 
     // 使用编译期默认后端创建单例。
     static void create_singleton();
@@ -83,6 +85,26 @@ public:
     // （Vulkan: instance/device；OpenGL: context/DC）。
     virtual void *get_handle() const = 0;
     virtual void *get_device_handle() const = 0;
+
+    // 网格几何资源
+    // ------------------------------------------------------------------
+    // 一次调用创建完整的 mesh surface。
+    //
+    // 之所以不拆成“建 VBO / 建 EBO / 设属性 / 上传”多个接口：OpenGL 的 VAO
+    // 要求顶点属性、VBO、EBO 必须在同一时刻按固定顺序绑定设置——属性设置必须
+    // 在 VBO 绑定之后，EBO 绑定又属于 VAO 状态。拆开调用无法保证顺序，极易出错。
+    // 对 Vulkan 而言，顶点/索引缓冲 + 显存绑定同样应作为一次原子提交。
+    //
+    // vertices/normals/uvs 按 [p(3), n(3), uv(2)] 交错打包，分量类型为 real_t；
+    // indices 为 32 位索引。返回后端无关的 surface 句柄（OpenGL: VAO）。
+    virtual uint32_t create_mesh_surface(
+        const std::vector<Vector3> &vertices,
+        const std::vector<Vector3> &normals,
+        const std::vector<Vector2> &uvs,
+        const std::vector<uint32_t> &indices) = 0;
+
+    // 释放 create_mesh_surface 返回的句柄及其内部缓冲。
+    virtual void destroy_mesh_surface(uint32_t surface) = 0;
 };
 
 inline std::shared_ptr<RenderingDevice> RenderingDevice::singleton;

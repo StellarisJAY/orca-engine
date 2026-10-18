@@ -6,7 +6,7 @@ int main()
 {
     // 使用编译期默认后端（ORCA_RENDERER_DEFAULT，默认 opengl）。
     RenderingDevice::create_singleton();
-    auto device = RenderingDevice::instance();
+    auto device = RenderingDevice::get_singleton();
     if (!device)
     {
         std::printf("create rendering device failed\n");

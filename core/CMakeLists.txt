@@ -20,6 +20,7 @@ add_library(orca-core STATIC
     os/time.cpp
     io/file_access.cpp
     io/dir_access.cpp
+    io/path.cpp
 )
 
 target_include_directories(orca-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
