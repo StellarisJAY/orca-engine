@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include <vector>
 
 /// @brief 资源句柄（Resource ID）。
@@ -35,7 +36,9 @@ enum class RIDType : uint16_t
     Material = 7,
     Texture = 8,
 
-    MaxType = 9,
+    Shader = 9,
+
+    MaxType = 10,
 };
 
 /// @brief RID 的编码 / 解码工具。
@@ -87,6 +90,13 @@ constexpr bool is_valid(RID p_rid) { return p_rid != 0; }
 template <typename T>
 class RIDStorage
 {
+    struct Entry
+    {
+        T data{};
+        uint16_t generation = 0;
+        bool alive = false;
+    };
+
 public:
     explicit RIDStorage(RIDType p_type = RIDType::Unknown) : type(p_type) {}
 
@@ -148,6 +158,81 @@ public:
     /// @brief 当前存活槽位数量。
     size_t get_count() const { return entries.size() - free_list.size(); }
 
+    /// @brief 遍历所有存活槽位，回调签名为 void(RID, T &)。
+    ///
+    /// 遍历期间不应对本 storage 进行 create/free/clear，否则下标会失效。
+    /// 需要在遍历中增删时，请先把结果收集到 vector，遍历结束后再修改。
+    template <typename Func>
+    void for_each(Func &&p_func)
+    {
+        for (size_t i = 0; i < entries.size(); ++i)
+        {
+            Entry &entry = entries[i];
+            if (!entry.alive) continue;
+            p_func(RIDUtil::make(type, static_cast<uint32_t>(i), entry.generation), entry.data);
+        }
+    }
+
+    /// @brief const 版本，回调签名为 void(RID, const T &)。
+    template <typename Func>
+    void for_each(Func &&p_func) const
+    {
+        for (size_t i = 0; i < entries.size(); ++i)
+        {
+            const Entry &entry = entries[i];
+            if (!entry.alive) continue;
+            p_func(RIDUtil::make(type, static_cast<uint32_t>(i), entry.generation), entry.data);
+        }
+    }
+
+    /// @brief 遍历所有存活 data 的迭代器，解引用得到 T*（const 版得到 const T*）。
+    /// 自动跳过已释放的槽位。
+    ///
+    /// 用法：for (InstanceData *data : storage.instances) { ... }
+    /// 注意：遍历期间不要 create/free，否则迭代器会失效。
+    template <bool IsConst>
+    class Iterator
+    {
+        using StoragePtr = std::conditional_t<IsConst, const RIDStorage *, RIDStorage *>;
+
+        StoragePtr storage;
+        size_t index;
+
+        void skip_dead()
+        {
+            while (index < storage->entries.size() && !storage->entries[index].alive)
+                ++index;
+        }
+
+    public:
+        using value_type = std::conditional_t<IsConst, const T *, T *>;
+
+        Iterator(StoragePtr p_storage, size_t p_index) : storage(p_storage), index(p_index)
+        {
+            skip_dead();
+        }
+
+        value_type operator*() const { return &storage->entries[index].data; }
+
+        Iterator &operator++()
+        {
+            ++index;
+            skip_dead();
+            return *this;
+        }
+
+        bool operator==(const Iterator &p_other) const { return index == p_other.index; }
+        bool operator!=(const Iterator &p_other) const { return index != p_other.index; }
+    };
+
+    using iterator = Iterator<false>;
+    using const_iterator = Iterator<true>;
+
+    iterator begin() { return iterator(this, 0); }
+    iterator end() { return iterator(this, entries.size()); }
+    const_iterator begin() const { return const_iterator(this, 0); }
+    const_iterator end() const { return const_iterator(this, entries.size()); }
+
     /// @brief 释放全部槽位；数据保留默认值，索引从 0 重新开始分配。
     void clear()
     {
@@ -156,13 +241,6 @@ public:
     }
 
 private:
-    struct Entry
-    {
-        T data{};
-        uint16_t generation = 0;
-        bool alive = false;
-    };
-
     /// generation 从 1 开始、递增、跳过 0（0 保留给无效 RID）。
     static uint16_t next_generation(uint16_t p_generation)
     {

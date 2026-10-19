@@ -27,9 +27,11 @@ void Node::add_child(Node *child)
     children.push_back(child);
     child->parent = this;
     child->scene_tree = scene_tree;
-
-    child->_notification(NOTIFICATION_ENTER_TREE);
-    child->_propagate_enter_tree();
+    if(scene_tree != nullptr)
+    {
+        child->_notification(NOTIFICATION_ENTER_TREE);
+        child->_propagate_enter_tree();
+    }
 }
 
 Node *Node::remove_child(uint32_t idx)
@@ -80,6 +82,14 @@ void Node::physics_process(double delta)
 }
 
 void Node::destroyed()
+{
+}
+
+void Node::enter_tree()
+{
+}
+
+void Node::exit_tree()
 {
 }
 

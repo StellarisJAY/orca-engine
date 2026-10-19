@@ -6,22 +6,30 @@
 #include "math/vector2.h"
 #include "math/vector3.h"
 
+struct DrawItem;
+
 class RenderingServer
 {
 private:
     static RenderingServer *singleton;
     RenderingStorage storage;
+    std::vector<DrawItem> draw_items;
+
+    RID default_shader_program = 0;
+    RID current_camera = 0;
+    RID current_scene = 0;
 public:
     static void create_singleton();
     static void destroy_singletone();
     static RenderingServer *get_singleton() { return singleton; }
 
-    void init();
+    bool init();
 
     // 场景资源
 
     RID create_scene();
     void set_scene_env(RID scene, RID env);
+    void set_scene_main_camera(RID scene, RID camera);
 
     // 网格体资源
     

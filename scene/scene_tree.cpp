@@ -52,6 +52,7 @@ Node *SceneTree::get_root() const
 void SceneTree::set_root(Node *r)
 {
     root = r;
+    if(root) root->scene_tree = this;
 }
 
 Node *SceneTree::get_current_scene() const

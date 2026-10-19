@@ -14,6 +14,8 @@ struct Transform3D
     Transform3D(const Vector3 &axis, real_t angle, const Vector3 &origin);
     Transform3D(const Vector3 &axis, real_t angle, const Vector3 &scale, const Vector3 &origin);
 
+    void get_mat4(real_t *data) const;
+
     void scale(real_t scale_x, real_t scale_y, real_t scale_z);
     void scale(const Vector3 &scales);
     void rotate(const Vector3 &axis, real_t angle);

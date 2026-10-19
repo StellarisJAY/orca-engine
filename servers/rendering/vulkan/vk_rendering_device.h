@@ -87,4 +87,11 @@ public:
         const std::vector<Vector2> &,
         const std::vector<uint32_t> &) override { return 0; }
     void destroy_mesh_surface(uint32_t) override {}
+    void draw_call(const DrawItem &item) override {}
+    void clear() override {}
+
+    uint64_t create_shader_program(const std::string &vertex_src, const std::string &frag_src) override { return 0; };
+    void destroy_shader_program(uint64_t program) override {};
+    void bind_shader_program(uint64_t program) override {};
+    void set_uniform_mat4(uint64_t program, const char *uniform, const real_t *data) override {};
 };

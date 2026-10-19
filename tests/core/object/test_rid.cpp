@@ -2,6 +2,7 @@
 #include "object/rid.h"
 
 #include <cstdint>
+#include <vector>
 
 namespace
 {
@@ -141,4 +142,110 @@ TEST_CASE("RIDStorage: clear resets indices and count")
     const RID rid = storage.create(Payload{});
     CHECK(RIDUtil::get_index(rid) == 0u);
     CHECK(RIDUtil::get_generation(rid) == 1);
+}
+
+TEST_CASE("RIDStorage: for_each visits only alive slots and yields their RIDs")
+{
+    RIDStorage<Payload> storage(RIDType::Mesh);
+
+    Payload a;
+    a.value = 10;
+    Payload b;
+    b.value = 20;
+    Payload c;
+    c.value = 30;
+
+    const RID ra = storage.create(a);
+    const RID rb = storage.create(b);
+    const RID rc = storage.create(c);
+
+    // 删掉中间一个，确认遍历会跳过它，且句柄仍然正确。
+    storage.free(rb);
+
+    std::vector<RID> rids;
+    std::vector<int> values;
+    storage.for_each([&](RID rid, Payload &payload) {
+        rids.push_back(rid);
+        values.push_back(payload.value);
+        payload.value += 1; // 可写
+    });
+
+    REQUIRE(rids.size() == 2);
+    CHECK(rids[0] == ra);
+    CHECK(rids[1] == rc);
+    CHECK(values[0] == 10);
+    CHECK(values[1] == 30);
+
+    // 回调里的修改生效。
+    CHECK(storage.get_data(ra)->value == 11);
+    CHECK(storage.get_data(rc)->value == 31);
+}
+
+TEST_CASE("RIDStorage: const for_each exposes read-only data")
+{
+    RIDStorage<Payload> storage(RIDType::Mesh);
+    Payload p;
+    p.value = 5;
+    const RID rid = storage.create(p);
+
+    const RIDStorage<Payload> &const_storage = storage;
+    int seen = 0;
+    const_storage.for_each([&](RID visited, const Payload &payload) {
+        seen++;
+        CHECK(visited == rid);
+        CHECK(payload.value == 5);
+    });
+    CHECK(seen == 1);
+}
+
+TEST_CASE("RIDStorage: for_each on an empty storage is a no-op")
+{
+    RIDStorage<Payload> storage(RIDType::Mesh);
+    int count = 0;
+    storage.for_each([&](RID, Payload &) { count++; });
+    CHECK(count == 0);
+}
+
+TEST_CASE("RIDStorage: range-based for iterates alive data and skips freed slots")
+{
+    RIDStorage<Payload> storage(RIDType::Mesh);
+
+    Payload a;
+    a.value = 1;
+    Payload b;
+    b.value = 2;
+    Payload c;
+    c.value = 3;
+
+    const RID rb = storage.create(b); // 索引 0
+    storage.create(a);                // 索引 1
+    storage.create(c);                // 索引 2
+    storage.free(rb);                 // 释放 b，剩余 a(1)、c(3)
+
+    int count = 0;
+    int sum = 0;
+    for (Payload *payload : storage)
+    {
+        count++;
+        sum += payload->value;
+    }
+    CHECK(count == 2);
+    CHECK(sum == 4); // 1 + 3
+}
+
+TEST_CASE("RIDStorage: const range-based for yields const data")
+{
+    RIDStorage<Payload> storage(RIDType::Mesh);
+    Payload p;
+    p.value = 9;
+    storage.create(p);
+
+    const RIDStorage<Payload> &const_storage = storage;
+    int count = 0;
+    for (const Payload *payload : const_storage)
+    {
+        CHECK(payload->value == 9);
+        count++;
+    }
+    CHECK(count == 1);
 }

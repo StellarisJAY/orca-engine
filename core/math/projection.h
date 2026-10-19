@@ -4,13 +4,18 @@
 
 struct Projection
 {
-    // 透视变换矩阵
-    Vector4 columns[4] = {
-        {1, 0, 0, 0},
-        {0, 1, 0, 0},
-        {0, 0, 1, 0},
-        {0, 0, 0, 1}
+
+    union
+    {
+        // 透视变换矩阵
+        Vector4 columns[4] = {
+            {1, 0, 0, 0},
+            {0, 1, 0, 0},
+            {0, 0, 1, 0},
+            {0, 0, 0, 1}};
+        real_t data[16];
     };
+
     // 创建正交投影
     static Projection create_orthogonal(real_t left, real_t right, real_t bottom, real_t top, real_t near, real_t far);
     // 创建视角投影

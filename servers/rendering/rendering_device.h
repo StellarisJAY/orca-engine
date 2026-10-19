@@ -6,6 +6,7 @@
 #include <vector>
 #include "math/vector3.h"
 #include "math/vector2.h"
+#include "math/transform_3d.h"
 
 // 图形后端类型。RenderingDevice 只依赖这个枚举，不依赖任何具体后端 API 的类型。
 enum class RenderingDriverType
@@ -37,6 +38,15 @@ struct RenderingWindowInfo
     std::function<bool(void *native_instance, uint64_t &out_surface)> create_vulkan_surface;
     // 平台声明的 Vulkan 实例扩展名（例如 GLFW 的 glfwGetRequiredInstanceExtensions）。
     std::vector<const char *> vulkan_instance_extensions;
+};
+
+
+/// @brief 绘制的instance数据
+struct DrawItem
+{
+    Transform3D transform;
+    uint32_t surface = 0;
+    uint32_t index_count = 0;
 };
 
 // 渲染后端抽象基类。
@@ -105,6 +115,18 @@ public:
 
     // 释放 create_mesh_surface 返回的句柄及其内部缓冲。
     virtual void destroy_mesh_surface(uint32_t surface) = 0;
+
+    /// @brief 绘制instance
+    /// @param item  instance数据
+    virtual void draw_call(const DrawItem &item) = 0;
+    
+    virtual void clear() = 0;
+    // shader program
+    virtual uint64_t create_shader_program(const std::string &vertex_src, const std::string &frag_src) = 0;
+    virtual void destroy_shader_program(uint64_t program) = 0;
+    virtual void bind_shader_program(uint64_t program) = 0;
+    virtual void set_uniform_mat4(uint64_t program, const char *uniform, const real_t *data) = 0;
+    
 };
 
 inline std::shared_ptr<RenderingDevice> RenderingDevice::singleton;

@@ -21,6 +21,15 @@ public:
         switch(what)
         {
         case NOTIFICATION_ENTER_TREE:
+            // 资源对应的mesh还没有传递到渲染服务器
+            if(!mesh->get_rid()) 
+            {
+                mesh->set_rid(RenderingServer::get_singleton()->create_mesh());
+                // TODO 多个surface的mesh
+                const Mesh::Surface surface = mesh->get_surface(0);
+                RenderingServer::get_singleton()->set_mesh_vertices(mesh->get_rid(), surface.vertices, surface.normals, surface.uvs);
+                RenderingServer::get_singleton()->set_mesh_indices(mesh->get_rid(), surface.indices);
+            }
             RenderingServer::get_singleton()->set_instance_mesh(get_instance(), mesh->get_rid());
             break;
         case NOTIFICATION_EXIT_TREE:

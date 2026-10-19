@@ -4,6 +4,8 @@
 #include "math/transform_3d.h"
 #include "math/math_defs.h"
 
+class World3D;
+
 class Node3D: public Node
 {
 private:
@@ -16,6 +18,7 @@ private:
 public:
     Node3D() {}
     Transform3D get_global_transform() const;
+    Transform3D get_parent_global_transform() const;
     Vector3 get_position() const;
     Vector3 get_rotation() const;
     Vector3 get_scale() const;
@@ -24,4 +27,5 @@ public:
     void set_position(const Vector3 &position);
     void set_scale(const Vector3 &scale);
     void _propagate_transform();
+    World3D *get_world() const;
 };

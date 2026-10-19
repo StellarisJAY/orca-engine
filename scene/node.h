@@ -8,6 +8,7 @@
 
 class Node: public Object
 {
+    friend class SceneTree;
     std::vector<Node*> children = {};
     Node *parent = nullptr;
     SceneTree *scene_tree = nullptr;
@@ -25,13 +26,33 @@ public:
     bool is_physics_process() const { return physics_process_on; }
     void set_process(bool on) { process_on = on; }
     void set_physics_process(bool on) { physics_process_on = on; }
+    const std::vector<Node*> &get_children() const { return children; }
 public:
     virtual void ready();
     virtual void process(double delta);
     virtual void physics_process(double delta);
     virtual void destroyed();
+    virtual void enter_tree();
+    virtual void exit_tree();
     
     void _propagate_process(double delta);
     void _propagate_enter_tree();
     void _propagate_exit_tree();
+
+
+    void _notification(int what) override
+    {
+        Object::_notification(what);
+        switch(what)
+        {
+        case NOTIFICATION_ENTER_TREE:
+            enter_tree();
+            break;
+        case NOTIFICATION_EXIT_TREE:
+            exit_tree();
+            break;
+        default:
+            break;
+        }
+    }
 };

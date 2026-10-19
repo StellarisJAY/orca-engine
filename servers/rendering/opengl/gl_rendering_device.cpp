@@ -1,6 +1,8 @@
 #include "math/math_defs.h"
 #include "gl_rendering_device.h"
+#include "os/memory.h"
 #include <cstdio>
+#include <iostream>
 
 #define GLAD_GL_IMPLEMENTATION
 #include <glad/gl.h>
@@ -60,6 +62,7 @@ bool GLRenderingDevice::init_swapchain()
     const GLsizei height = static_cast<GLsizei>(window_info.height);
     if (width > 0 && height > 0)
         glViewport(0, 0, width, height);
+    glEnable(GL_DEPTH_TEST);
     glClearColor(0.10f, 0.11f, 0.13f, 1.0f);
     return true;
 }
@@ -91,9 +94,14 @@ uint32_t GLRenderingDevice::create_mesh_surface(
         const Vector3 &p = vertices[i];
         const Vector3 &n = normals[i];
         const Vector2 &uv = uvs[i];
-        packed.push_back(p.x); packed.push_back(p.y); packed.push_back(p.z);
-        packed.push_back(n.x); packed.push_back(n.y); packed.push_back(n.z);
-        packed.push_back(uv.x); packed.push_back(uv.y);
+        packed.push_back(p.x);
+        packed.push_back(p.y);
+        packed.push_back(p.z);
+        packed.push_back(n.x);
+        packed.push_back(n.y);
+        packed.push_back(n.z);
+        packed.push_back(uv.x);
+        packed.push_back(uv.y);
     }
 
     GLuint vbo = 0;
@@ -112,16 +120,17 @@ uint32_t GLRenderingDevice::create_mesh_surface(
                  packed.data(), GL_STATIC_DRAW);
 
     const GLsizei stride = static_cast<GLsizei>(8 * sizeof(real_t));
-    const auto offset = [](size_t element) {
+    const auto offset = [](size_t element)
+    {
         return reinterpret_cast<void *>(element * sizeof(real_t));
     };
 
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_DOUBLE, GL_FALSE, stride, offset(0)); // position
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, offset(0)); // position
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_DOUBLE, GL_FALSE, stride, offset(3)); // normal
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, offset(3)); // normal
     glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 2, GL_DOUBLE, GL_FALSE, stride, offset(6)); // uv
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, offset(6)); // uv
 
     // 索引缓冲：EBO 绑定属于 VAO 状态，必须在 VAO 绑定期间设置。
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
@@ -133,13 +142,15 @@ uint32_t GLRenderingDevice::create_mesh_surface(
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     mesh_surfaces.emplace(vao, GLMeshSurface{vbo, ebo});
+    std::printf("[DEBUG] created mesh surface in OpenGL\n");
     return vao;
 }
 
 void GLRenderingDevice::destroy_mesh_surface(uint32_t surface)
 {
     auto it = mesh_surfaces.find(surface);
-    if (it == mesh_surfaces.end()) return;
+    if (it == mesh_surfaces.end())
+        return;
 
     GLuint vbo = it->second.vertex_buffer;
     GLuint ebo = it->second.index_buffer;
@@ -149,4 +160,110 @@ void GLRenderingDevice::destroy_mesh_surface(uint32_t surface)
     glDeleteVertexArrays(1, &vao);
 
     mesh_surfaces.erase(it);
+}
+
+void GLRenderingDevice::draw_call(const DrawItem &item)
+{
+    if (item.surface != last_bound_vao)
+    {
+        glBindVertexArray(item.surface);
+        last_bound_vao = item.surface;
+    }
+    glDrawElements(GL_TRIANGLES, item.index_count, GL_UNSIGNED_INT, nullptr);
+}
+
+void GLRenderingDevice::clear()
+{
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+
+void get_shader_compile_status(const char *label, GLuint shader)
+{
+    GLint ok = 0;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (!ok)
+    {
+        char log[1024];
+        glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+        std::printf("[SHADER %s] %s\n", label, log);
+    }
+}
+
+void get_program_link_status(GLuint program)
+{
+    GLint ok = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &ok);
+    if (!ok)
+    {
+        char log[1024];
+        glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+        std::printf("[PROGRAM] %s\n", log);
+    }
+}
+
+uint64_t GLRenderingDevice::create_shader_program(const std::string &vertex_src, const std::string &frag_src)
+{
+    GLuint program = glCreateProgram();
+    GLuint vert_shader = glCreateShader(GL_VERTEX_SHADER);
+    GLuint frag_shader = glCreateShader(GL_FRAGMENT_SHADER);
+
+    const char *vert_shader_source = vertex_src.c_str();
+    glShaderSource(vert_shader, 1, &vert_shader_source, nullptr);
+    glCompileShader(vert_shader);
+    get_shader_compile_status("vertex", vert_shader);
+
+    const char *frag_shader_source = frag_src.c_str();
+    glShaderSource(frag_shader, 1, &frag_shader_source, nullptr);
+    glCompileShader(frag_shader);
+    get_shader_compile_status("fragment", frag_shader);
+
+    glAttachShader(program, vert_shader);
+    glAttachShader(program, frag_shader);
+    glLinkProgram(program);
+    get_program_link_status(program);
+
+    GLProgram *shader_program = memnew(GLProgram);
+    shader_program->program = program;
+    shader_program->vert_shader = vert_shader;
+    shader_program->frag_shader = frag_shader;
+    shader_programs.insert(std::pair<uint64_t, GLProgram *>(program, shader_program));
+    return program;
+}
+
+void GLRenderingDevice::destroy_shader_program(uint64_t program)
+{
+    GLProgram *shader_program = shader_programs[program];
+    if (shader_program != nullptr)
+    {
+        glDeleteShader(shader_program->vert_shader);
+        glDeleteShader(shader_program->frag_shader);
+        shader_programs.erase(program);
+        memdelete(shader_program);
+    }
+    glDeleteProgram(program);
+}
+
+void GLRenderingDevice::bind_shader_program(uint64_t program)
+{
+    glUseProgram(program);
+}
+
+void GLRenderingDevice::set_uniform_mat4(uint64_t program, const char *uniform, const real_t *data)
+{
+    GLProgram *shader_program = shader_programs.at(program);
+    if (shader_program == nullptr || shader_program->program == 0)
+        return;
+    int64_t location = shader_program->get_uniform_location(uniform);
+    if(location < 0) return;
+    glUniformMatrix4fv(location, 1, GL_FALSE, data);
+}
+
+int64_t GLProgram::get_uniform_location(const std::string &name)
+{
+    auto it = uniform_locations.find(name);
+    if (it != uniform_locations.end())
+        return it->second;
+    GLint loc = glGetUniformLocation(program, name.c_str());
+    uniform_locations.emplace(name, loc);
+    return loc;
 }

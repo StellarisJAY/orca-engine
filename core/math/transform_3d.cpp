@@ -15,6 +15,31 @@ Transform3D::Transform3D(const Vector3 &axis, real_t angle, const Vector3 &scale
     basis.set_axis_angle_and_scale(axis, angle, scale);
 }
 
+void Transform3D::get_mat4(real_t *out) const
+{
+    const Basis &b = basis;
+    // 列 0
+    out[0] = b.columns[0].x;
+    out[1] = b.columns[0].y;
+    out[2] = b.columns[0].z;
+    out[3] = 0;
+    // 列 1
+    out[4] = b.columns[1].x;
+    out[5] = b.columns[1].y;
+    out[6] = b.columns[1].z;
+    out[7] = 0;
+    // 列 2
+    out[8] = b.columns[2].x;
+    out[9] = b.columns[2].y;
+    out[10] = b.columns[2].z;
+    out[11] = 0;
+    // 列 3（平移）
+    out[12] = origin.x;
+    out[13] = origin.y;
+    out[14] = origin.z;
+    out[15] = 1;
+}
+
 void Transform3D::scale(real_t scale_x, real_t scale_y, real_t scale_z)
 {
     *this = Transform3D({scale_x, scale_y, scale_z}, Vector3::ZERO) * (*this);
