@@ -97,8 +97,17 @@ void Node::_propagate_process(double delta)
 {
     for(Node *child : children)
     {
-        child->process(delta);
+        if(child->is_process()) child->process(delta);
         child->_propagate_process(delta);
+    }
+}
+
+void Node::_propagate_physics_process(double delta)
+{
+    for(Node *child : children)
+    {
+        if(child->is_physics_process()) child->physics_process(delta);
+        child->_propagate_physics_process(delta);
     }
 }
 

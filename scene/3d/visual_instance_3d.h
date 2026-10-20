@@ -6,7 +6,6 @@
 
 class VisualInstance3D : public Node3D
 {
-    RID instance;
     bool in_tree = false;
 
 public:
@@ -17,9 +16,6 @@ public:
         {
         case NOTIFICATION_ENTER_TREE:
             in_tree = true;
-            instance = RenderingServer::get_singleton()->create_instance();
-            RenderingServer::get_singleton()->set_instance_visible(instance, in_tree);
-            RenderingServer::get_singleton()->set_instance_transform(instance, get_global_transform());
             // TODO 实例的场景
             break;
         case NOTIFICATION_EXIT_TREE:
@@ -33,6 +29,8 @@ public:
             break;
         }
     }
+
 protected:
+    RID instance = 0;
     const RID get_instance() const { return instance; }
 };

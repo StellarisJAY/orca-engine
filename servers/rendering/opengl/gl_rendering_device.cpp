@@ -258,6 +258,46 @@ void GLRenderingDevice::set_uniform_mat4(uint64_t program, const char *uniform, 
     glUniformMatrix4fv(location, 1, GL_FALSE, data);
 }
 
+void GLRenderingDevice::set_uniform_vec4(uint64_t program, const char *uniform, const real_t *data)
+{
+    GLProgram *shader_program = shader_programs.at(program);
+    if (shader_program == nullptr || shader_program->program == 0)
+        return;
+    int64_t location = shader_program->get_uniform_location(uniform);
+    if(location < 0) return;
+    glUniform4fv(location, 1, data);
+}
+
+void GLRenderingDevice::set_uniform_float(uint64_t program, const char *uniform, float data)
+{
+    GLProgram *shader_program = shader_programs.at(program);
+    if (shader_program == nullptr || shader_program->program == 0)
+        return;
+    int64_t location = shader_program->get_uniform_location(uniform);
+    if(location < 0) return;
+    glUniform1f(location, data);
+}
+
+void GLRenderingDevice::set_uniform_vec3(uint64_t program, const char *uniform, const real_t *data)
+{
+    GLProgram *shader_program = shader_programs.at(program);
+    if (shader_program == nullptr || shader_program->program == 0)
+        return;
+    int64_t location = shader_program->get_uniform_location(uniform);
+    if(location < 0) return;
+    glUniform3fv(location, 1, data);
+}
+
+void GLRenderingDevice::set_uniform_int(uint64_t program, const char *uniform, int data)
+{
+    GLProgram *shader_program = shader_programs.at(program);
+    if (shader_program == nullptr || shader_program->program == 0)
+        return;
+    int64_t location = shader_program->get_uniform_location(uniform);
+    if(location < 0) return;
+    glUniform1i(location, data);
+}
+
 int64_t GLProgram::get_uniform_location(const std::string &name)
 {
     auto it = uniform_locations.find(name);

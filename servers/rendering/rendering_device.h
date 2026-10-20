@@ -7,6 +7,7 @@
 #include "math/vector3.h"
 #include "math/vector2.h"
 #include "math/transform_3d.h"
+#include "rendering_storage.h"
 
 // 图形后端类型。RenderingDevice 只依赖这个枚举，不依赖任何具体后端 API 的类型。
 enum class RenderingDriverType
@@ -47,6 +48,8 @@ struct DrawItem
     Transform3D transform;
     uint32_t surface = 0;
     uint32_t index_count = 0;
+
+    MaterialData *material = 0;
 };
 
 // 渲染后端抽象基类。
@@ -125,8 +128,12 @@ public:
     virtual uint64_t create_shader_program(const std::string &vertex_src, const std::string &frag_src) = 0;
     virtual void destroy_shader_program(uint64_t program) = 0;
     virtual void bind_shader_program(uint64_t program) = 0;
-    virtual void set_uniform_mat4(uint64_t program, const char *uniform, const real_t *data) = 0;
     
+    virtual void set_uniform_mat4(uint64_t program, const char *uniform, const real_t *data) = 0;
+    virtual void set_uniform_vec4(uint64_t program, const char *uniform, const real_t *data) = 0;
+    virtual void set_uniform_float(uint64_t program, const char *uniform, float data) = 0;
+    virtual void set_uniform_vec3(uint64_t program, const char *uniform, const real_t *data) = 0;
+    virtual void set_uniform_int(uint64_t program, const char *uniform, int data) = 0;
 };
 
 inline std::shared_ptr<RenderingDevice> RenderingDevice::singleton;

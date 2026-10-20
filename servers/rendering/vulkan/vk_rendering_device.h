@@ -94,4 +94,8 @@ public:
     void destroy_shader_program(uint64_t program) override {};
     void bind_shader_program(uint64_t program) override {};
     void set_uniform_mat4(uint64_t program, const char *uniform, const real_t *data) override {};
+    void set_uniform_vec4(uint64_t program, const char *uniform, const real_t *data) override {};
+    void set_uniform_float(uint64_t program, const char *uniform, float data) override {};
+    void set_uniform_vec3(uint64_t program, const char *uniform, const real_t *data) override {};
+    void set_uniform_int(uint64_t program, const char *uniform, int data) override {}
 };

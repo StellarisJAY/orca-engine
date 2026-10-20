@@ -36,6 +36,7 @@ public:
     virtual void exit_tree();
     
     void _propagate_process(double delta);
+    void _propagate_physics_process(double delta);
     void _propagate_enter_tree();
     void _propagate_exit_tree();
 

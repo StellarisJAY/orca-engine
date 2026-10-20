@@ -60,6 +60,7 @@ void Node3D::_propagate_transform()
         if(Node3D *child_node = static_cast<Node3D*>(child))
         {
             child_node->global_transform = global_transform * child_node->local_transform;
+            child_node->_notification(NOTIFICATION_TRANSFORM_CHANGE);
             child_node->_propagate_transform();
         }
     }
