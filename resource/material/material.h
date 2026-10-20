@@ -37,4 +37,6 @@ public:
     float get_roughenss() const { return roughness; }
 
     void set_albedo(const Color &color) { this->albedo = color; }
+    void set_roughness(float roughness) { this->roughness = roughness; }
+    void set_metallic(float metallic) { this->metallic = metallic; }
 };
