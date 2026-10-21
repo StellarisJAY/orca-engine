@@ -81,7 +81,7 @@ void main() {
     vec3 f_specular = D * F * G / (4.0 * NdotV * NdotL);
 
     vec3 Kd = (1 - F) * (1 - u_metallic);
-    vec3 Lo = (Kd * f_diffuse + f_specular) * u_light_color * NdotL;
+    vec3 Lo = (Kd * f_diffuse + f_specular) * u_light_color * NdotL * 2.0;
     vec3 ambient = albedo * u_ambient_color.rgb * u_ambient_strength;
     fragColor = vec4(Lo + ambient, 1.0);
 }

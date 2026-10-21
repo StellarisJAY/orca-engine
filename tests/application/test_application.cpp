@@ -13,6 +13,7 @@ class Player: public Node3D
 {
     real_t gravity = -4.9;
     Vector3 velocity = Vector3::ZERO;
+    real_t angle = 0.0;
 public:
     void process(double delta) override
     {
@@ -21,10 +22,12 @@ public:
 
     void physics_process(double delta) override
     {
-        Vector3 position = get_position();
-        velocity.y += gravity * delta;
-        position += velocity * delta;
-        set_position(position);
+        // Vector3 position = get_position();
+        // velocity.y += gravity * delta;
+        // position += velocity * delta;
+        // set_position(position);
+        rotate(Vector3::AxisY, 180 * delta);
+        // rotate(Vector3(-1,1,0), 180 * delta);
     }
     void enter_tree() override { std::printf("player node enter tree\n"); }
     void exit_tree() override { std::printf("player node exit tree\n"); }
@@ -35,9 +38,14 @@ Node3D *build_main_scene(Application *app)
     Ref<Resource> sphere_res = ResourceLoader::get_singleton()->load("res://sphere.obj");
     Ref<Resource> monkey_head_res = ResourceLoader::get_singleton()->load("res://monkey_head.obj");
     if(sphere_res.is_null()) throw "can't find sphere mesh resource";
+    if(monkey_head_res.is_null()) throw "can't find monkey head resource";
+
+    // Ref<Resource> normal_res = ResourceLoader::get_singleton()->load("res://normal.png");
+    // if(normal_res.is_null()) throw "can't find normal map resource";
 
     Ref<Mesh> sphere_mesh = sphere_res.cast<Mesh>();
     Ref<Mesh> monkey_head_mesh = monkey_head_res.cast<Mesh>();
+    // Ref<ImageTexture> text_normal = normal_res.cast<ImageTexture>();
 
     World3D *world = memnew(World3D);
     app->set_main_scene(world);
@@ -56,27 +64,21 @@ Node3D *build_main_scene(Application *app)
     mat_silver->set_metallic(1.0f);
     mat_silver->set_roughness(0.5f);
 
-    Player *player1 = memnew(Player);
-    world->add_child(player1);
-    player1->set_physics_process(false);
-    player1->add_child(memnew(MeshInstance3D(monkey_head_mesh, mat_gold)));
-    player1->set_position({3, 0, 0});
-    player1->set_scale({0.8,0.8,0.8});
-
-    Player *player2 = memnew(Player);
-    world->add_child(player2);
-    player2->set_physics_process(false);
-    player2->add_child(memnew(MeshInstance3D(monkey_head_mesh, mat_silver)));
-    player2->set_position({0, 0, 0});
-    player2->set_scale({0.8, 0.8, 0.8});
-
-    Player *player3 = memnew(Player);
-    world->add_child(player3);
-    player3->set_physics_process(false);
-    player3->add_child(memnew(MeshInstance3D(monkey_head_mesh, mat_red)));
-    player3->set_position({-3, 0, 0});
-    player3->set_scale({0.8,0.8,0.8});
-
+    for(int i = -4; i <= 4; i+=2)
+    {
+        for(int j = -2; j <= 2; j+=2)
+        {
+            Ref<StandardMaterial> mat = Ref(memnew(StandardMaterial));
+            mat->set_albedo({200, 0, 0});
+            mat->set_metallic(j == -2 ? 1.0 : (j == 0 ? 0.5 : 0.0));
+            mat->set_roughness((i + 4.0)/10.0 + 0.1);
+            Player *p = memnew(Player);
+            world->add_child(p);
+            p->add_child(memnew(MeshInstance3D(monkey_head_mesh, mat)));
+            p->set_position({(float)i, (float)j, 0});
+            p->set_scale({0.8, 0.8, 0.8});
+        }
+    }
     Light3D *sun = memnew(Light3D);
     sun->set_direction(Vector3(-1,-1,-1));
     world->add_child(sun);
@@ -88,8 +90,8 @@ int main()
     Application app;
     ApplicationInitDesc desc;
     desc.fullscreen = false;
-    desc.screen_w = 3840;
-    desc.screen_h = 2160;
+    desc.screen_w = 2560;
+    desc.screen_h = 1440;
     if(!app.init(desc)) return -1;
 
     Node *world = build_main_scene(&app);
@@ -99,6 +101,9 @@ int main()
     main_camera->set_perspective(60.0, (float)desc.screen_w / (float)desc.screen_h, 0.1, 100);
     main_camera->set_position({0, 0, 5});
     main_camera->set_main_camera();
+
+    auto p = main_camera->get_global_transform().origin;
+    std::printf("camera at: (%lf,%lf,%lf)\n", p.x, p.y, p.z);
 
     app.run();
     app.shutdown();

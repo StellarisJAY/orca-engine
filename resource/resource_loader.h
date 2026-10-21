@@ -7,7 +7,7 @@ class ResourceFormatLoader
 {
 public:
     virtual Ref<Resource> load(const std::string url) = 0;
-    virtual const std::string format_extension() const = 0;
+    virtual std::vector<std::string> format_extensions() const = 0;
 };
 
 class ResourceLoader
@@ -22,6 +22,7 @@ public:
     ~ResourceLoader();
 private:
     static ResourceLoader *singleton;
+    std::vector<ResourceFormatLoader*> owned_loaders;
     std::unordered_map<std::string, ResourceFormatLoader*> loaders;
 };
 

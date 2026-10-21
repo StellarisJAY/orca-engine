@@ -17,7 +17,7 @@ Viewport *Camera3D::get_viewport() const
     Node *parent = get_parent();
     while(parent != root_viewport)
     {
-        if(auto parent_viewport = static_cast<Viewport*>(parent))
+        if(auto parent_viewport = dynamic_cast<Viewport*>(parent))
         {
             return parent_viewport;
         }

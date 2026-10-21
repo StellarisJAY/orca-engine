@@ -1,7 +1,7 @@
 #include "rendering_server.h"
 #include "rendering_device.h"
 #include "os/memory.h"
-#include "shaders/builtin/builtin_shaders.h"
+#include "shader_loader.h"
 
 namespace
 {
@@ -39,8 +39,16 @@ void RenderingServer::destroy_singletone()
 
 bool RenderingServer::init()
 {
+    // 从 glsl 文件加载 builtin shader
+    const ShaderSource source = ShaderLoader::load("builtin");
+    if (!source.is_valid())
+    {
+        std::printf("[ERROR] failed to load builtin shader source\n");
+        return false;
+    }
+
     // 创建builtin shader程序
-    const uint64_t shader_program = RenderingDevice::get_singleton()->create_shader_program(builtin_vertex_shader, builtin_fragment_shader);
+    const uint64_t shader_program = RenderingDevice::get_singleton()->create_shader_program(source.vertex, source.fragment);
     if (shader_program == 0)
     {
         std::printf("[ERROR] failed to create default shader program");
@@ -69,12 +77,18 @@ RID RenderingServer::create_scene()
 
 void RenderingServer::set_scene_env(RID scene, RID env)
 {
-    storage.scenes.get_data(scene)->env = env;
+    if (auto scene_data = storage.scenes.get_data(scene))
+    {
+        scene_data->env = env;
+    }
 }
 
 void RenderingServer::set_scene_main_camera(RID scene, RID camera)
 {
-    storage.scenes.get_data(scene)->main_camera = camera;
+    if (auto scene_data = storage.scenes.get_data(scene))
+    {
+        scene_data->main_camera = camera;
+    }
 }
 
 RID RenderingServer::create_environment()
@@ -138,27 +152,42 @@ RID RenderingServer::create_instance()
 
 void RenderingServer::set_instance_mesh(RID instance, RID mesh)
 {
-    storage.instances.get_data(instance)->mesh = mesh;
+    if(auto instance_data = storage.instances.get_data(instance))
+    {
+        instance_data->mesh = mesh;
+    }
 }
 
 void RenderingServer::set_instance_transform(RID instance, const Transform3D &transform)
 {
-    storage.instances.get_data(instance)->transfrom = transform;
+    if(auto instance_data = storage.instances.get_data(instance))
+    {
+        instance_data->transfrom = transform;
+    }
 }
 
 void RenderingServer::set_instance_scene(RID instance, RID scene)
 {
-    storage.instances.get_data(instance)->scene = scene;
+    if(auto instance_data = storage.instances.get_data(instance))
+    {
+        instance_data->scene = scene;
+    }
 }
 
 void RenderingServer::set_instance_visible(RID instance, bool visible)
 {
-    storage.instances.get_data(instance)->visible = visible;
+    if(auto instance_data = storage.instances.get_data(instance))
+    {
+        instance_data->visible = visible;
+    }
 }
 
 void RenderingServer::set_instance_material(RID instance, RID material)
 {
-    storage.instances.get_data(instance)->material = material;
+    if(auto instance_data = storage.instances.get_data(instance))
+    {
+        instance_data->material = material;
+    }
 }
 
 RID RenderingServer::create_material()
@@ -168,17 +197,26 @@ RID RenderingServer::create_material()
 
 void RenderingServer::set_material_albedo(RID mat, const Color &color)
 {
-    storage.materials.get_data(mat)->albedo = color;
+    if(auto material_data = storage.materials.get_data(mat))
+    {
+        material_data->albedo = color;
+    }
 }
 
 void RenderingServer::set_material_roughness(RID mat, float roughness)
 {
-    storage.materials.get_data(mat)->roughness = roughness;
+    if(auto material_data = storage.materials.get_data(mat))
+    {
+        material_data->roughness = roughness;
+    }
 }
 
 void RenderingServer::set_material_metallic(RID mat, float metallic)
 {
-    storage.materials.get_data(mat)->metallic = metallic;
+    if(auto material_data = storage.materials.get_data(mat))
+    {
+        material_data->metallic = metallic;
+    }
 }
 
 RID RenderingServer::create_camera()
@@ -189,17 +227,26 @@ RID RenderingServer::create_camera()
 
 void RenderingServer::set_camera_transform(RID camera, const Transform3D &transform)
 {
-    storage.cameras.get_data(camera)->transform = transform;
+    if(auto camera_data = storage.cameras.get_data(camera))
+    {
+        camera_data->transform = transform;
+    }
 }
 
 void RenderingServer::set_camera_perspective(RID camera, real_t fovy, real_t aspect, real_t near, real_t far)
 {
-    storage.cameras.get_data(camera)->projection = Projection::create_perspective(fovy, aspect, near, far);
+    if(auto camera_data = storage.cameras.get_data(camera))
+    {
+        camera_data->projection = Projection::create_perspective(fovy, aspect, near, far);
+    }
 }
 
 void RenderingServer::set_camera_orthogonal(RID camera, real_t left, real_t right, real_t bottom, real_t top, real_t near, real_t far)
 {
-    storage.cameras.get_data(camera)->projection = Projection::create_orthogonal(left, right, bottom, top, near, far);
+    if(auto camera_data = storage.cameras.get_data(camera))
+    {
+        camera_data->projection = Projection::create_orthogonal(left, right, bottom, top, near, far);
+    }
 }
 
 RID RenderingServer::create_light()
@@ -213,7 +260,10 @@ RID RenderingServer::create_light()
 
 void RenderingServer::set_light_transform(RID light, const Transform3D &transform)
 {
-    storage.lights.get_data(light)->transform = transform;
+    if(auto light_data = storage.lights.get_data(light))
+    {
+        light_data->transform = transform;
+    }
 }
 
 void RenderingServer::set_light_color(RID light, const Color &color)
@@ -229,7 +279,10 @@ void RenderingServer::set_light_color(RID light, const Color &color)
 
 void RenderingServer::set_light_type(RID light, int type)
 {
-    storage.lights.get_data(light)->type = type;
+    if(auto light_data = storage.lights.get_data(light))
+    {
+        light_data->type = type;
+    }
 }
 
 void RenderingServer::set_light_scene(RID light, RID scene)
@@ -248,7 +301,10 @@ void RenderingServer::set_light_scene(RID light, RID scene)
 
 void RenderingServer::set_light_cast_shadow(RID light, bool shadow)
 {
-    storage.lights.get_data(light)->cast_shadow = shadow;
+    if(auto light_data = storage.lights.get_data(light))
+    {
+        light_data->cast_shadow = shadow;
+    }
 }
 
 void RenderingServer::set_light_temperature(RID light, float temperature)
@@ -263,7 +319,10 @@ void RenderingServer::set_light_temperature(RID light, float temperature)
 
 void RenderingServer::set_light_direction(RID light, const Vector3 &direction)
 {
-    storage.lights.get_data(light)->direction = direction;
+    if(auto light_data = storage.lights.get_data(light))
+    {
+        light_data->direction = direction;
+    }
 }
 
 void RenderingServer::free(RID rid)

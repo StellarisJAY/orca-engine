@@ -24,6 +24,7 @@ private:
 public:
     void _notification(int what) override
     {
+        Node3D::_notification(what);
         switch (what)
         {
         case NOTIFICATION_ENTER_TREE:

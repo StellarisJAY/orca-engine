@@ -7,12 +7,12 @@
 
 class World3D: public Node3D
 {
-    RID scene;
-    RID environment;
+    RID scene = 0;
+    RID environment = 0;
     Color ambient_color = {0, 0, 0, 255};
     float ambient_strength = 1.0f;
 public:
-    World3D() { scene = RenderingServer::get_singleton()->create_scene(); }
+    World3D() {}
 
     void _notification(int what) override
     {

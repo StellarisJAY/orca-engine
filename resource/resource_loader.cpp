@@ -2,11 +2,13 @@
 #include "io/path.h"
 #include "os/memory.h"
 #include "loaders/obj_loader.h"
+#include "loaders/image_texture_loader.h"
 
 void ResourceLoader::create_singleton()
 {
     singleton = memnew(ResourceLoader);
     singleton->register_loader(memnew(ObjMeshLoader));
+    singleton->register_loader(memnew(ImageTextureLoader));
 }
 
 void ResourceLoader::destroy_singleton()
@@ -16,7 +18,11 @@ void ResourceLoader::destroy_singleton()
 
 void ResourceLoader::register_loader(ResourceFormatLoader *loader)
 {
-    loaders.insert(std::pair<std::string, ResourceFormatLoader*>(loader->format_extension(), loader));
+    for(const std::string &extension : loader->format_extensions())
+    {
+        loaders.insert(std::pair<std::string, ResourceFormatLoader*>(extension, loader));
+    }
+    owned_loaders.push_back(loader);
 }
 
 Ref<Resource> ResourceLoader::load(const std::string url)
@@ -29,9 +35,10 @@ Ref<Resource> ResourceLoader::load(const std::string url)
 
 ResourceLoader::~ResourceLoader()
 {
-    for(auto pair : loaders)
+    for(ResourceFormatLoader *loader : owned_loaders)
     {
-        memdelete(pair.second);
+        memdelete(loader);    
     }
+    owned_loaders.clear();
     loaders.clear();
 }

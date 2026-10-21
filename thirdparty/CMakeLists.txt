@@ -1,6 +1,9 @@
 add_library(doctest INTERFACE)
 target_include_directories(doctest INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_library(stb_image INTERFACE)
+target_include_directories(stb_image INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/stbimage")
+
 # ---- GLFW (预编译, Windows/MinGW-w64) ----
 # 以 IMPORTED 目标方式引入，下游只需 target_link_libraries(<target> glfw)。
 # 目标名与 GLFW 官方 CMake / FetchContent 产出的一致，将来若要换成源码构建，

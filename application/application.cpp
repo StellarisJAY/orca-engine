@@ -11,6 +11,7 @@ bool Application::init(const ApplicationInitDesc &desc)
 {
     // 创建资源加载器
     ResourceLoader::create_singleton();
+    ResourceCache::create_singleton();
     // 创建rendering device
     RenderingDevice::create_singleton();
     auto device = RenderingDevice::get_singleton();

@@ -57,10 +57,10 @@ struct CameraData
 struct InstanceData
 {
     Transform3D transfrom;
-    RID mesh;
-    RID material;
-    RID scene;
-    bool visible;
+    RID mesh = 0;
+    RID material = 0;
+    RID scene = 0;
+    bool visible = false;
 };
 
 struct LightData

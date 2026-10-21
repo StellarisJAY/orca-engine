@@ -10,6 +10,7 @@ namespace Math
     inline double pow2(double value) { return value * value; }
     inline double pow(double value, double p) { return std::pow(value, p); }
     inline double acos(double value) { return std::acos(value); }
+    inline double asin(double value) { return std::asin(value); }
     inline double abs(double value) { return std::abs(value); }
     inline double floor(double value) { return std::floor(value); }
     inline double ceil(double value) { return std::ceil(value); }

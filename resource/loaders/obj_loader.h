@@ -6,5 +6,5 @@ class ObjMeshLoader: public ResourceFormatLoader
 {
 public:
     Ref<Resource> load(const std::string url) override;
-    const std::string format_extension() const override { return ".obj"; }
+    std::vector<std::string> format_extensions() const override { return {".obj"}; }
 };

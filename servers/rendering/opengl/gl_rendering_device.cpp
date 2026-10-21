@@ -63,6 +63,9 @@ bool GLRenderingDevice::init_swapchain()
     if (width > 0 && height > 0)
         glViewport(0, 0, width, height);
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK); // 只剔除背面
+    glFrontFace(GL_CCW); // 逆时针为正面
     glClearColor(0.10f, 0.11f, 0.13f, 1.0f);
     return true;
 }

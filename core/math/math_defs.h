@@ -17,6 +17,5 @@ namespace Math
 enum EulerOrder{
     YXZ,
     XYZ,
-    ZXY,
     ZYX
 };

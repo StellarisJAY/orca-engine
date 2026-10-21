@@ -8,7 +8,7 @@ SceneTree *Node::get_scene_tree() const
 
 Node *Node::get_child(uint32_t idx) const
 {
-    if(idx > children.size()) return nullptr;
+    if(idx >= children.size()) return nullptr;
     return children[idx];
 }
 
@@ -36,7 +36,7 @@ void Node::add_child(Node *child)
 
 Node *Node::remove_child(uint32_t idx)
 {
-    if(idx > children.size()) return nullptr;
+    if(idx >= children.size()) return nullptr;
     Node *child = children[idx];
     children.erase(children.begin() + idx);
     child->parent = nullptr;
@@ -52,7 +52,7 @@ Node *Node::remove_child(Node *child)
     int idx = -1;
     for(int i = 0; i < children.size(); i++)
     {
-        if(children[i] == child) idx = i; break;
+        if(children[i] == child) {idx = i; break;}
     }
     if(idx == -1) return nullptr;
     children.erase(children.begin() + idx);
@@ -66,6 +66,8 @@ Node *Node::remove_child(Node *child)
 void Node::queued_free()
 {
     parent->remove_child(this);
+    _notification(NOTIFICATION_EXIT_TREE);
+    _propagate_exit_tree();
     // TODO 释放内存
 }
 

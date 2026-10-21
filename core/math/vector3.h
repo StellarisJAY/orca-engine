@@ -31,6 +31,13 @@ struct Vector3
             real_t z;
         };
 
+        struct 
+        {
+            real_t pitch;
+            real_t yaw;
+            real_t roll;
+        };
+
         real_t coords[3] = {0, 0, 0};
     };
 

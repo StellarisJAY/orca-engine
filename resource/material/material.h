@@ -3,10 +3,21 @@
 #include "resource.h"
 #include "object/rid.h"
 #include "math/color.h"
+#include "object/ref_counted.h"
+#include "texture/image_texture.h"
+
+enum class MaterialTextureSlot: uint8_t
+{
+    Albedo = 0,
+    Normal,
+    Roughness,
+    Metallic,
+    AO,
+};
 
 class Material: public Resource
 {
-    RID material;
+    RID material = 0;
 public:
     RID get_rid() const { return material; }
 };
@@ -20,9 +31,10 @@ private:
     float specular = 1.0;
     float normal_scale = 1.0;
     float emission = 0.0;
-    // TODO 贴图槽位
+    // 贴图槽位
+    Ref<ImageTexture> texture_slots[5] = {Ref<ImageTexture>(nullptr), Ref<ImageTexture>(nullptr), Ref<ImageTexture>(nullptr), Ref<ImageTexture>(nullptr), Ref<ImageTexture>(nullptr)};
 protected:
-    RID rid;
+    RID rid = 0;
 public:
     RID get_rid() const override { return rid; }
     void set_rid(RID rid) { this->rid = rid; }

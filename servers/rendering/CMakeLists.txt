@@ -6,10 +6,28 @@ add_library(orca-rendering STATIC
     rendering_device.cpp
     rendering_server.cpp
     rendering_storage.cpp
+    shader_loader.cpp
 )
 
 target_include_directories(orca-rendering PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(orca-rendering PUBLIC orca-math orca-core)
+
+# shader 以 glsl 文件为唯一来源：
+# 1. 开发期回退路径直接指向源码树，改动后无需拷贝即可生效；
+# 2. 同时按资源目录约定拷贝到构建目录，供 res://shaders/... 加载。
+# 用 ALL 自定义目标而不是静态库的 POST_BUILD，保证只改 glsl 时也能同步拷贝。
+target_compile_definitions(orca-rendering PRIVATE
+    ORCA_SHADER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+)
+file(GLOB_RECURSE ORCA_SHADER_FILES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.glsl")
+add_custom_target(orca-shader-resources ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+        "${CMAKE_BINARY_DIR}/resources/shaders"
+    DEPENDS ${ORCA_SHADER_FILES}
+    COMMENT "Copying shader sources to runtime resources")
+add_dependencies(orca-rendering orca-shader-resources)
 
 # 默认后端：把 ORCA_RENDERER_DEFAULT 转成编译期宏，供 RenderingDevice::get_default_driver() 使用。
 string(TOUPPER "${ORCA_RENDERER_DEFAULT}" ORCA_RENDERER_DEFAULT_UPPER)
