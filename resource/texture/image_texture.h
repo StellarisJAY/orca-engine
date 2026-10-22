@@ -11,7 +11,7 @@ protected:
 private:
     uint32_t width = 0;
     uint32_t height = 0;
-    uint8_t channels = 4;
+    uint8_t channels = 1;
 
     /// @brief RGBA pixels
     std::vector<uint8_t> pixels;
@@ -24,6 +24,7 @@ private:
     bool rid_dirty = false;
 public:
     RID get_rid() const override { return rid; }
+    void set_rid(RID rid) { this->rid = rid; }
     Ref<Resource> duplicate() const override 
     {
         return Ref<Resource>(memnew(ImageTexture));
@@ -36,12 +37,16 @@ public:
     uint32_t get_height() const { return height; }
     uint8_t get_channels() const { return channels; }
     bool is_srgb() const { return srgb; }
+    bool is_repeat() const { return repeat; }
+    bool is_linear_filter() const { return linear_filter; }
+    bool is_gen_mipmap() const { return generate_mipmap; }
 
     void set_pixels(const std::vector<uint8_t> &pixels) { this->pixels = pixels; }
     void set_width(uint32_t w) { width = w; }
     void set_height(uint32_t h) { height = h; }
-    void set_channels(uint8_t n) { channels = n; }
+    void set_channels(uint8_t c) { channels = c; }
+    void set_srgb(bool srgb) { this->srgb = srgb; }
 
     bool is_rid_dirty() const { return rid_dirty; }
-    void mark_dirty() { rid_dirty = true; }
+    void mark_dirty(bool dirty) { rid_dirty = dirty; }
 };

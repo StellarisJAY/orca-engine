@@ -29,6 +29,9 @@ struct MeshData
     std::vector<Vector3> vertices;
     std::vector<Vector3> normals;
     std::vector<Vector2> uvs;
+    std::vector<Vector3> tangents;
+    std::vector<Vector3> bitangents;
+    
     std::vector<uint32_t> indices;
     bool has_vertices = false;
     bool has_indices = false;
@@ -46,6 +49,23 @@ struct MaterialData
     float specular = 1.0;
     float normal_scale = 1.0;
     float emission = 0.0;
+
+    RID texture_albedo = 0;
+    RID texture_normal = 0;
+    RID texture_roughness = 0;
+    RID texture_metallic = 0;
+    RID texture_ao = 0;
+};
+
+struct TextureData
+{
+    uint32_t texture_2d = 0; // device层句柄
+    uint32_t width = 0;
+    uint32_t height = 0;
+    bool srgb = true;
+    bool repeat = true;
+    bool linear_filter = true;
+    bool mipmap = true;
 };
 
 struct CameraData
@@ -92,4 +112,5 @@ public:
     RIDStorage<EnvironmentData> environments{RIDType::Environment};
     RIDStorage<MaterialData> materials{RIDType::Material};
     RIDStorage<LightData> lights{RIDType::Light};
+    RIDStorage<TextureData> textures{RIDType::Texture};
 };

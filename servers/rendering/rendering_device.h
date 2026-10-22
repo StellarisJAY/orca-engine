@@ -52,6 +52,18 @@ struct DrawItem
     MaterialData *material = 0;
 };
 
+/// @brief 2D纹理详情
+struct TextureDesc
+{
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint8_t channels = 1;
+    bool gen_mipmap = true;
+    bool repeat = false;
+    bool linear_filter = false;
+    bool srgb = true;
+};
+
 // 渲染后端抽象基类。
 //
 // 设计原则：基类只描述“所有图形 API 都共有”的生命周期与原语；
@@ -114,6 +126,8 @@ public:
         const std::vector<Vector3> &vertices,
         const std::vector<Vector3> &normals,
         const std::vector<Vector2> &uvs,
+        const std::vector<Vector3> &tangents,
+        const std::vector<Vector3> &bitangents,
         const std::vector<uint32_t> &indices) = 0;
 
     // 释放 create_mesh_surface 返回的句柄及其内部缓冲。
@@ -134,6 +148,12 @@ public:
     virtual void set_uniform_float(uint64_t program, const char *uniform, float data) = 0;
     virtual void set_uniform_vec3(uint64_t program, const char *uniform, const real_t *data) = 0;
     virtual void set_uniform_int(uint64_t program, const char *uniform, int data) = 0;
+
+    // 2D纹理
+
+    virtual uint32_t create_texture_2d(const TextureDesc &desc, const void *pixels) = 0;
+    virtual void bind_texture_2d(uint32_t unit, uint32_t texture) = 0;
+    virtual void destroy_texture_2d(uint32_t texture) = 0;
 };
 
 inline std::shared_ptr<RenderingDevice> RenderingDevice::singleton;

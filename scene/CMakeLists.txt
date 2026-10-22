@@ -4,6 +4,7 @@ add_library(orca-scene STATIC
     scene_tree.cpp
     3d/node3d.cpp
     3d/camera_3d.cpp
+    3d/mesh_instance_3d.cpp
 )
 
 target_link_libraries(orca-scene PRIVATE orca-object orca-rendering orca-resource orca-core)

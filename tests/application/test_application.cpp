@@ -9,15 +9,15 @@
 #include "material/material.h"
 #include "3d/light_3d.h"
 
-class Player: public Node3D
+class Player : public Node3D
 {
     real_t gravity = -4.9;
     Vector3 velocity = Vector3::ZERO;
     real_t angle = 0.0;
+
 public:
     void process(double delta) override
     {
-        
     }
 
     void physics_process(double delta) override
@@ -36,51 +36,47 @@ public:
 Node3D *build_main_scene(Application *app)
 {
     Ref<Resource> sphere_res = ResourceLoader::get_singleton()->load("res://sphere.obj");
-    Ref<Resource> monkey_head_res = ResourceLoader::get_singleton()->load("res://monkey_head.obj");
-    if(sphere_res.is_null()) throw "can't find sphere mesh resource";
-    if(monkey_head_res.is_null()) throw "can't find monkey head resource";
-
-    // Ref<Resource> normal_res = ResourceLoader::get_singleton()->load("res://normal.png");
-    // if(normal_res.is_null()) throw "can't find normal map resource";
-
+    if (sphere_res.is_null())
+        throw "can't find sphere mesh resource";
     Ref<Mesh> sphere_mesh = sphere_res.cast<Mesh>();
-    Ref<Mesh> monkey_head_mesh = monkey_head_res.cast<Mesh>();
-    // Ref<ImageTexture> text_normal = normal_res.cast<ImageTexture>();
+    std::printf("meshed loaded\n");
+
+    auto normal_res = ResourceLoader::get_singleton()->load("res://textures/wall/normal.png");
+    auto albedo_res = ResourceLoader::get_singleton()->load("res://textures/wall/albedo.png");
+    auto roughness_res = ResourceLoader::get_singleton()->load("res://textures/wall/roughness.png");
+    auto metallic_res = ResourceLoader::get_singleton()->load("res://textures/wall/metallic.png");
+
+    if(normal_res.is_null() || albedo_res.is_null() || roughness_res.is_null()) 
+        throw "can't find textures";
+    
+    auto tex_normal = normal_res.cast<ImageTexture>();
+    auto tex_albedo = albedo_res.cast<ImageTexture>();
+    auto tex_roughness = roughness_res.cast<ImageTexture>();
+
+    std::printf("textures loaded\n");
+
+    auto tex_metallic = metallic_res.cast<ImageTexture>();
+    auto mat = Ref(memnew(StandardMaterial));
+    mat->set_texture_albedo(tex_albedo);
+    mat->set_texture_normal(tex_normal);
+    mat->set_texture_roughness(tex_roughness);
+    mat->set_texture_metallic(tex_metallic);
+
+    std::printf("material loaded\n");
 
     World3D *world = memnew(World3D);
     app->set_main_scene(world);
     world->set_ambient(Color(128, 128, 128), 1.0);
 
-    Ref<StandardMaterial> mat_gold = Ref(memnew(StandardMaterial));
-    Ref<StandardMaterial> mat_red = Ref(memnew(StandardMaterial));
-    Ref<StandardMaterial> mat_silver = Ref(memnew(StandardMaterial));
-    mat_gold->set_albedo(Color(255, 255, 0));
-    mat_gold->set_metallic(1.0f);
-    mat_gold->set_roughness(0.5f);
-    mat_red->set_albedo(Color(255, 0, 0));
-    mat_red->set_metallic(0.0f);
-    mat_red->set_roughness(0.25f);
-    mat_silver->set_albedo(Color(255, 255, 255));
-    mat_silver->set_metallic(1.0f);
-    mat_silver->set_roughness(0.5f);
+    Player *player = memnew(Player);
+    world->add_child(player);
+    player->set_physics_process(true);
+    player->add_child(memnew(MeshInstance3D(sphere_mesh, mat)));
+    player->set_position({0, 0, 0});
+    // player->set_scale({0.8, 0.8, 0.8});
 
-    for(int i = -4; i <= 4; i+=2)
-    {
-        for(int j = -2; j <= 2; j+=2)
-        {
-            Ref<StandardMaterial> mat = Ref(memnew(StandardMaterial));
-            mat->set_albedo({200, 0, 0});
-            mat->set_metallic(j == -2 ? 1.0 : (j == 0 ? 0.5 : 0.0));
-            mat->set_roughness((i + 4.0)/10.0 + 0.1);
-            Player *p = memnew(Player);
-            world->add_child(p);
-            p->add_child(memnew(MeshInstance3D(monkey_head_mesh, mat)));
-            p->set_position({(float)i, (float)j, 0});
-            p->set_scale({0.8, 0.8, 0.8});
-        }
-    }
     Light3D *sun = memnew(Light3D);
-    sun->set_direction(Vector3(-1,-1,-1));
+    sun->set_direction(Vector3(-1, -1, -1));
     world->add_child(sun);
     return world;
 }
@@ -90,16 +86,17 @@ int main()
     Application app;
     ApplicationInitDesc desc;
     desc.fullscreen = false;
-    desc.screen_w = 2560;
-    desc.screen_h = 1440;
-    if(!app.init(desc)) return -1;
+    desc.screen_w = 800;
+    desc.screen_h = 600;
+    if (!app.init(desc))
+        return -1;
 
     Node *world = build_main_scene(&app);
-    
+
     Camera3D *main_camera = memnew(Camera3D);
     world->add_child(main_camera);
     main_camera->set_perspective(60.0, (float)desc.screen_w / (float)desc.screen_h, 0.1, 100);
-    main_camera->set_position({0, 0, 5});
+    main_camera->set_position({0, 0, 3});
     main_camera->set_main_camera();
 
     auto p = main_camera->get_global_transform().origin;
@@ -109,5 +106,3 @@ int main()
     app.shutdown();
     return 0;
 }
-
-

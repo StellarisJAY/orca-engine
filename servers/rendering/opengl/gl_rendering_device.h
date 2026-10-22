@@ -49,6 +49,8 @@ public:
         const std::vector<Vector3> &vertices,
         const std::vector<Vector3> &normals,
         const std::vector<Vector2> &uvs,
+        const std::vector<Vector3> &tangents,
+        const std::vector<Vector3> &bitangents,
         const std::vector<uint32_t> &indices) override;
 
     void destroy_mesh_surface(uint32_t surface) override;
@@ -64,5 +66,9 @@ public:
     void set_uniform_float(uint64_t program, const char *uniform, float data) override;
     void set_uniform_vec3(uint64_t program, const char *uniform, const real_t *data) override;
     void set_uniform_int(uint64_t program, const char *uniform, int data) override;
+
+    uint32_t create_texture_2d(const TextureDesc &desc, const void *pixels) override;
+    void bind_texture_2d(uint32_t unit, uint32_t texture) override;
+    void destroy_texture_2d(uint32_t texture) override;
 };
 

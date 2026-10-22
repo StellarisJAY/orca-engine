@@ -72,6 +72,8 @@ public:
     // 接管指针
     Ref(T *ptr) : reference(ptr) {}
 
+    Ref() = default;
+
     // 拷贝构造，需要增加计数
     Ref(const Ref<T> &other) : reference(other.reference)
     {

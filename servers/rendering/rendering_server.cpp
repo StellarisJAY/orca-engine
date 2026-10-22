@@ -22,7 +22,7 @@ namespace
             data.surface = 0;
         }
 
-        data.surface = device->create_mesh_surface(data.vertices, data.normals, data.uvs, data.indices);
+        data.surface = device->create_mesh_surface(data.vertices, data.normals, data.uvs, data.tangents, data.bitangents, data.indices);
         data.index_count = static_cast<uint32_t>(data.indices.size());
     }
 } // namespace
@@ -120,7 +120,9 @@ void RenderingServer::set_mesh_vertices(
     RID mesh,
     const std::vector<Vector3> &vertices,
     const std::vector<Vector3> &normals,
-    const std::vector<Vector2> &uvs)
+    const std::vector<Vector2> &uvs,
+    const std::vector<Vector3> &tangents,
+    const std::vector<Vector3> &bitangents)
 {
     MeshData *data = storage.meshes.get_data(mesh);
     if (data == nullptr)
@@ -130,6 +132,8 @@ void RenderingServer::set_mesh_vertices(
     data->normals = normals;
     data->uvs = uvs;
     data->has_vertices = true;
+    data->tangents = tangents;
+    data->bitangents = bitangents;
     commit_mesh_surface(*data);
 }
 
@@ -152,7 +156,7 @@ RID RenderingServer::create_instance()
 
 void RenderingServer::set_instance_mesh(RID instance, RID mesh)
 {
-    if(auto instance_data = storage.instances.get_data(instance))
+    if (auto instance_data = storage.instances.get_data(instance))
     {
         instance_data->mesh = mesh;
     }
@@ -160,7 +164,7 @@ void RenderingServer::set_instance_mesh(RID instance, RID mesh)
 
 void RenderingServer::set_instance_transform(RID instance, const Transform3D &transform)
 {
-    if(auto instance_data = storage.instances.get_data(instance))
+    if (auto instance_data = storage.instances.get_data(instance))
     {
         instance_data->transfrom = transform;
     }
@@ -168,7 +172,7 @@ void RenderingServer::set_instance_transform(RID instance, const Transform3D &tr
 
 void RenderingServer::set_instance_scene(RID instance, RID scene)
 {
-    if(auto instance_data = storage.instances.get_data(instance))
+    if (auto instance_data = storage.instances.get_data(instance))
     {
         instance_data->scene = scene;
     }
@@ -176,7 +180,7 @@ void RenderingServer::set_instance_scene(RID instance, RID scene)
 
 void RenderingServer::set_instance_visible(RID instance, bool visible)
 {
-    if(auto instance_data = storage.instances.get_data(instance))
+    if (auto instance_data = storage.instances.get_data(instance))
     {
         instance_data->visible = visible;
     }
@@ -184,7 +188,7 @@ void RenderingServer::set_instance_visible(RID instance, bool visible)
 
 void RenderingServer::set_instance_material(RID instance, RID material)
 {
-    if(auto instance_data = storage.instances.get_data(instance))
+    if (auto instance_data = storage.instances.get_data(instance))
     {
         instance_data->material = material;
     }
@@ -197,7 +201,7 @@ RID RenderingServer::create_material()
 
 void RenderingServer::set_material_albedo(RID mat, const Color &color)
 {
-    if(auto material_data = storage.materials.get_data(mat))
+    if (auto material_data = storage.materials.get_data(mat))
     {
         material_data->albedo = color;
     }
@@ -205,7 +209,7 @@ void RenderingServer::set_material_albedo(RID mat, const Color &color)
 
 void RenderingServer::set_material_roughness(RID mat, float roughness)
 {
-    if(auto material_data = storage.materials.get_data(mat))
+    if (auto material_data = storage.materials.get_data(mat))
     {
         material_data->roughness = roughness;
     }
@@ -213,9 +217,75 @@ void RenderingServer::set_material_roughness(RID mat, float roughness)
 
 void RenderingServer::set_material_metallic(RID mat, float metallic)
 {
-    if(auto material_data = storage.materials.get_data(mat))
+    if (auto material_data = storage.materials.get_data(mat))
     {
         material_data->metallic = metallic;
+    }
+}
+
+void RenderingServer::set_material_texture(RID mat, uint8_t slot, RID texture)
+{
+    TextureData *texture_data = storage.textures.get_data(texture);
+    if (texture_data == nullptr)
+        return;
+
+    if (auto material_data = storage.materials.get_data(mat))
+    {
+        switch (slot)
+        {
+        case TextureSlotAlbedo:
+            material_data->texture_albedo = texture;
+            break;
+        case TextureSlotNormal:
+            material_data->texture_normal = texture;
+            break;
+        case TextureSlotRoughness:
+            material_data->texture_roughness = texture;
+            break;
+        case TextureSlotMetallic:
+            material_data->texture_metallic = texture;
+            break;
+        case TextureSlotAO:
+            material_data->texture_ao = texture;
+            break;
+        }
+    }
+}
+
+RID RenderingServer::create_texture()
+{
+    return storage.textures.create(TextureData());
+}
+
+void RenderingServer::set_texture_image(
+    RID texture,
+    uint32_t width,
+    uint32_t height,
+    uint8_t channels,
+    const std::vector<uint8_t> &pixels,
+    bool srgb,
+    bool repeat,
+    bool linear_filter,
+    bool gen_mipmap)
+{
+    if (TextureData *texture_data = storage.textures.get_data(texture))
+    {
+        TextureDesc desc{
+            .width = width,
+            .height = height,
+            .channels = channels,
+            .gen_mipmap = gen_mipmap,
+            .repeat = repeat,
+            .linear_filter = linear_filter,
+            .srgb = srgb};
+        uint32_t handle = RenderingDevice::get_singleton()->create_texture_2d(desc, pixels.data());
+        texture_data->width = width;
+        texture_data->height = height;
+        texture_data->texture_2d = handle;
+        texture_data->srgb = srgb;
+        texture_data->mipmap = gen_mipmap;
+        texture_data->repeat = repeat;
+        texture_data->linear_filter = linear_filter;
     }
 }
 
@@ -227,7 +297,7 @@ RID RenderingServer::create_camera()
 
 void RenderingServer::set_camera_transform(RID camera, const Transform3D &transform)
 {
-    if(auto camera_data = storage.cameras.get_data(camera))
+    if (auto camera_data = storage.cameras.get_data(camera))
     {
         camera_data->transform = transform;
     }
@@ -235,7 +305,7 @@ void RenderingServer::set_camera_transform(RID camera, const Transform3D &transf
 
 void RenderingServer::set_camera_perspective(RID camera, real_t fovy, real_t aspect, real_t near, real_t far)
 {
-    if(auto camera_data = storage.cameras.get_data(camera))
+    if (auto camera_data = storage.cameras.get_data(camera))
     {
         camera_data->projection = Projection::create_perspective(fovy, aspect, near, far);
     }
@@ -243,7 +313,7 @@ void RenderingServer::set_camera_perspective(RID camera, real_t fovy, real_t asp
 
 void RenderingServer::set_camera_orthogonal(RID camera, real_t left, real_t right, real_t bottom, real_t top, real_t near, real_t far)
 {
-    if(auto camera_data = storage.cameras.get_data(camera))
+    if (auto camera_data = storage.cameras.get_data(camera))
     {
         camera_data->projection = Projection::create_orthogonal(left, right, bottom, top, near, far);
     }
@@ -260,7 +330,7 @@ RID RenderingServer::create_light()
 
 void RenderingServer::set_light_transform(RID light, const Transform3D &transform)
 {
-    if(auto light_data = storage.lights.get_data(light))
+    if (auto light_data = storage.lights.get_data(light))
     {
         light_data->transform = transform;
     }
@@ -279,7 +349,7 @@ void RenderingServer::set_light_color(RID light, const Color &color)
 
 void RenderingServer::set_light_type(RID light, int type)
 {
-    if(auto light_data = storage.lights.get_data(light))
+    if (auto light_data = storage.lights.get_data(light))
     {
         light_data->type = type;
     }
@@ -301,7 +371,7 @@ void RenderingServer::set_light_scene(RID light, RID scene)
 
 void RenderingServer::set_light_cast_shadow(RID light, bool shadow)
 {
-    if(auto light_data = storage.lights.get_data(light))
+    if (auto light_data = storage.lights.get_data(light))
     {
         light_data->cast_shadow = shadow;
     }
@@ -319,7 +389,7 @@ void RenderingServer::set_light_temperature(RID light, float temperature)
 
 void RenderingServer::set_light_direction(RID light, const Vector3 &direction)
 {
-    if(auto light_data = storage.lights.get_data(light))
+    if (auto light_data = storage.lights.get_data(light))
     {
         light_data->direction = direction;
     }
@@ -451,6 +521,34 @@ void RenderingServer::draw()
         rendering_device->set_uniform_float(program, "u_metallic", material->metallic);
         rendering_device->set_uniform_float(program, "u_roughness", material->roughness);
 
+        // 基础色贴图
+        TextureData *tex_albedo = storage.textures.get_data(material->texture_albedo);
+        if (tex_albedo)
+        {
+            rendering_device->bind_texture_2d(0, tex_albedo->texture_2d);
+            rendering_device->set_uniform_int(program, "u_albedo_texture", 0);
+        }
+        // 法线贴图
+        TextureData *tex_normal = storage.textures.get_data(material->texture_normal);
+        if (tex_normal)
+        {
+            rendering_device->bind_texture_2d(1, tex_normal->texture_2d);
+            rendering_device->set_uniform_int(program, "u_normal_texture", 1);
+        }
+        // 金属度贴图
+        TextureData *tex_metallic = storage.textures.get_data(material->texture_metallic);
+        if (tex_metallic)
+        {
+            rendering_device->bind_texture_2d(2, tex_metallic->texture_2d);
+            rendering_device->set_uniform_int(program, "u_metallic_texture", 2);
+        }
+        // 粗糙度贴图
+        TextureData *tex_roughness = storage.textures.get_data(material->texture_roughness);
+        if (tex_roughness)
+        {
+            rendering_device->bind_texture_2d(3, tex_roughness->texture_2d);
+            rendering_device->set_uniform_int(program, "u_roughness_texture", 3);
+        }
         RenderingDevice::get_singleton()->draw_call(item);
     }
 }

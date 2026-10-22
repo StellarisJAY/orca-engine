@@ -85,6 +85,8 @@ public:
         const std::vector<Vector3> &,
         const std::vector<Vector3> &,
         const std::vector<Vector2> &,
+        const std::vector<Vector3> &,
+        const std::vector<Vector3> &,
         const std::vector<uint32_t> &) override { return 0; }
     void destroy_mesh_surface(uint32_t) override {}
     void draw_call(const DrawItem &item) override {}
@@ -98,4 +100,8 @@ public:
     void set_uniform_float(uint64_t program, const char *uniform, float data) override {};
     void set_uniform_vec3(uint64_t program, const char *uniform, const real_t *data) override {};
     void set_uniform_int(uint64_t program, const char *uniform, int data) override {}
+
+    uint32_t create_texture_2d(const TextureDesc &desc, const void *pixels) { return 0; }
+    void bind_texture_2d(uint32_t unit, uint32_t texture) {}
+    void destroy_texture_2d(uint32_t texture) {}
 };

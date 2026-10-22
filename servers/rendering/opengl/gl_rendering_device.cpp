@@ -63,9 +63,6 @@ bool GLRenderingDevice::init_swapchain()
     if (width > 0 && height > 0)
         glViewport(0, 0, width, height);
     glEnable(GL_DEPTH_TEST);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK); // 只剔除背面
-    glFrontFace(GL_CCW); // 逆时针为正面
     glClearColor(0.10f, 0.11f, 0.13f, 1.0f);
     return true;
 }
@@ -80,23 +77,32 @@ uint32_t GLRenderingDevice::create_mesh_surface(
     const std::vector<Vector3> &vertices,
     const std::vector<Vector3> &normals,
     const std::vector<Vector2> &uvs,
+    const std::vector<Vector3> &tangents,
+    const std::vector<Vector3> &bitangents,
     const std::vector<uint32_t> &indices)
 {
     const size_t vertex_count = vertices.size();
-    if (vertex_count == 0 || normals.size() != vertex_count || uvs.size() != vertex_count)
+    if (vertex_count == 0 
+        || normals.size() != vertex_count 
+        || uvs.size() != vertex_count 
+        || tangents.size() != vertex_count 
+        || bitangents.size() != vertex_count)
     {
         std::printf("[ERROR] create_mesh_surface: vertex/normal/uv count mismatch\n");
         return 0;
     }
 
-    // 交错打包 [px,py,pz, nx,ny,nz, u,v]。
+    // 交错打包 [px,py,pz, nx,ny,nz, u,v, tx,ty,tz, btx,bty,btz]。
     std::vector<real_t> packed;
-    packed.reserve(vertex_count * 8);
+    packed.reserve(vertex_count * 14);
     for (size_t i = 0; i < vertex_count; i++)
     {
         const Vector3 &p = vertices[i];
         const Vector3 &n = normals[i];
         const Vector2 &uv = uvs[i];
+        const Vector3 &tangent = tangents[i];
+        const Vector3 &bitangent = bitangents[i];
+
         packed.push_back(p.x);
         packed.push_back(p.y);
         packed.push_back(p.z);
@@ -105,6 +111,12 @@ uint32_t GLRenderingDevice::create_mesh_surface(
         packed.push_back(n.z);
         packed.push_back(uv.x);
         packed.push_back(uv.y);
+        packed.push_back(tangent.x);
+        packed.push_back(tangent.y);
+        packed.push_back(tangent.z);
+        packed.push_back(bitangent.x);
+        packed.push_back(bitangent.y);
+        packed.push_back(bitangent.z);
     }
 
     GLuint vbo = 0;
@@ -122,7 +134,7 @@ uint32_t GLRenderingDevice::create_mesh_surface(
                  static_cast<GLsizeiptr>(packed.size() * sizeof(real_t)),
                  packed.data(), GL_STATIC_DRAW);
 
-    const GLsizei stride = static_cast<GLsizei>(8 * sizeof(real_t));
+    const GLsizei stride = static_cast<GLsizei>(14 * sizeof(real_t));
     const auto offset = [](size_t element)
     {
         return reinterpret_cast<void *>(element * sizeof(real_t));
@@ -134,6 +146,10 @@ uint32_t GLRenderingDevice::create_mesh_surface(
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, offset(3)); // normal
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, offset(6)); // uv
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, stride, offset(8)); // tangent
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, stride, offset(11)); // bitangent
 
     // 索引缓冲：EBO 绑定属于 VAO 状态，必须在 VAO 绑定期间设置。
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
@@ -257,7 +273,8 @@ void GLRenderingDevice::set_uniform_mat4(uint64_t program, const char *uniform, 
     if (shader_program == nullptr || shader_program->program == 0)
         return;
     int64_t location = shader_program->get_uniform_location(uniform);
-    if(location < 0) return;
+    if (location < 0)
+        return;
     glUniformMatrix4fv(location, 1, GL_FALSE, data);
 }
 
@@ -267,7 +284,8 @@ void GLRenderingDevice::set_uniform_vec4(uint64_t program, const char *uniform, 
     if (shader_program == nullptr || shader_program->program == 0)
         return;
     int64_t location = shader_program->get_uniform_location(uniform);
-    if(location < 0) return;
+    if (location < 0)
+        return;
     glUniform4fv(location, 1, data);
 }
 
@@ -277,7 +295,8 @@ void GLRenderingDevice::set_uniform_float(uint64_t program, const char *uniform,
     if (shader_program == nullptr || shader_program->program == 0)
         return;
     int64_t location = shader_program->get_uniform_location(uniform);
-    if(location < 0) return;
+    if (location < 0)
+        return;
     glUniform1f(location, data);
 }
 
@@ -287,7 +306,8 @@ void GLRenderingDevice::set_uniform_vec3(uint64_t program, const char *uniform, 
     if (shader_program == nullptr || shader_program->program == 0)
         return;
     int64_t location = shader_program->get_uniform_location(uniform);
-    if(location < 0) return;
+    if (location < 0)
+        return;
     glUniform3fv(location, 1, data);
 }
 
@@ -297,8 +317,59 @@ void GLRenderingDevice::set_uniform_int(uint64_t program, const char *uniform, i
     if (shader_program == nullptr || shader_program->program == 0)
         return;
     int64_t location = shader_program->get_uniform_location(uniform);
-    if(location < 0) return;
+    if (location < 0)
+        return;
     glUniform1i(location, data);
+}
+
+uint32_t GLRenderingDevice::create_texture_2d(const TextureDesc &desc, const void *pixels)
+{
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    const GLuint internal_format = desc.srgb ? GL_RGBA8 : GL_RGB8;
+    GLuint image_format = GL_RGBA;
+    switch (desc.channels)
+    {
+    case 1:
+        image_format = GL_RED;
+        break;
+    case 2:
+        image_format = GL_RG;
+        break;
+    case 3:
+        image_format = GL_RGB;
+        break;
+    case 4:
+        image_format = GL_RGBA;
+        break;
+    }
+    glTexImage2D(GL_TEXTURE_2D, 0, internal_format, desc.width, desc.height, 0, image_format, GL_UNSIGNED_BYTE, pixels);
+    if (desc.gen_mipmap)
+    {
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, desc.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, desc.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                    desc.gen_mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    return texture;
+}
+
+void GLRenderingDevice::bind_texture_2d(uint32_t unit, uint32_t texture)
+{
+    glActiveTexture(GL_TEXTURE0 + unit);
+    glBindTexture(GL_TEXTURE_2D, texture);
+}
+
+void GLRenderingDevice::destroy_texture_2d(uint32_t texture)
+{
+    const GLuint texture_handle = texture;
+    glDeleteTextures(1, &texture_handle);
 }
 
 int64_t GLProgram::get_uniform_location(const std::string &name)

@@ -16,13 +16,14 @@ Ref<Resource> ImageTextureLoader::load(const std::string url)
         return Ref<Resource>(nullptr);
 
     ImageTexture *texture = memnew(ImageTexture);
-    // 暂时只考虑RGBA纹理
     const int total_bytes = w * h * channels;
     texture->set_pixels(std::vector<uint8_t>(data, data + total_bytes));
     texture->set_width(w);
     texture->set_height(h);
+    texture->set_srgb(channels == 4);
     texture->set_channels(channels);
-    
+    std::printf("loaded image texture: \"%s\", w=%d,h=%d,c=%d\n", url.c_str(), w, h, channels);
+
     stbi_image_free(data);
     return Ref<Resource>(texture);
 }

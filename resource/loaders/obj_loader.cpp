@@ -78,28 +78,28 @@ namespace
     }
 
     /// @brief 当 OBJ 未提供法线时，用三角形几何计算平滑顶点法线。
-    void compute_vertex_normals(Mesh::Surface &surface)
+    void compute_vertex_normals(Mesh *mesh)
     {
-        for (Vector3 &normal : surface.normals)
+        for (Vector3 &normal : mesh->normals)
         {
             normal = Vector3();
         }
 
-        for (std::size_t i = 0; i + 2 < surface.indices.size(); i += 3)
+        for (std::size_t i = 0; i + 2 < mesh->indices.size(); i += 3)
         {
-            const uint32_t a = surface.indices[i];
-            const uint32_t b = surface.indices[i + 1];
-            const uint32_t c = surface.indices[i + 2];
+            const uint32_t a = mesh->indices[i];
+            const uint32_t b = mesh->indices[i + 1];
+            const uint32_t c = mesh->indices[i + 2];
 
             const Vector3 face_normal =
-                (surface.vertices[b] - surface.vertices[a]).cross(surface.vertices[c] - surface.vertices[a]);
+                (mesh->vertices[b] - mesh->vertices[a]).cross(mesh->vertices[c] - mesh->vertices[a]);
 
-            surface.normals[a] += face_normal;
-            surface.normals[b] += face_normal;
-            surface.normals[c] += face_normal;
+            mesh->normals[a] += face_normal;
+            mesh->normals[b] += face_normal;
+            mesh->normals[c] += face_normal;
         }
 
-        for (Vector3 &normal : surface.normals)
+        for (Vector3 &normal : mesh->normals)
         {
             normal.normalize();
         }
@@ -120,11 +120,13 @@ Ref<Resource> ObjMeshLoader::load(const std::string url)
     std::vector<Vector2> uvs;
     bool has_normals = false;
 
-    Mesh::Surface surface;
     std::unordered_map<VertexKey, uint32_t, VertexKeyHash> vertex_map;
 
     std::istringstream file(text);
     std::string line;
+
+    Mesh *mesh = memnew(Mesh);
+
     while (std::getline(file, line))
     {
         if (line.empty() || line.at(0) == '#') continue;
@@ -186,17 +188,17 @@ Ref<Resource> ObjMeshLoader::load(const std::string url)
                     auto it = vertex_map.find(key);
                     if (it == vertex_map.end())
                     {
-                        const uint32_t index = static_cast<uint32_t>(surface.vertices.size());
+                        const uint32_t index = static_cast<uint32_t>(mesh->vertices.size());
                         vertex_map.emplace(key, index);
 
-                        surface.vertices.push_back(positions[std::get<0>(key)]);
-                        surface.normals.push_back(std::get<2>(key) >= 0 ? normals[std::get<2>(key)] : Vector3());
-                        surface.uvs.push_back(std::get<1>(key) >= 0 ? uvs[std::get<1>(key)] : Vector2());
-                        surface.indices.push_back(index);
+                        mesh->vertices.push_back(positions[std::get<0>(key)]);
+                        mesh->normals.push_back(std::get<2>(key) >= 0 ? normals[std::get<2>(key)] : Vector3());
+                        mesh->uvs.push_back(std::get<1>(key) >= 0 ? uvs[std::get<1>(key)] : Vector2());
+                        mesh->indices.push_back(index);
                     }
                     else
                     {
-                        surface.indices.push_back(it->second);
+                        mesh->indices.push_back(it->second);
                     }
                 }
             }
@@ -204,12 +206,11 @@ Ref<Resource> ObjMeshLoader::load(const std::string url)
         // 其余关键字 (o / g / s / usemtl / mtllib ...) 暂不处理。
     }
 
-    if (!has_normals && !surface.normals.empty())
+    if (!has_normals && !mesh->normals.empty())
     {
-        compute_vertex_normals(surface);
+        compute_vertex_normals(mesh);
     }
-
-    Mesh *mesh = memnew(Mesh);
-    mesh->add_surface(surface);
+    // 加载顶点完成，预计算顶点切线
+    mesh->compute_tangents();
     return Ref<Resource>(mesh);
 }

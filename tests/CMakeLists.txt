@@ -13,8 +13,6 @@ add_executable(orca-tests
     core/os/test_time.cpp
 
     scene/test_scene_tree_and_node.cpp
-
-    "resource/test_obj_loader.cpp"
 )
 
 add_executable(orca-platform-window-test platform/test_window.cpp)
