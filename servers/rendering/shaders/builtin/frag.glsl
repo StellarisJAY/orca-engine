@@ -10,15 +10,23 @@ uniform vec4 u_albedo;
 uniform float u_roughness;
 uniform float u_metallic;
 
+// 基础色
 uniform sampler2D u_albedo_texture;
-uniform sampler2D u_normal_texture;
+// 法线贴图
+uniform sampler2D u_normal_texture; 
+// 粗糙度贴图
 uniform sampler2D u_roughness_texture;
+// 金属度贴图
 uniform sampler2D u_metallic_texture;
+// AO贴图
 uniform sampler2D u_ao_texture;
+// 高度贴图
+uniform sampler2D u_height_texture;
 
 uniform float u_normal_scale;
 uniform float u_ao_strength;
-uniform vec2 u_uv_scale;
+uniform vec2 u_uv_scale = vec2(2.0, 2.0);
+uniform float u_height_scale = 3.0;
 
 uniform vec3 u_light_direction;
 uniform int u_light_type;
@@ -27,6 +35,7 @@ uniform vec3 u_light_color;
 in vec2 v_uv;
 in vec3 v_normal;
 in vec3 v_view_direction;
+in vec3 v_tangent_view_dir;
 in vec3 v_world_position;
 in mat3 v_TBN;
 
@@ -62,9 +71,20 @@ float GeometrySmith(float NdotV, float NdotL, float k)
     return ggx1 * ggx2;
 }
 
+vec2 parallax_mapping(vec2 uv, vec3 view_direction)
+{
+    // 高度
+    float height = texture(u_height_texture, uv).r * u_height_scale;
+    vec2 p = normalize(view_direction).xy * height;
+    uv = uv - p;
+    return uv;
+}
+
 void main() {
-    // TODO uv scale
-    vec2 uv = v_uv;
+    // uv缩放
+    vec2 uv = v_uv * u_uv_scale;
+    // 视差贴图
+    uv = parallax_mapping(uv, v_tangent_view_dir);
     // 基础色
     vec4 base_color = u_albedo * texture(u_albedo_texture, uv);
     vec3 albedo = vec3(base_color);
@@ -77,7 +97,7 @@ void main() {
     // 法线贴图，从切向空间转换到世界空间
     vec3 normal = texture(u_normal_texture, uv).rgb;
     normal = normalize(normal * 2.0 - 1.0);
-    normal = v_TBN * normal;
+    normal = inverse(v_TBN) * normal;
 
     // 现在只是平行光，所以L是照射方向取反
     vec3 L = normalize(-u_light_direction);

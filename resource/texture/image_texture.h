@@ -49,4 +49,43 @@ public:
 
     bool is_rid_dirty() const { return rid_dirty; }
     void mark_dirty(bool dirty) { rid_dirty = dirty; }
+
+    static Ref<ImageTexture> get_default_zeros(uint32_t width, uint32_t height, uint8_t channels) 
+    {
+        Ref<ImageTexture> texture = Ref(memnew(ImageTexture));
+        texture->set_width(width);
+        texture->set_height(height);
+        texture->set_channels(channels);
+        texture->set_pixels(std::vector<uint8_t>(width*height*channels));
+        std::fill(texture->get_pixels().begin(), texture->get_pixels().end(), 0);
+        return texture;
+    }
+
+    static Ref<ImageTexture> get_default_white(uint32_t width, uint32_t height, uint8_t channels)
+    {
+        Ref<ImageTexture> texture = Ref(memnew(ImageTexture));
+        texture->set_width(width);
+        texture->set_height(height);
+        texture->set_channels(channels);
+        texture->set_pixels(std::vector<uint8_t>(width*height*channels));
+        std::fill(texture->get_pixels().begin(), texture->get_pixels().end(), 255);
+        return texture;
+    }
+
+    static Ref<ImageTexture> get_default_normal(uint32_t width, uint32_t height)
+    {
+        Ref<ImageTexture> texture = Ref(memnew(ImageTexture));
+        texture->set_width(width);
+        texture->set_height(height);
+        texture->set_channels(3);
+        texture->set_pixels(std::vector<uint8_t>(width*height*3));
+        // 128,128,255
+        for(auto i = 0; i < texture->get_pixels().size(); i+=3)
+        {
+            texture->get_pixels()[i] = 128;
+            texture->get_pixels()[i+1] = 128;
+            texture->get_pixels()[i+2] = 255;
+        }
+        return texture;
+    }
 };

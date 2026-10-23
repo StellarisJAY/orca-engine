@@ -11,6 +11,7 @@ out vec3 v_normal;
 out vec3 v_view_direction;
 out vec3 v_world_position;
 out mat3 v_TBN;
+out vec3 v_tangent_view_dir;
 
 uniform mat4 u_model;
 uniform mat4 u_view;
@@ -33,5 +34,6 @@ void main() {
     // 切线空间
     vec3 T = normalize(mat3(u_model) * a_tangent);
     vec3 B = normalize(mat3(u_model) * a_bitangent);
-    v_TBN = mat3(T,B,v_normal);
+    v_TBN = transpose(mat3(T,B,v_normal));
+    v_tangent_view_dir = v_TBN * v_view_direction;
 }

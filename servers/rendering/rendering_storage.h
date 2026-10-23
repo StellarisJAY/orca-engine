@@ -47,6 +47,8 @@ struct MaterialData
     float metallic = 0;
     float roughness = 0.5;
     float specular = 1.0;
+    Vector2 uv_scale = {1.0, 1.0};
+    float height_scale = 1.0;
     float normal_scale = 1.0;
     float emission = 0.0;
 
@@ -55,6 +57,7 @@ struct MaterialData
     RID texture_roughness = 0;
     RID texture_metallic = 0;
     RID texture_ao = 0;
+    RID texture_height = 0;
 };
 
 struct TextureData

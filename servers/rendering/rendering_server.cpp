@@ -37,6 +37,40 @@ void RenderingServer::destroy_singletone()
     memdelete(singleton);
 }
 
+void RenderingServer::create_default_textures()
+{
+    auto device = RenderingDevice::get_singleton();
+    const uint32_t width = 1024, height= 1024;
+    const uint32_t size = width * height;
+    std::vector<uint8_t> pixels(size);
+    
+    // 白色
+    std::fill(pixels.begin(), pixels.end(), 255);
+    RID white = storage.textures.create(TextureData{});
+    set_texture_image(white, width, height, 1, pixels, false, true, false, true);
+    
+    // 黑色
+    std::fill(pixels.begin(), pixels.end(), 0);
+    RID black = storage.textures.create(TextureData{});
+    set_texture_image(black, width, height, 1, pixels, false, true, false, true);
+
+    // 法线
+    pixels.resize(size * 3);
+    for(auto i = 0; i < pixels.size(); i+=3)
+    {
+        pixels[i] = 128; pixels[i+1] = 128; pixels[i+2] = 255;
+    }
+    RID normal = storage.textures.create(TextureData{});
+    set_texture_image(normal, width, height, 3, pixels, false, true, false, true);
+
+    default_texture_albedo = white;
+    default_texture_normal = normal;
+    default_texture_roughness = white;
+    default_texture_metallic = black;
+    default_texture_ao = white;
+    default_texture_height = black;
+}
+
 bool RenderingServer::init()
 {
     // 从 glsl 文件加载 builtin shader
@@ -56,6 +90,9 @@ bool RenderingServer::init()
     }
     default_shader_program = storage.shaders.create(ShaderData{.shader_program = shader_program});
 
+    // 默认贴图，材质没有贴图时使用
+    create_default_textures();
+
     // 创建默认材质，如果物体没有材质则使用该材质
     default_material = storage.materials.create(MaterialData{
         .albedo = Color(255, 255, 255),
@@ -63,7 +100,14 @@ bool RenderingServer::init()
         .roughness = 1.0,
         .specular = 1.0,
         .emission = 0,
+        .texture_albedo = default_texture_albedo,
+        .texture_normal = default_texture_normal,
+        .texture_roughness = default_texture_roughness,
+        .texture_metallic = default_texture_metallic,
+        .texture_ao = default_texture_ao,
+        .texture_height = default_texture_height
     });
+
     return true;
 }
 
@@ -249,6 +293,15 @@ void RenderingServer::set_material_texture(RID mat, uint8_t slot, RID texture)
             material_data->texture_ao = texture;
             break;
         }
+    }
+}
+
+void RenderingServer::set_material_scales(RID mat, const Vector2 &uv_scale, float height_scale)
+{
+    if(auto material_data = storage.materials.get_data(mat))
+    {
+        material_data->uv_scale = uv_scale;
+        material_data->height_scale = height_scale;
     }
 }
 
@@ -520,35 +573,45 @@ void RenderingServer::draw()
         rendering_device->set_uniform_vec4(program, "u_albedo", vec4);
         rendering_device->set_uniform_float(program, "u_metallic", material->metallic);
         rendering_device->set_uniform_float(program, "u_roughness", material->roughness);
+        rendering_device->set_uniform_vec2(program, "u_uv_scale", material->uv_scale.coords);
+        rendering_device->set_uniform_float(program, "u_height_scale", material->height_scale);
+        // 绑定纹理贴图
+        bind_textures(material, program);
 
-        // 基础色贴图
-        TextureData *tex_albedo = storage.textures.get_data(material->texture_albedo);
-        if (tex_albedo)
-        {
-            rendering_device->bind_texture_2d(0, tex_albedo->texture_2d);
-            rendering_device->set_uniform_int(program, "u_albedo_texture", 0);
-        }
-        // 法线贴图
-        TextureData *tex_normal = storage.textures.get_data(material->texture_normal);
-        if (tex_normal)
-        {
-            rendering_device->bind_texture_2d(1, tex_normal->texture_2d);
-            rendering_device->set_uniform_int(program, "u_normal_texture", 1);
-        }
-        // 金属度贴图
-        TextureData *tex_metallic = storage.textures.get_data(material->texture_metallic);
-        if (tex_metallic)
-        {
-            rendering_device->bind_texture_2d(2, tex_metallic->texture_2d);
-            rendering_device->set_uniform_int(program, "u_metallic_texture", 2);
-        }
-        // 粗糙度贴图
-        TextureData *tex_roughness = storage.textures.get_data(material->texture_roughness);
-        if (tex_roughness)
-        {
-            rendering_device->bind_texture_2d(3, tex_roughness->texture_2d);
-            rendering_device->set_uniform_int(program, "u_roughness_texture", 3);
-        }
         RenderingDevice::get_singleton()->draw_call(item);
     }
+}
+
+void RenderingServer::bind_textures(MaterialData *material, uint64_t program)
+{
+    auto rendering_device = RenderingDevice::get_singleton();
+    // 基础色贴图
+    TextureData *tex_albedo = storage.textures.get_data(material->texture_albedo == 0 ? default_texture_albedo : material->texture_albedo);
+    rendering_device->bind_texture_2d(0, tex_albedo->texture_2d);
+    rendering_device->set_uniform_int(program, "u_albedo_texture", 0);
+
+    // 法线贴图
+    TextureData *tex_normal = storage.textures.get_data(material->texture_normal == 0 ? default_texture_normal : material->texture_normal);
+    rendering_device->bind_texture_2d(1, tex_normal->texture_2d);
+    rendering_device->set_uniform_int(program, "u_normal_texture", 1);
+
+    // 粗糙度贴图
+    TextureData *tex_roughness = storage.textures.get_data(material->texture_roughness == 0 ? default_texture_roughness : material->texture_roughness);
+    rendering_device->bind_texture_2d(2, tex_roughness->texture_2d);
+    rendering_device->set_uniform_int(program, "u_roughness_texture", 2);
+
+    // 金属度贴图
+    TextureData *tex_metallic = storage.textures.get_data(material->texture_metallic == 0 ? default_texture_metallic : material->texture_metallic);
+    rendering_device->bind_texture_2d(3, tex_metallic->texture_2d);
+    rendering_device->set_uniform_int(program, "u_metallic_texture", 3);
+
+    // AO贴图
+    TextureData *tex_ao = storage.textures.get_data(material->texture_ao == 0 ? default_texture_ao : material->texture_ao);
+    rendering_device->bind_texture_2d(4, tex_ao->texture_2d);
+    rendering_device->set_uniform_int(program, "u_ao_texture", 4);
+
+    // 粗糙度贴图
+    TextureData *tex_height = storage.textures.get_data(material->texture_height == 0 ? default_texture_height : material->texture_height);
+    rendering_device->bind_texture_2d(5, tex_height->texture_2d);
+    rendering_device->set_uniform_int(program, "u_height_texture", 5);
 }

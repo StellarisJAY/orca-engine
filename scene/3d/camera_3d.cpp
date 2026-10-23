@@ -4,7 +4,6 @@
 void Camera3D::set_main_camera()
 {
     World3D *world = get_world();
-    std::printf("get world done\n");
     if(world != nullptr) world->set_main_camera(rid);
 }
 

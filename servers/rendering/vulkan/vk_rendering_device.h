@@ -5,7 +5,8 @@
 
 class VkRenderingDevice : public RenderingDevice
 {
-    static constexpr VkExtent2D defaultWindowSize = { 1280, 720 };
+    static constexpr VkExtent2D defaultWindowSize = {1280, 720};
+
 private:
     RenderingWindowInfo window_info;
     uint32_t api_version = VK_API_VERSION_1_0;
@@ -33,7 +34,7 @@ private:
     std::vector<const char *> device_extensions = {};
 
     std::vector<VkSurfaceFormatKHR> available_surface_formats = {};
-    VkSurfaceFormatKHR chosen_surface_format = { VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+    VkSurfaceFormatKHR chosen_surface_format = {VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
     std::vector<VkPresentModeKHR> available_present_modes = {};
     VkPresentModeKHR chosen_present_mode = VK_PRESENT_MODE_FIFO_KHR;
     VkExtent2D swapchain_extent = defaultWindowSize;
@@ -68,6 +69,7 @@ private:
     VkResult check_instance_layers(std::vector<const char *> &layers_to_check) const;
     VkResult check_instance_extensions(std::vector<const char *> &extensions_to_check,
                                        const std::vector<const char *> &layer_names) const;
+
 public:
     RenderingDriverType get_driver_type() const override { return RenderingDriverType::Vulkan; }
 
@@ -78,7 +80,6 @@ public:
 
     void *get_handle() const override { return instance; }
     void *get_device_handle() const override { return device; }
-
 
     // Vulkan 尚未实现
     uint32_t create_mesh_surface(
@@ -92,15 +93,15 @@ public:
     void draw_call(const DrawItem &item) override {}
     void clear() override {}
 
-    uint64_t create_shader_program(const std::string &vertex_src, const std::string &frag_src) override { return 0; };
-    void destroy_shader_program(uint64_t program) override {};
-    void bind_shader_program(uint64_t program) override {};
-    void set_uniform_mat4(uint64_t program, const char *uniform, const real_t *data) override {};
-    void set_uniform_vec4(uint64_t program, const char *uniform, const real_t *data) override {};
-    void set_uniform_float(uint64_t program, const char *uniform, float data) override {};
-    void set_uniform_vec3(uint64_t program, const char *uniform, const real_t *data) override {};
+    uint64_t create_shader_program(const std::string &vertex_src, const std::string &frag_src) override { return 0; }
+    void destroy_shader_program(uint64_t program) override {}
+    void bind_shader_program(uint64_t program) override {}
+    void set_uniform_mat4(uint64_t program, const char *uniform, const real_t *data) override {}
+    void set_uniform_vec4(uint64_t program, const char *uniform, const real_t *data) override {}
+    void set_uniform_float(uint64_t program, const char *uniform, float data) override {}
+    void set_uniform_vec3(uint64_t program, const char *uniform, const real_t *data) override {}
     void set_uniform_int(uint64_t program, const char *uniform, int data) override {}
-
+    void set_uniform_vec2(uint64_t program, const char *uniform, const real_t *data) override {}
     uint32_t create_texture_2d(const TextureDesc &desc, const void *pixels) { return 0; }
     void bind_texture_2d(uint32_t unit, uint32_t texture) {}
     void destroy_texture_2d(uint32_t texture) {}

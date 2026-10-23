@@ -10,6 +10,7 @@ void MeshInstance3D::ensure_material()
         rendering_server->set_material_albedo(material->get_rid(), material->get_albedo());
         rendering_server->set_material_metallic(material->get_rid(), material->get_metallic());
         rendering_server->set_material_roughness(material->get_rid(), material->get_roughenss());
+        rendering_server->set_material_scales(material->get_rid(), material->get_uv_scale(), material->get_height_scale());
     }
     // 没有绑定材质，使用默认材质0
     if (material.is_null())

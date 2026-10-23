@@ -15,6 +15,7 @@ enum
     TextureSlotRoughness,
     TextureSlotMetallic,
     TextureSlotAO,
+    TextureSlotHeight,
 };
 
 class RenderingServer
@@ -25,6 +26,14 @@ private:
     std::vector<DrawItem> draw_items;
 
     RID default_shader_program = 0;
+
+    RID default_texture_albedo = 0;
+    RID default_texture_normal = 0;
+    RID default_texture_roughness = 0;
+    RID default_texture_metallic = 0;
+    RID default_texture_ao = 0;
+    RID default_texture_height = 0;
+    
     RID default_material = 0;
     RID current_camera = 0;
     RID current_scene = 0;
@@ -73,6 +82,7 @@ public:
     void set_material_roughness(RID mat, float roughness);
     void set_material_metallic(RID mat, float metallic);
     void set_material_texture(RID mat, uint8_t slot, RID texture);
+    void set_material_scales(RID mat, const Vector2 &uv_scale, float height_scale);
 
     // 纹理资源
 
@@ -108,6 +118,10 @@ public:
     void free(RID rid);
     void sync(); // 同步指令
     void draw(); // 渲染指令
+
+private:
+    void bind_textures(MaterialData *material, uint64_t program);
+    void create_default_textures();
 };
 
 inline RenderingServer *RenderingServer::singleton;
