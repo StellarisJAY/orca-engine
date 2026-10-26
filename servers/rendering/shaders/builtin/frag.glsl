@@ -26,7 +26,9 @@ uniform sampler2D u_height_texture;
 uniform float u_normal_scale;
 uniform float u_ao_strength;
 uniform vec2 u_uv_scale = vec2(2.0, 2.0);
-uniform float u_height_scale = 3.0;
+
+uniform float u_parallax_scale = 1.0;
+uniform bool u_prallax_flip = true;
 
 uniform vec3 u_light_direction;
 uniform int u_light_type;
@@ -71,20 +73,35 @@ float GeometrySmith(float NdotV, float NdotL, float k)
     return ggx1 * ggx2;
 }
 
-vec2 parallax_mapping(vec2 uv, vec3 view_direction)
+#define PARALLAX_STEPS 16
+
+vec2 parallax_mapping(vec2 uv, vec3 view)
 {
-    // 高度
-    float height = texture(u_height_texture, uv).r * u_height_scale;
-    vec2 p = normalize(view_direction).xy * height;
-    uv = uv - p;
-    return uv;
+    if (u_parallax_scale <= 0.0 || view.z <= 0.0)
+        return uv;
+    // 每一个采样层的深度
+    const float layer_depth = 1.0 / PARALLAX_STEPS;
+    float current_depth = 0.0;
+    view = view / max(view.z, 0.1);
+    for(; current_depth <= 1.0; current_depth += layer_depth)
+    {
+        vec2 offset = (view * current_depth).xy;
+        float depth = texture(u_height_texture, uv - offset).r;
+        depth = u_prallax_flip ? 1.0 - depth : depth;
+        depth = depth * u_parallax_scale;
+        // 找到采样深度小于深度图深度的第一个采样深度
+        if(current_depth < depth) break;
+    }
+
+    return uv - (view * current_depth).xy;
 }
 
 void main() {
     // uv缩放
     vec2 uv = v_uv * u_uv_scale;
     // 视差贴图
-    uv = parallax_mapping(uv, v_tangent_view_dir);
+    uv = parallax_mapping(uv, normalize(v_tangent_view_dir));
+
     // 基础色
     vec4 base_color = u_albedo * texture(u_albedo_texture, uv);
     vec3 albedo = vec3(base_color);
@@ -92,7 +109,8 @@ void main() {
     float metallic = clamp(u_metallic * texture(u_metallic_texture, uv).r, 0.0, 1.0);
     // 粗糙度
     float roughness = clamp(u_roughness * texture(u_roughness_texture, uv).r, 0.04, 1.0);
-    // TODO 暂时没有AO
+    // 环境光遮蔽
+    float AO = texture(u_ao_texture, v_uv * u_uv_scale).r;
 
     // 法线贴图，从切向空间转换到世界空间
     vec3 normal = texture(u_normal_texture, uv).rgb;
@@ -111,7 +129,7 @@ void main() {
 
     // 无光面
     if(NdotL <= 0.0)  {
-        fragColor = vec4(albedo, 1.0) * u_ambient_color * u_ambient_strength;
+        fragColor = vec4(albedo, 1.0) * u_ambient_color * u_ambient_strength * AO;
         return;
     }
 
@@ -128,7 +146,7 @@ void main() {
     vec3 f_specular = D * F * G / (4.0 * NdotV * NdotL);
 
     vec3 Kd = (1 - F) * (1 - metallic);
-    vec3 Lo = (Kd * f_diffuse + f_specular) * u_light_color * NdotL * 4.0;
+    vec3 Lo = (Kd * f_diffuse * AO + f_specular) * u_light_color * NdotL * 4.0;
     vec3 ambient = albedo * u_ambient_color.rgb * u_ambient_strength;
     fragColor = vec4(Lo + ambient, 1.0);
 }

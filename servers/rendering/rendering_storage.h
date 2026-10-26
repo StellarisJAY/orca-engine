@@ -48,9 +48,10 @@ struct MaterialData
     float roughness = 0.5;
     float specular = 1.0;
     Vector2 uv_scale = {1.0, 1.0};
-    float height_scale = 1.0;
     float normal_scale = 1.0;
     float emission = 0.0;
+    float parallax_scale = 1.0;
+    bool parallax_flip = false;
 
     RID texture_albedo = 0;
     RID texture_normal = 0;

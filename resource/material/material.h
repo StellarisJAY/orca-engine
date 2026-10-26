@@ -21,7 +21,7 @@ class StandardMaterial : public Resource
 {
 private:
     Color albedo;
-    float metallic = 0;
+    float metallic = 1.0;
     float roughness = 1.0;
     float specular = 1.0;
     float normal_scale = 1.0;
@@ -29,7 +29,8 @@ private:
     // UV缩放
     Vector2 uv_scale = {1.0, 1.0};
     // 高度缩放
-    float height_scale = 1.0;
+    float parallax_scale = 1.0;
+    bool parallax_flip = false;
     // 贴图槽位
     Ref<ImageTexture> texture_slots[6];
 
@@ -51,23 +52,27 @@ public:
     float get_metallic() const { return metallic; }
     float get_roughenss() const { return roughness; }
     const Vector2 &get_uv_scale() const { return uv_scale; }
-    float get_height_scale() const { return height_scale; }
+    float get_parallax_scale() const { return parallax_scale; }
+    bool get_parallax_flip() const { return parallax_flip; }
 
     void set_albedo(const Color &color) { this->albedo = color; }
     void set_roughness(float roughness) { this->roughness = roughness; }
     void set_metallic(float metallic) { this->metallic = metallic; }
     void set_uv_scale(const Vector2 &scales) { uv_scale = scales; }
-    void set_height_scale(float scale) { height_scale = scale; }
+    void set_parallax_scale(float scale) { parallax_scale = scale; }
+    void set_parallax_flip(bool flip) { parallax_flip = flip; }
 
     void set_texture_albedo(Ref<ImageTexture> texture) { texture_slots[(uint8_t)(MaterialTextureSlot::Albedo)] = texture; }
     void set_texture_normal(Ref<ImageTexture> texture) { texture_slots[(uint8_t)(MaterialTextureSlot::Normal)] = texture; }
     void set_texture_roughness(Ref<ImageTexture> texture) { texture_slots[(uint8_t)(MaterialTextureSlot::Roughness)] = texture; }
     void set_texture_metallic(Ref<ImageTexture> texture) { texture_slots[(uint8_t)(MaterialTextureSlot::Metallic)] = texture; }
     void set_texture_height(Ref<ImageTexture> texture) { texture_slots[(uint8_t)(MaterialTextureSlot::Height)] = texture; }
+    void set_texture_ao(Ref<ImageTexture> texture) { texture_slots[(uint8_t)(MaterialTextureSlot::AO)] = texture; }
 
     Ref<ImageTexture> get_texture_albedo() const { return texture_slots[(uint8_t)(MaterialTextureSlot::Albedo)]; }
     Ref<ImageTexture> get_texture_normal() const { return texture_slots[(uint8_t)(MaterialTextureSlot::Normal)]; }
     Ref<ImageTexture> get_texture_roughness() const { return texture_slots[(uint8_t)(MaterialTextureSlot::Roughness)]; }
     Ref<ImageTexture> get_texture_metallic() const { return texture_slots[(uint8_t)(MaterialTextureSlot::Metallic)]; }
     Ref<ImageTexture> get_texture_height() const { return texture_slots[(uint8_t)(MaterialTextureSlot::Height)]; }
+    Ref<ImageTexture> get_texture_ao() const { return texture_slots[(uint8_t)(MaterialTextureSlot::AO)]; }
 };

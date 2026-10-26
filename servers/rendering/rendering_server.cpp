@@ -292,16 +292,20 @@ void RenderingServer::set_material_texture(RID mat, uint8_t slot, RID texture)
         case TextureSlotAO:
             material_data->texture_ao = texture;
             break;
+        case TextureSlotHeight:
+            material_data->texture_height = texture;
+            break;
         }
     }
 }
 
-void RenderingServer::set_material_scales(RID mat, const Vector2 &uv_scale, float height_scale)
+void RenderingServer::set_material_scales(RID mat, const Vector2 &uv_scale, float parallax_scale, bool parallax_flip)
 {
     if(auto material_data = storage.materials.get_data(mat))
     {
         material_data->uv_scale = uv_scale;
-        material_data->height_scale = height_scale;
+        material_data->parallax_flip = parallax_flip;
+        material_data->parallax_scale = parallax_scale;
     }
 }
 
@@ -574,7 +578,8 @@ void RenderingServer::draw()
         rendering_device->set_uniform_float(program, "u_metallic", material->metallic);
         rendering_device->set_uniform_float(program, "u_roughness", material->roughness);
         rendering_device->set_uniform_vec2(program, "u_uv_scale", material->uv_scale.coords);
-        rendering_device->set_uniform_float(program, "u_height_scale", material->height_scale);
+        rendering_device->set_uniform_float(program, "u_parallax_scale", material->parallax_scale);
+        rendering_device->set_uniform_bool(program, "u_parallax_flip", material->parallax_flip);
         // 绑定纹理贴图
         bind_textures(material, program);
 

@@ -10,7 +10,7 @@ void MeshInstance3D::ensure_material()
         rendering_server->set_material_albedo(material->get_rid(), material->get_albedo());
         rendering_server->set_material_metallic(material->get_rid(), material->get_metallic());
         rendering_server->set_material_roughness(material->get_rid(), material->get_roughenss());
-        rendering_server->set_material_scales(material->get_rid(), material->get_uv_scale(), material->get_height_scale());
+        rendering_server->set_material_scales(material->get_rid(), material->get_uv_scale(), material->get_parallax_scale(), material->get_parallax_flip());
     }
     // 没有绑定材质，使用默认材质0
     if (material.is_null())
@@ -36,8 +36,8 @@ void MeshInstance3D::ensure_texture()
         {
             slot->set_rid(rendering_server->create_texture());
             slot->mark_dirty(true);
-            rendering_server->set_material_texture(material->get_rid(), slot_idx, slot->get_rid());
         }
+        rendering_server->set_material_texture(material->get_rid(), slot_idx, slot->get_rid());
         if(slot->is_rid_dirty())
         {
             rendering_server->set_texture_image(

@@ -102,7 +102,8 @@ public:
     void set_uniform_vec3(uint64_t program, const char *uniform, const real_t *data) override {}
     void set_uniform_int(uint64_t program, const char *uniform, int data) override {}
     void set_uniform_vec2(uint64_t program, const char *uniform, const real_t *data) override {}
-    uint32_t create_texture_2d(const TextureDesc &desc, const void *pixels) { return 0; }
+    void set_uniform_bool(uint64_t program, const char *uniform, bool data) override {}
+    uint32_t create_texture_2d(const TextureDesc &desc, const void *pixels) override { return 0; }
     void bind_texture_2d(uint32_t unit, uint32_t texture) {}
     void destroy_texture_2d(uint32_t texture) {}
 };

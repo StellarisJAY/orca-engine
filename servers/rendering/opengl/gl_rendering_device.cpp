@@ -333,6 +333,17 @@ void GLRenderingDevice::set_uniform_vec2(uint64_t program, const char *uniform, 
     glUniform2fv(location, 1, data);
 }
 
+void GLRenderingDevice::set_uniform_bool(uint64_t program, const char *uniform, bool data)
+{
+    GLProgram *shader_program = shader_programs.at(program);
+    if (shader_program == nullptr || shader_program->program == 0)
+        return;
+    int64_t location = shader_program->get_uniform_location(uniform);
+    if (location < 0)
+        return;
+    glUniform1i(location, data ? 1 : 0);
+}
+
 uint32_t GLRenderingDevice::create_texture_2d(const TextureDesc &desc, const void *pixels)
 {
     GLuint texture = 0;

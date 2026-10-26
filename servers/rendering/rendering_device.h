@@ -149,6 +149,7 @@ public:
     virtual void set_uniform_vec3(uint64_t program, const char *uniform, const real_t *data) = 0;
     virtual void set_uniform_int(uint64_t program, const char *uniform, int data) = 0;
     virtual void set_uniform_vec2(uint64_t program, const char *uniform, const real_t *data) = 0;
+    virtual void set_uniform_bool(uint64_t program, const char *uniform, bool data) = 0;
 
     // 2D纹理
 

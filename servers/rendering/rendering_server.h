@@ -82,7 +82,7 @@ public:
     void set_material_roughness(RID mat, float roughness);
     void set_material_metallic(RID mat, float metallic);
     void set_material_texture(RID mat, uint8_t slot, RID texture);
-    void set_material_scales(RID mat, const Vector2 &uv_scale, float height_scale);
+    void set_material_scales(RID mat, const Vector2 &uv_scale, float parallax_scale, bool parallax_flip);
 
     // 纹理资源
 
