@@ -81,6 +81,52 @@ const std::string Path::get_absolute_path(const std::string path)
     return make_absolute(std::filesystem::path(path));
 }
 
+const std::string Path::get_base_dir(const std::string path)
+{
+    const size_t scheme = path.find("://");
+    const size_t separator = path.find_last_of("/\\");
+
+    if (scheme != std::string::npos)
+    {
+        const size_t root_end = scheme + 3;
+        // "res://a.obj" 的目录是 "res://" 本身
+        if (separator == std::string::npos || separator < root_end)
+            return path.substr(0, root_end);
+        return path.substr(0, separator);
+    }
+
+    if (separator == std::string::npos)
+        return std::string();
+
+    if (separator == 0)
+        return path.substr(0, 1);
+
+    return path.substr(0, separator);
+}
+
+const std::string Path::join(const std::string dir, const std::string relative)
+{
+    if (relative.empty())
+        return dir;
+
+    // 已经是绝对路径或带协议前缀，不再拼接
+    if (relative.find("://") != std::string::npos)
+        return to_forward_slashes(relative);
+
+    const std::string normalized_relative = to_forward_slashes(relative);
+    if (std::filesystem::path(normalized_relative).is_absolute())
+        return normalized_relative;
+
+    if (dir.empty())
+        return normalized_relative;
+
+    std::string base = to_forward_slashes(dir);
+    if (!base.empty() && base.back() == '/')
+        return base + normalized_relative;
+
+    return base + "/" + normalized_relative;
+}
+
 const std::string Path::get_extension(const std::string path)
 {
     // 只在文件名部分查找后缀，忽略目录名中的点
