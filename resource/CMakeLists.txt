@@ -3,8 +3,10 @@ add_library(orca-resource STATIC
     resource_cache.cpp
     resource_loader.cpp
     loaders/obj_loader.cpp
+    loaders/mtl_loader.cpp
     mesh/mesh.cpp
     material/material.cpp
+    material/material_library.cpp
     environment/environment_3d.cpp
     loaders/image_texture_loader.cpp
 )

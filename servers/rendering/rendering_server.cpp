@@ -3,30 +3,6 @@
 #include "os/memory.h"
 #include "shader_loader.h"
 
-namespace
-{
-    // set_mesh_vertices / set_mesh_indices 都到齐后，把 CPU 数据一次性提交给 device。
-    void commit_mesh_surface(MeshData &data)
-    {
-        if (!data.has_vertices || !data.has_indices)
-            return;
-
-        auto device = RenderingDevice::get_singleton();
-        if (device == nullptr)
-            return;
-
-        // 重新提交时先释放旧 surface。
-        if (data.surface != 0)
-        {
-            device->destroy_mesh_surface(data.surface);
-            data.surface = 0;
-        }
-
-        data.surface = device->create_mesh_surface(data.vertices, data.normals, data.uvs, data.tangents, data.bitangents, data.indices);
-        data.index_count = static_cast<uint32_t>(data.indices.size());
-    }
-} // namespace
-
 void RenderingServer::create_singleton()
 {
     singleton = memnew(RenderingServer);
@@ -40,15 +16,15 @@ void RenderingServer::destroy_singletone()
 void RenderingServer::create_default_textures()
 {
     auto device = RenderingDevice::get_singleton();
-    const uint32_t width = 1024, height= 1024;
+    const uint32_t width = 1024, height = 1024;
     const uint32_t size = width * height;
     std::vector<uint8_t> pixels(size);
-    
+
     // 白色
     std::fill(pixels.begin(), pixels.end(), 255);
     RID white = storage.textures.create(TextureData{});
     set_texture_image(white, width, height, 1, pixels, false, true, false, true);
-    
+
     // 黑色
     std::fill(pixels.begin(), pixels.end(), 0);
     RID black = storage.textures.create(TextureData{});
@@ -56,9 +32,11 @@ void RenderingServer::create_default_textures()
 
     // 法线
     pixels.resize(size * 3);
-    for(auto i = 0; i < pixels.size(); i+=3)
+    for (auto i = 0; i < pixels.size(); i += 3)
     {
-        pixels[i] = 128; pixels[i+1] = 128; pixels[i+2] = 255;
+        pixels[i] = 128;
+        pixels[i + 1] = 128;
+        pixels[i + 2] = 255;
     }
     RID normal = storage.textures.create(TextureData{});
     set_texture_image(normal, width, height, 3, pixels, false, true, false, true);
@@ -105,8 +83,7 @@ bool RenderingServer::init()
         .texture_roughness = default_texture_roughness,
         .texture_metallic = default_texture_metallic,
         .texture_ao = default_texture_ao,
-        .texture_height = default_texture_height
-    });
+        .texture_height = default_texture_height});
 
     return true;
 }
@@ -160,36 +137,31 @@ RID RenderingServer::create_mesh()
     return storage.meshes.create(MeshData{});
 }
 
-void RenderingServer::set_mesh_vertices(
-    RID mesh,
-    const std::vector<Vector3> &vertices,
-    const std::vector<Vector3> &normals,
-    const std::vector<Vector2> &uvs,
-    const std::vector<Vector3> &tangents,
-    const std::vector<Vector3> &bitangents)
+void RenderingServer::add_mesh_surface(
+    RID mesh, 
+    RID material,
+    const std::vector<Vector3> &vertices, 
+    const std::vector<Vector3> &normals, 
+    const std::vector<Vector2> &uvs, 
+    const std::vector<Vector3> &tangents, 
+    const std::vector<Vector3> &bitangents, 
+    const std::vector<uint32_t> &indices)
 {
     MeshData *data = storage.meshes.get_data(mesh);
     if (data == nullptr)
         return;
-
-    data->vertices = vertices;
-    data->normals = normals;
-    data->uvs = uvs;
-    data->has_vertices = true;
-    data->tangents = tangents;
-    data->bitangents = bitangents;
-    commit_mesh_surface(*data);
-}
-
-void RenderingServer::set_mesh_indices(RID mesh, const std::vector<uint32_t> &indices)
-{
-    MeshData *data = storage.meshes.get_data(mesh);
-    if (data == nullptr)
-        return;
-
-    data->indices = indices;
-    data->has_indices = true;
-    commit_mesh_surface(*data);
+    Surface surface;
+    surface.material = material;
+    surface.index_count = indices.size();
+    surface.surface = RenderingDevice::get_singleton()->create_mesh_surface(
+        vertices,
+        normals,
+        uvs,
+        tangents,
+        bitangents,
+        indices
+    );
+    data->surfaces.push_back(surface);
 }
 
 RID RenderingServer::create_instance()
@@ -230,11 +202,11 @@ void RenderingServer::set_instance_visible(RID instance, bool visible)
     }
 }
 
-void RenderingServer::set_instance_material(RID instance, RID material)
+void RenderingServer::set_instance_override_material(RID instance, RID material)
 {
     if (auto instance_data = storage.instances.get_data(instance))
     {
-        instance_data->material = material;
+        instance_data->override_material = material;
     }
 }
 
@@ -301,7 +273,7 @@ void RenderingServer::set_material_texture(RID mat, uint8_t slot, RID texture)
 
 void RenderingServer::set_material_scales(RID mat, const Vector2 &uv_scale, float parallax_scale, bool parallax_flip)
 {
-    if(auto material_data = storage.materials.get_data(mat))
+    if (auto material_data = storage.materials.get_data(mat))
     {
         material_data->uv_scale = uv_scale;
         material_data->parallax_flip = parallax_flip;
@@ -462,11 +434,13 @@ void RenderingServer::free(RID rid)
     case RIDType::Mesh:
         if (MeshData *data = storage.meshes.get_data(rid))
         {
-            if (data->surface != 0)
+            // 释放该渲染网格在 device 侧创建的所有 surface（VAO/VBO/EBO）。
+            for (const Surface &surface : data->surfaces)
             {
-                if (auto device = RenderingDevice::get_singleton())
-                    device->destroy_mesh_surface(data->surface);
+                if (surface.surface != 0)
+                    RenderingDevice::get_singleton()->destroy_mesh_surface(surface.surface);
             }
+            data->surfaces.clear();
         }
         storage.meshes.free(rid);
         break;
@@ -492,25 +466,29 @@ void RenderingServer::draw()
     {
         if (!instance->visible)
             continue;
-        // TODO 还要过滤scene是否是当前相机的scene
+        // TODO 渲染surfaces
         MeshData *mesh_data = storage.meshes.get_data(instance->mesh);
         if (mesh_data == nullptr)
         {
             std::printf("[WARN] drawing instance with empty mesh data\n");
             continue;
         }
-        if (!mesh_data->has_indices || !mesh_data->has_vertices)
-            continue;
 
-        // 实例的材质数据，没有材质则用默认材质
-        RID material = instance->material == 0 ? default_material : instance->material;
-        MaterialData *materail_data = storage.materials.get_data(material);
-        draw_items.push_back(DrawItem{
-            .transform = instance->transfrom,
-            .surface = mesh_data->surface,
-            .index_count = mesh_data->index_count,
-            .material = materail_data,
-        });
+        for (const Surface &surface : mesh_data->surfaces)
+        {
+            MaterialData *material_data = storage.materials.get_data(surface.material);
+            // 没有绑定材质，用回退材质或默认材质
+            if (material_data == nullptr)
+            {
+                material_data = storage.materials.get_data(instance->override_material == 0 ? default_material : instance->override_material);
+            }
+            DrawItem item;
+            item.surface = surface.surface;
+            item.material = material_data;
+            item.transform = instance->transfrom;
+            item.index_count = surface.index_count;
+            draw_items.push_back(item);
+        }
     }
 
     SceneData *scene_data = storage.scenes.get_data(current_scene);

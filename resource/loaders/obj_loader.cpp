@@ -1,7 +1,11 @@
 #include "obj_loader.h"
 #include "io/file_access.h"
+#include "io/path.h"
 #include "mesh/mesh.h"
+#include "material/material.h"
+#include "material/material_library.h"
 #include "os/memory.h"
+#include "resource_loader.h"
 #include "math/vector2.h"
 #include "math/vector3.h"
 
@@ -28,6 +32,34 @@ namespace
             return seed;
         }
     };
+
+    /// @brief OBJ 面在写入 Mesh 之前按材质分组，每个分组最终成为一个 Surface。
+    struct SurfaceBuilder
+    {
+        Mesh::Surface surface;
+        std::unordered_map<VertexKey, uint32_t, VertexKeyHash> vertex_map;
+        std::string material_name;
+    };
+
+    std::string trim(const std::string &value)
+    {
+        const size_t begin = value.find_first_not_of(" \t\r\n");
+        if (begin == std::string::npos) return std::string();
+        const size_t end = value.find_last_not_of(" \t\r\n");
+        return value.substr(begin, end - begin + 1);
+    }
+
+    std::string unquote(const std::string &value)
+    {
+        if (value.size() >= 2)
+        {
+            const char begin = value.front();
+            const char end = value.back();
+            if ((begin == '"' && end == '"') || (begin == '\'' && end == '\''))
+                return value.substr(1, value.size() - 2);
+        }
+        return value;
+    }
 
     /// @brief 解析 OBJ 单行中的浮点数，缺省时返回 0。
     real_t parse_real(std::istringstream &stream)
@@ -78,28 +110,28 @@ namespace
     }
 
     /// @brief 当 OBJ 未提供法线时，用三角形几何计算平滑顶点法线。
-    void compute_vertex_normals(Mesh *mesh)
+    void compute_vertex_normals(Mesh::Surface &surface)
     {
-        for (Vector3 &normal : mesh->normals)
+        for (Vector3 &normal : surface.normals)
         {
             normal = Vector3();
         }
 
-        for (std::size_t i = 0; i + 2 < mesh->indices.size(); i += 3)
+        for (std::size_t i = 0; i + 2 < surface.indices.size(); i += 3)
         {
-            const uint32_t a = mesh->indices[i];
-            const uint32_t b = mesh->indices[i + 1];
-            const uint32_t c = mesh->indices[i + 2];
+            const uint32_t a = surface.indices[i];
+            const uint32_t b = surface.indices[i + 1];
+            const uint32_t c = surface.indices[i + 2];
 
             const Vector3 face_normal =
-                (mesh->vertices[b] - mesh->vertices[a]).cross(mesh->vertices[c] - mesh->vertices[a]);
+                (surface.vertices[b] - surface.vertices[a]).cross(surface.vertices[c] - surface.vertices[a]);
 
-            mesh->normals[a] += face_normal;
-            mesh->normals[b] += face_normal;
-            mesh->normals[c] += face_normal;
+            surface.normals[a] += face_normal;
+            surface.normals[b] += face_normal;
+            surface.normals[c] += face_normal;
         }
 
-        for (Vector3 &normal : mesh->normals)
+        for (Vector3 &normal : surface.normals)
         {
             normal.normalize();
         }
@@ -120,12 +152,53 @@ Ref<Resource> ObjMeshLoader::load(const std::string url)
     std::vector<Vector2> uvs;
     bool has_normals = false;
 
-    std::unordered_map<VertexKey, uint32_t, VertexKeyHash> vertex_map;
+    std::vector<SurfaceBuilder> builders;
+    std::unordered_map<std::string, uint32_t> material_surfaces;
+    std::unordered_map<std::string, Ref<StandardMaterial>> materials;
+    std::string current_material_name;
+    uint32_t current_surface = UINT32_MAX;
+
+    auto ensure_surface = [&](const std::string &material_name) -> SurfaceBuilder & {
+        auto it = material_surfaces.find(material_name);
+        if (it != material_surfaces.end())
+        {
+            current_surface = it->second;
+            return builders[current_surface];
+        }
+
+        current_surface = static_cast<uint32_t>(builders.size());
+        material_surfaces.emplace(material_name, current_surface);
+        builders.emplace_back();
+        builders.back().material_name = material_name;
+        return builders.back();
+    };
+
+    // 加载 mtllib 指定的材质库；失败时只打印警告，OBJ 几何仍然可用。
+    auto load_material_library = [&](const std::string &mtl_path) {
+        ResourceLoader *loader = ResourceLoader::get_singleton();
+        if (loader == nullptr)
+        {
+            std::printf("[WARN] OBJ mtllib skipped, ResourceLoader is not initialized: %s\n", mtl_path.c_str());
+            return;
+        }
+
+        const std::string mtl_url = Path::join(Path::get_base_dir(url), mtl_path);
+        Ref<Resource> resource = loader->load(mtl_url);
+        Ref<MaterialLibrary> library = resource.cast<MaterialLibrary>();
+        if (library.is_null())
+        {
+            std::printf("[WARN] failed to load OBJ material library: %s\n", mtl_url.c_str());
+            return;
+        }
+
+        for (const auto &entry : library->get_materials())
+        {
+            materials[entry.first] = entry.second;
+        }
+    };
 
     std::istringstream file(text);
     std::string line;
-
-    Mesh *mesh = memnew(Mesh);
 
     while (std::getline(file, line))
     {
@@ -156,8 +229,42 @@ Ref<Resource> ObjMeshLoader::load(const std::string url)
             const real_t v = parse_real(stream);
             uvs.emplace_back(u, v);
         }
+        else if (keyword == "mtllib")
+        {
+            std::string rest;
+            std::getline(stream, rest);
+            rest = trim(rest);
+
+            if (!rest.empty() && (rest.front() == '"' || rest.front() == '\''))
+            {
+                load_material_library(unquote(rest));
+            }
+            else
+            {
+                std::istringstream names(rest);
+                std::string mtl_name;
+                while (names >> mtl_name)
+                {
+                    load_material_library(mtl_name);
+                }
+            }
+        }
+        else if (keyword == "usemtl")
+        {
+            std::string name;
+            std::getline(stream, name);
+            current_material_name = trim(name);
+            // 下一批面到来时再创建 surface，避免 usemtl 后面没有面时产生空 surface。
+            current_surface = UINT32_MAX;
+        }
         else if (keyword == "f")
         {
+            if (current_surface == UINT32_MAX)
+            {
+                ensure_surface(current_material_name);
+            }
+            SurfaceBuilder &builder = builders[current_surface];
+
             std::vector<VertexKey> face;
             std::string token;
             while (stream >> token)
@@ -185,32 +292,52 @@ Ref<Resource> ObjMeshLoader::load(const std::string url)
                 const VertexKey triangle[3] = { face[0], face[i], face[i + 1] };
                 for (const VertexKey &key : triangle)
                 {
-                    auto it = vertex_map.find(key);
-                    if (it == vertex_map.end())
+                    auto it = builder.vertex_map.find(key);
+                    if (it == builder.vertex_map.end())
                     {
-                        const uint32_t index = static_cast<uint32_t>(mesh->vertices.size());
-                        vertex_map.emplace(key, index);
+                        const uint32_t index = static_cast<uint32_t>(builder.surface.vertices.size());
+                        builder.vertex_map.emplace(key, index);
 
-                        mesh->vertices.push_back(positions[std::get<0>(key)]);
-                        mesh->normals.push_back(std::get<2>(key) >= 0 ? normals[std::get<2>(key)] : Vector3());
-                        mesh->uvs.push_back(std::get<1>(key) >= 0 ? uvs[std::get<1>(key)] : Vector2());
-                        mesh->indices.push_back(index);
+                        builder.surface.vertices.push_back(positions[std::get<0>(key)]);
+                        builder.surface.normals.push_back(std::get<2>(key) >= 0 ? normals[std::get<2>(key)] : Vector3());
+                        builder.surface.uvs.push_back(std::get<1>(key) >= 0 ? uvs[std::get<1>(key)] : Vector2());
+                        builder.surface.indices.push_back(index);
                     }
                     else
                     {
-                        mesh->indices.push_back(it->second);
+                        builder.surface.indices.push_back(it->second);
                     }
                 }
             }
         }
-        // 其余关键字 (o / g / s / usemtl / mtllib ...) 暂不处理。
+        // 其余关键字 (o / g / s ...) 暂不处理。
     }
 
-    if (!has_normals && !mesh->normals.empty())
+    Mesh *mesh = memnew(Mesh);
+    for (SurfaceBuilder &builder : builders)
     {
-        compute_vertex_normals(mesh);
+        if (!has_normals && !builder.surface.normals.empty())
+        {
+            compute_vertex_normals(builder.surface);
+        }
+
+        if (!builder.material_name.empty())
+        {
+            auto it = materials.find(builder.material_name);
+            if (it != materials.end())
+            {
+                builder.surface.material = it->second;
+            }
+            else
+            {
+                std::printf("[WARN] OBJ references unknown material \"%s\"\n", builder.material_name.c_str());
+            }
+        }
+
+        mesh->add_surface(builder.surface);
     }
-    // 加载顶点完成，预计算顶点切线
+
+    // 加载顶点完成，预计算每个 surface 的顶点切线
     mesh->compute_tangents();
     return Ref<Resource>(mesh);
 }

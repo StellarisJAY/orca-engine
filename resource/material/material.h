@@ -20,12 +20,20 @@ enum class MaterialTextureSlot : uint8_t
 class StandardMaterial : public Resource
 {
 private:
+    /// @brief 漫反射基础色
     Color albedo;
+    /// @brief 环境光颜色
+    Color ambient;
+    /// @brief 高光颜色
+    Color specular;
+    /// @brief 自发光颜色
+    Color emission;
+
+    /// @brief 默认金属度，在没有金属度贴图时使用
     float metallic = 1.0;
+    /// @brief 默认粗糙度，在没有粗糙度贴图时使用
     float roughness = 1.0;
-    float specular = 1.0;
-    float normal_scale = 1.0;
-    float emission = 0.0;
+
     // UV缩放
     Vector2 uv_scale = {1.0, 1.0};
     // 高度缩放
@@ -36,9 +44,9 @@ private:
 
 protected:
     RID rid = 0;
+    bool dirty = false;
 
 public:
-    friend class MeshInstance3D;
     RID get_rid() const override { return rid; }
     void set_rid(RID rid) { this->rid = rid; }
     Ref<Resource> duplicate() const override
@@ -47,15 +55,34 @@ public:
         return Ref<Resource>(nullptr);
     }
 
+    void mark_dirty(bool dirty) { this->dirty = dirty; }
+    bool is_dirty() const { return dirty; }
+
     Color get_albedo() const { return albedo; }
     Color get_base_color() const { return albedo; }
+    Color get_ambient() const { return ambient; }
+    Color get_specular() const { return specular; }
+    Color get_emission() const { return emission; }
     float get_metallic() const { return metallic; }
     float get_roughenss() const { return roughness; }
     const Vector2 &get_uv_scale() const { return uv_scale; }
     float get_parallax_scale() const { return parallax_scale; }
     bool get_parallax_flip() const { return parallax_flip; }
 
+    const std::vector<Ref<ImageTexture>> get_texture_slots() const 
+    {
+        std::vector<Ref<ImageTexture>> slots;
+        for(int i = 0; i < 6; i++)
+        {
+            slots.push_back(texture_slots[i]);
+        }
+        return slots;
+    }
+
     void set_albedo(const Color &color) { this->albedo = color; }
+    void set_ambient(const Color &color) { this->ambient = color; }
+    void set_specular(const Color &color) { this->specular = color; }
+    void set_emission(const Color &color) { this->emission = color; }
     void set_roughness(float roughness) { this->roughness = roughness; }
     void set_metallic(float metallic) { this->metallic = metallic; }
     void set_uv_scale(const Vector2 &scales) { uv_scale = scales; }

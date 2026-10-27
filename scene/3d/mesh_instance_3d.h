@@ -9,14 +9,17 @@
 class MeshInstance3D : public VisualInstance3D
 {
     Ref<Mesh> mesh;
-    Ref<StandardMaterial> material;
+
+    Ref<StandardMaterial> override_material;
 
 private:
-    void ensure_material();
-    void ensure_texture();
+    void ensure_surfaces();
+    void ensure_material(Ref<StandardMaterial> material);
+    void ensure_texture(Ref<StandardMaterial> material);
+
 public:
-    MeshInstance3D(Ref<Mesh> mesh) : mesh(mesh), material(Ref<StandardMaterial>(nullptr)) {}
-    MeshInstance3D(Ref<Mesh> mesh, Ref<StandardMaterial> mat) : mesh(mesh), material(mat) {}
+    MeshInstance3D(Ref<Mesh> mesh) : mesh(mesh) {}
+    MeshInstance3D(Ref<Mesh> mesh, Ref<StandardMaterial> override_mat) : mesh(mesh), override_material(override_mat) {}
 
     void _notification(int what)
     {
@@ -29,15 +32,19 @@ public:
             instance = RenderingServer::get_singleton()->create_instance();
             RenderingServer::get_singleton()->set_instance_visible(instance, true);
             RenderingServer::get_singleton()->set_instance_transform(instance, get_global_transform());
-            // 资源对应的mesh还没有传递到渲染服务器
-            if (!mesh->get_rid())
+            if (mesh->get_rid() == 0)
             {
                 mesh->set_rid(rendering_server->create_mesh());
-                rendering_server->set_mesh_vertices(mesh->get_rid(), mesh->vertices, mesh->normals, mesh->uvs, mesh->tangents, mesh->bitangents);
-                rendering_server->set_mesh_indices(mesh->get_rid(), mesh->indices);
             }
+            // 如果MeshInstance有override材质，设置instance的材质，表面没有材质时回退到instance override 材质
+            if(override_material.is_valid())
+            {
+                ensure_material(override_material);
+                rendering_server->set_instance_override_material(instance, override_material->get_rid());
+            }
+            // 保证instance的所有表面都已传递到渲染端
+            ensure_surfaces();
             rendering_server->set_instance_mesh(get_instance(), mesh->get_rid());
-            ensure_material();
             break;
         case NOTIFICATION_EXIT_TREE:
             break;

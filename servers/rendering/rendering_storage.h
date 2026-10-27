@@ -22,23 +22,17 @@ struct EnvironmentData
     float ambient_strength = 1.0;
 };
 
-struct MeshData
+struct Surface
 {
-    // CPU 暂存：RenderingServer 的 set_mesh_vertices / set_mesh_indices 是分开调用的，
-    // 两者都到齐后再一次性提交给 RenderingDevice 创建 surface（VAO 必须原子构建）。
-    std::vector<Vector3> vertices;
-    std::vector<Vector3> normals;
-    std::vector<Vector2> uvs;
-    std::vector<Vector3> tangents;
-    std::vector<Vector3> bitangents;
-    
-    std::vector<uint32_t> indices;
-    bool has_vertices = false;
-    bool has_indices = false;
-
     // GPU 侧资源（device 创建并持有）。
     uint32_t surface = 0; // device surface 句柄（OpenGL: VAO）
     uint32_t index_count = 0;
+    RID material = 0;
+};
+
+struct MeshData
+{
+    std::vector<Surface> surfaces;
 };
 
 struct MaterialData
@@ -82,9 +76,9 @@ struct InstanceData
 {
     Transform3D transfrom;
     RID mesh = 0;
-    RID material = 0;
     RID scene = 0;
     bool visible = false;
+    RID override_material = 0;
 };
 
 struct LightData
@@ -98,7 +92,6 @@ struct LightData
     bool cast_shadow = false;
     bool visible = true;
 };
-
 
 struct ShaderData
 {

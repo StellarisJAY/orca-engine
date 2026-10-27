@@ -5,21 +5,21 @@
 Ref<Resource> Mesh::duplicate() const
 {
     Mesh *copy = memnew(Mesh);
-    copy->vertices = vertices;
-    copy->uvs = uvs;
-    copy->indices = indices;
-    copy->normals = normals;
-    copy->tangents = tangents;
-    copy->bitangents = bitangents;
-    copy->rid_dirty = true;
+    copy->surfaces = surfaces;
     return Ref<Resource>(copy);
 }
 
-void Mesh::compute_tangents()
+void compute_surface_tangents(Mesh::Surface &surface)
 {
+    std::vector<Vector3> &tangents = surface.tangents;
+    std::vector<Vector3> &bitangents = surface.bitangents;
+    std::vector<Vector3> &vertices = surface.vertices;
+    std::vector<Vector3> &normals = surface.normals;
+    std::vector<Vector2> &uvs = surface.uvs;
+    std::vector<uint32_t> &indices = surface.indices;
+    
     tangents.resize(vertices.size());
     bitangents.resize(vertices.size());
-    std::printf("indices:%d\n", indices.size());
     for (uint32_t i = 0; i < indices.size(); i += 3)
     {
         const int i1 = indices[i], i2 = indices[i + 1], i3 = indices[i + 2];
@@ -71,7 +71,40 @@ void Mesh::compute_tangents()
     }
 }
 
+void Mesh::compute_tangents()
+{
+    for(Surface &surface : surfaces)
+    {
+        compute_surface_tangents(surface);
+    }
+}
+
 Mesh::~Mesh()
 {
     // RID 由渲染服务器持有并释放；资源模块不依赖渲染层，这里保持空实现。
+}
+
+size_t Mesh::get_vertex_count() const
+{
+    size_t total = 0;
+    for(const Surface &surface : surfaces)
+    {
+        total += surface.vertices.size();
+    }
+    return total;
+}
+
+size_t Mesh::get_triangle_count() const
+{
+    size_t total = 0;
+    for(const Surface &surface : surfaces)
+    {
+        total += surface.indices.size() / 3;
+    }
+    return total;
+}
+
+size_t Mesh::get_surface_count() const
+{
+    return surfaces.size();
 }

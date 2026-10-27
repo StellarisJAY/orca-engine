@@ -1,14 +1,19 @@
 #include "resource_loader.h"
 #include "io/path.h"
 #include "os/memory.h"
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include "loaders/obj_loader.h"
 #include "loaders/image_texture_loader.h"
+#include "loaders/mtl_loader.h"
 
 void ResourceLoader::create_singleton()
 {
     singleton = memnew(ResourceLoader);
     singleton->register_loader(memnew(ObjMeshLoader));
     singleton->register_loader(memnew(ImageTextureLoader));
+    singleton->register_loader(memnew(MtlLoader));
 }
 
 void ResourceLoader::destroy_singleton()
@@ -27,10 +32,18 @@ void ResourceLoader::register_loader(ResourceFormatLoader *loader)
 
 Ref<Resource> ResourceLoader::load(const std::string url)
 {
-    const std::string ext = Path::get_extension(url);
-    ResourceFormatLoader *loader = loaders.at(ext);
-    if(loader != nullptr) return loader->load(url);
-    return Ref<Resource>(nullptr);
+    std::string ext = Path::get_extension(url);
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    auto it = loaders.find(ext);
+    if (it == loaders.end() || it->second == nullptr)
+    {
+        std::printf("[ERROR] no resource loader for extension \"%s\": %s\n", ext.c_str(), url.c_str());
+        return Ref<Resource>(nullptr);
+    }
+
+    return it->second->load(url);
 }
 
 ResourceLoader::~ResourceLoader()

@@ -4,6 +4,8 @@
 #include "object/rid.h"
 #include "math/vector3.h"
 #include "math/vector2.h"
+#include "object/ref_counted.h"
+#include "material/material.h"
 #include <cstdint>
 #include <vector>
 
@@ -14,18 +16,28 @@
 /// is_rid_dirty() / set_rid() 追踪“数据已变更、需要重新上传”的状态。
 class Mesh : public Resource
 {
+public:
+    struct Surface
+    {
+        /// @brief 顶点
+        std::vector<Vector3> vertices;
+        /// @brief 法线
+        std::vector<Vector3> normals;
+        /// @brief uv
+        std::vector<Vector2> uvs;
+        /// @brief 顶点切线
+        std::vector<Vector3> tangents;
+        /// @brief 顶点副切线
+        std::vector<Vector3> bitangents;
+        /// @brief 面，顶点索引
+        std::vector<uint32_t> indices;
+        /// @brief 材质
+        Ref<StandardMaterial> material;
+    };
 private:
     RID rid = 0;
     bool rid_dirty = true;
-public:
-    std::vector<Vector3> vertices;
-    std::vector<Vector3> normals;
-    std::vector<Vector2> uvs;
-    /// @brief 顶点切线
-    std::vector<Vector3> tangents;
-    /// @brief 顶点副切线
-    std::vector<Vector3> bitangents;
-    std::vector<uint32_t> indices;    
+    std::vector<Surface> surfaces;
 public:
     RID get_rid() const override { return rid; }
     Ref<Resource> duplicate() const override;
@@ -47,8 +59,13 @@ public:
 
     ~Mesh();
 
-    bool is_empty() const { return vertices.empty(); }
-    uint32_t get_vertex_count() const { return static_cast<uint32_t>(vertices.size()); }
-    uint32_t get_index_count() const { return static_cast<uint32_t>(indices.size()); }
-    uint32_t get_triangle_count() const { return get_index_count() / 3; }
+    bool is_empty() const { return get_vertex_count() == 0; }
+    size_t get_vertex_count() const;
+    size_t get_triangle_count() const;
+    size_t get_surface_count() const;
+
+    Surface &get_surface(uint32_t idx) { return surfaces[idx]; }
+    const Surface &get_surface(uint32_t idx) const { return surfaces[idx]; }
+    void add_surface(Surface &surface) { surfaces.push_back(surface); }
+    const std::vector<Surface> &get_surfaces() const { return surfaces; }
 };
