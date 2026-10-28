@@ -14,6 +14,7 @@ uniform float u_metallic;
 uniform sampler2D u_albedo_texture;
 // 法线贴图
 uniform sampler2D u_normal_texture; 
+uniform bool u_has_normal_texture;
 // 粗糙度贴图
 uniform sampler2D u_roughness_texture;
 // 金属度贴图
@@ -25,10 +26,10 @@ uniform sampler2D u_height_texture;
 
 uniform float u_normal_scale;
 uniform float u_ao_strength;
-uniform vec2 u_uv_scale = vec2(2.0, 2.0);
+uniform vec2 u_uv_scale;
 
-uniform float u_parallax_scale = 1.0;
-uniform bool u_prallax_flip = true;
+uniform float u_parallax_scale;
+uniform bool u_parallax_flip;
 
 uniform vec3 u_light_direction;
 uniform int u_light_type;
@@ -73,27 +74,59 @@ float GeometrySmith(float NdotV, float NdotL, float k)
     return ggx1 * ggx2;
 }
 
-#define PARALLAX_STEPS 16
+#define PARALLAX_STEPS 32
 
 vec2 parallax_mapping(vec2 uv, vec3 view)
 {
-    if (u_parallax_scale <= 0.0 || view.z <= 0.0)
+    float scale = u_parallax_scale;
+    if (scale <= 0.0 || view.z <= 0.0)
         return uv;
-    // 每一个采样层的深度
-    const float layer_depth = 1.0 / PARALLAX_STEPS;
-    float current_depth = 0.0;
-    view = view / max(view.z, 0.1);
-    for(; current_depth <= 1.0; current_depth += layer_depth)
+
+    // 视线在切线空间投影到 UV 平面。掠射角时限制分母，避免偏移过大。
+    vec2 ray_dir = view.xy / max(view.z, 0.1);
+
+    // 约定：高度图默认白色为最高点。
+    // u_parallax_flip 用于兼容“黑色为最高点”的高度图。
+    float h0 = texture(u_height_texture, uv).r;
+    if (u_parallax_flip)
+        h0 = 1.0 - h0;
+
+    // surface_depth: 0 表示表面就在顶层，1 表示在底层。
+    float prev_surface = 1.0 - h0;
+    if (prev_surface <= 0.0)
+        return uv;
+
+    const float layer_depth = 1.0 / float(PARALLAX_STEPS);
+    float prev_t = 0.0;
+
+    for (int i = 0; i < PARALLAX_STEPS; ++i)
     {
-        vec2 offset = (view * current_depth).xy;
-        float depth = texture(u_height_texture, uv - offset).r;
-        depth = u_prallax_flip ? 1.0 - depth : depth;
-        depth = depth * u_parallax_scale;
-        // 找到采样深度小于深度图深度的第一个采样深度
-        if(current_depth < depth) break;
+        float t = float(i + 1) * layer_depth;
+        vec2 sample_uv = uv - ray_dir * (scale * t);
+
+        float h = texture(u_height_texture, sample_uv).r;
+        if (u_parallax_flip)
+            h = 1.0 - h;
+        float surface = 1.0 - h;
+
+        // 射线深度到达表面深度，说明穿过了高度场。
+        if (t >= surface)
+        {
+            // 在上一采样层和当前采样层之间线性插值，消除层阶和撕裂。
+            float f_prev = prev_t - prev_surface;
+            float f_cur = t - surface;
+            float denom = f_prev - f_cur;
+            float alpha = abs(denom) > 1e-5 ? clamp(f_prev / denom, 0.0, 1.0) : 1.0;
+            float hit_t = mix(prev_t, t, alpha);
+            return uv - ray_dir * (scale * hit_t);
+        }
+
+        prev_t = t;
+        prev_surface = surface;
     }
 
-    return uv - (view * current_depth).xy;
+    // 没有有效交点时保持原 UV，绝不能返回最大偏移。
+    return uv;
 }
 
 void main() {
@@ -109,13 +142,20 @@ void main() {
     float metallic = clamp(u_metallic * texture(u_metallic_texture, uv).r, 0.0, 1.0);
     // 粗糙度
     float roughness = clamp(u_roughness * texture(u_roughness_texture, uv).r, 0.04, 1.0);
-    // 环境光遮蔽
-    float AO = texture(u_ao_texture, v_uv * u_uv_scale).r;
+    // 环境光遮蔽，和其余表面贴图一样使用视差修正后的 UV
+    float AO = texture(u_ao_texture, uv).r;
 
-    // 法线贴图，从切向空间转换到世界空间
-    vec3 normal = texture(u_normal_texture, uv).rgb;
-    normal = normalize(normal * 2.0 - 1.0);
-    normal = inverse(v_TBN) * normal;
+    // 法线贴图：只有材质真正绑定了法线贴图时才走切线空间；
+    // 否则直接使用顶点插值得到的几何法线，避免退化 TBN 破坏 v_normal。
+    vec3 normal = normalize(v_normal);
+    if (u_has_normal_texture)
+    {
+        vec3 tangent_normal = texture(u_normal_texture, uv).rgb;
+        tangent_normal = tangent_normal * 2.0 - 1.0;
+        tangent_normal.xy *= u_normal_scale;
+        tangent_normal = normalize(tangent_normal);
+        normal = normalize(inverse(v_TBN) * tangent_normal);
+    }
 
     // 现在只是平行光，所以L是照射方向取反
     vec3 L = normalize(-u_light_direction);

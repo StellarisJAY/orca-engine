@@ -46,7 +46,9 @@ void RenderingServer::create_default_textures()
     default_texture_roughness = white;
     default_texture_metallic = black;
     default_texture_ao = white;
-    default_texture_height = black;
+    // 高度图约定白色为最高点；默认使用白色表示“完全平坦”，
+    // 保证没有绑定高度图的材质不会被视差偏移。
+    default_texture_height = white;
 }
 
 bool RenderingServer::init()
@@ -558,6 +560,9 @@ void RenderingServer::draw()
         rendering_device->set_uniform_vec2(program, "u_uv_scale", material->uv_scale.coords);
         rendering_device->set_uniform_float(program, "u_parallax_scale", material->parallax_scale);
         rendering_device->set_uniform_bool(program, "u_parallax_flip", material->parallax_flip);
+        // 只有真正指定了法线贴图的材质才使用 TBN；默认法线贴图只用于占位。
+        const bool has_normal_texture = material->texture_normal != 0 && material->texture_normal != default_texture_normal;
+        rendering_device->set_uniform_bool(program, "u_has_normal_texture", has_normal_texture);
         // 绑定纹理贴图
         bind_textures(material, program);
 
