@@ -3,6 +3,9 @@
 #include "os/memory.h"
 #include "shader_loader.h"
 
+#include <algorithm>
+#include <cstdio>
+
 void RenderingServer::create_singleton()
 {
     singleton = memnew(RenderingServer);
@@ -15,36 +18,21 @@ void RenderingServer::destroy_singletone()
 
 void RenderingServer::create_default_textures()
 {
-    auto device = RenderingDevice::get_singleton();
-    const uint32_t width = 1024, height = 1024;
-    const uint32_t size = width * height;
-    std::vector<uint8_t> pixels(size);
+    // 默认贴图只需要让 sampler 保持完整，因此使用 1x1 即可。
+    // 贴图是否参与计算由材质的 texture_mask 决定，默认值不再承担“中性参数”的语义。
+    const std::vector<uint8_t> white_pixels = {255, 255, 255, 255};
+    const std::vector<uint8_t> normal_pixels = {128, 128, 255, 255};
 
-    // 白色
-    std::fill(pixels.begin(), pixels.end(), 255);
     RID white = storage.textures.create(TextureData{});
-    set_texture_image(white, width, height, 1, pixels, false, true, false, true);
+    set_texture_image(white, 1, 1, 4, white_pixels, false, true, true, false);
 
-    // 黑色
-    std::fill(pixels.begin(), pixels.end(), 0);
-    RID black = storage.textures.create(TextureData{});
-    set_texture_image(black, width, height, 1, pixels, false, true, false, true);
-
-    // 法线
-    pixels.resize(size * 3);
-    for (auto i = 0; i < pixels.size(); i += 3)
-    {
-        pixels[i] = 128;
-        pixels[i + 1] = 128;
-        pixels[i + 2] = 255;
-    }
     RID normal = storage.textures.create(TextureData{});
-    set_texture_image(normal, width, height, 3, pixels, false, true, false, true);
+    set_texture_image(normal, 1, 1, 4, normal_pixels, false, true, true, false);
 
     default_texture_albedo = white;
     default_texture_normal = normal;
     default_texture_roughness = white;
-    default_texture_metallic = black;
+    default_texture_metallic = white;
     default_texture_ao = white;
     // 高度图约定白色为最高点；默认使用白色表示“完全平坦”，
     // 保证没有绑定高度图的材质不会被视差偏移。
@@ -73,19 +61,15 @@ bool RenderingServer::init()
     // 默认贴图，材质没有贴图时使用
     create_default_textures();
 
-    // 创建默认材质，如果物体没有材质则使用该材质
+    // 创建默认材质，如果物体没有材质则使用该材质。
+    // 默认材质不绑定任何贴图，完全走标量参数；texture_mask = 0。
     default_material = storage.materials.create(MaterialData{
         .albedo = Color(255, 255, 255),
-        .metallic = 1.0,
+        .metallic = 0.0,
         .roughness = 1.0,
         .specular = 1.0,
-        .emission = 0,
-        .texture_albedo = default_texture_albedo,
-        .texture_normal = default_texture_normal,
-        .texture_roughness = default_texture_roughness,
-        .texture_metallic = default_texture_metallic,
-        .texture_ao = default_texture_ao,
-        .texture_height = default_texture_height});
+        .emission = 0.0,
+        .texture_mask = 0});
 
     return true;
 }
@@ -243,34 +227,57 @@ void RenderingServer::set_material_metallic(RID mat, float metallic)
 
 void RenderingServer::set_material_texture(RID mat, uint8_t slot, RID texture)
 {
-    TextureData *texture_data = storage.textures.get_data(texture);
-    if (texture_data == nullptr)
+    MaterialData *material_data = storage.materials.get_data(mat);
+    if (material_data == nullptr || slot > TextureSlotHeight)
         return;
 
-    if (auto material_data = storage.materials.get_data(mat))
+    RID *target = nullptr;
+    switch (slot)
     {
-        switch (slot)
-        {
-        case TextureSlotAlbedo:
-            material_data->texture_albedo = texture;
-            break;
-        case TextureSlotNormal:
-            material_data->texture_normal = texture;
-            break;
-        case TextureSlotRoughness:
-            material_data->texture_roughness = texture;
-            break;
-        case TextureSlotMetallic:
-            material_data->texture_metallic = texture;
-            break;
-        case TextureSlotAO:
-            material_data->texture_ao = texture;
-            break;
-        case TextureSlotHeight:
-            material_data->texture_height = texture;
-            break;
-        }
+    case TextureSlotAlbedo:
+        target = &material_data->texture_albedo;
+        break;
+    case TextureSlotNormal:
+        target = &material_data->texture_normal;
+        break;
+    case TextureSlotRoughness:
+        target = &material_data->texture_roughness;
+        break;
+    case TextureSlotMetallic:
+        target = &material_data->texture_metallic;
+        break;
+    case TextureSlotAO:
+        target = &material_data->texture_ao;
+        break;
+    case TextureSlotHeight:
+        target = &material_data->texture_height;
+        break;
+    default:
+        return;
     }
+
+    const uint32_t bit = 1u << slot;
+
+    // texture == 0 表示显式清空该槽位。
+    if (texture == 0)
+    {
+        *target = 0;
+        material_data->texture_mask &= ~bit;
+        return;
+    }
+
+    TextureData *texture_data = storage.textures.get_data(texture);
+    if (texture_data == nullptr || texture_data->texture_2d == 0)
+    {
+        std::printf("[WARN] set_material_texture: invalid or empty texture RID %llu, slot %u cleared\n",
+                    static_cast<unsigned long long>(texture), static_cast<unsigned>(slot));
+        *target = 0;
+        material_data->texture_mask &= ~bit;
+        return;
+    }
+
+    *target = texture;
+    material_data->texture_mask |= bit;
 }
 
 void RenderingServer::set_material_scales(RID mat, const Vector2 &uv_scale, float parallax_scale, bool parallax_flip)
@@ -279,8 +286,22 @@ void RenderingServer::set_material_scales(RID mat, const Vector2 &uv_scale, floa
     {
         material_data->uv_scale = uv_scale;
         material_data->parallax_flip = parallax_flip;
-        material_data->parallax_scale = parallax_scale;
+        // 视差高度以 UV 为单位，超过 0.1 时一步会跨过多个纹素，
+        // 在 shader 里还会再 clamp 一次，这里提前收敛材质数据。
+        material_data->parallax_scale = std::clamp(parallax_scale, 0.0f, 0.1f);
     }
+}
+
+void RenderingServer::set_material_normal_scale(RID mat, float normal_scale)
+{
+    if (auto material_data = storage.materials.get_data(mat))
+        material_data->normal_scale = normal_scale;
+}
+
+void RenderingServer::set_material_ao_strength(RID mat, float ao_strength)
+{
+    if (auto material_data = storage.materials.get_data(mat))
+        material_data->ao_strength = std::clamp(ao_strength, 0.0f, 1.0f);
 }
 
 RID RenderingServer::create_texture()
@@ -354,8 +375,9 @@ RID RenderingServer::create_light()
 {
     return storage.lights.create(LightData{
         .transform = Transform3D(),
-        .final_color = Color(1, 1, 1),
+        .final_color = Color(255, 255, 255),
         .type = 0,
+        .intensity = 1.0f,
     });
 }
 
@@ -426,6 +448,14 @@ void RenderingServer::set_light_direction(RID light, const Vector3 &direction)
     }
 }
 
+void RenderingServer::set_light_intensity(RID light, float intensity)
+{
+    if (auto light_data = storage.lights.get_data(light))
+    {
+        light_data->intensity = std::max(0.0f, intensity);
+    }
+}
+
 void RenderingServer::free(RID rid)
 {
     switch (RIDUtil::get_type(rid))
@@ -448,6 +478,16 @@ void RenderingServer::free(RID rid)
         break;
     case RIDType::Instance:
         storage.instances.free(rid);
+        break;
+    case RIDType::Light:
+        // 灯退出场景树后必须从 scene 的灯光列表中移除，
+        // 否则它仍会参与绘制，强度参数也就无法真正归零。
+        for (SceneData *scene : storage.scenes)
+        {
+            auto it = std::remove(scene->lights.begin(), scene->lights.end(), rid);
+            scene->lights.erase(it, scene->lights.end());
+        }
+        storage.lights.free(rid);
         break;
     default:
         break;
@@ -526,6 +566,7 @@ void RenderingServer::draw()
     }
 
     // 灯光
+    float light_intensity = 0.0f;
     if (scene_data->lights.size() > 0)
     {
         // 暂时只做一个灯光
@@ -539,11 +580,14 @@ void RenderingServer::draw()
             rendering_device->set_uniform_vec3(program, "u_light_position", light_data->transform.origin.coords);
             rendering_device->set_uniform_int(program, "u_light_type", light_data->type);
             rendering_device->set_uniform_vec3(program, "u_light_direction", light_data->direction.coords);
+            light_intensity = std::max(light_data->intensity, 0.0f);
         }
     }
+    // 每帧都写，删灯或灯不可见时不能残留上一帧的强度。
+    rendering_device->set_uniform_float(program, "u_light_intensity", light_intensity);
 
     // 渲染实例
-    for (DrawItem item : draw_items)
+    for (const DrawItem &item : draw_items)
     {
         // instance transform
         real_t transform[16];
@@ -560,46 +604,51 @@ void RenderingServer::draw()
         rendering_device->set_uniform_vec2(program, "u_uv_scale", material->uv_scale.coords);
         rendering_device->set_uniform_float(program, "u_parallax_scale", material->parallax_scale);
         rendering_device->set_uniform_bool(program, "u_parallax_flip", material->parallax_flip);
-        // 只有真正指定了法线贴图的材质才使用 TBN；默认法线贴图只用于占位。
-        const bool has_normal_texture = material->texture_normal != 0 && material->texture_normal != default_texture_normal;
-        rendering_device->set_uniform_bool(program, "u_has_normal_texture", has_normal_texture);
+        rendering_device->set_uniform_int(program, "u_texture_mask", static_cast<int>(material->texture_mask));
+        rendering_device->set_uniform_float(program, "u_normal_scale", material->normal_scale);
+        rendering_device->set_uniform_float(program, "u_ao_strength", material->ao_strength);
         // 绑定纹理贴图
         bind_textures(material, program);
 
-        RenderingDevice::get_singleton()->draw_call(item);
+        rendering_device->draw_call(item);
     }
 }
 
 void RenderingServer::bind_textures(MaterialData *material, uint64_t program)
 {
     auto rendering_device = RenderingDevice::get_singleton();
+
+    // 无效 RID 或尚未上传成功的纹理回退到默认纹理，避免解引用空指针。
+    auto bind_slot = [&](uint32_t unit, RID texture, RID fallback)
+    {
+        TextureData *texture_data = storage.textures.get_data(texture);
+        if (texture_data == nullptr || texture_data->texture_2d == 0)
+            texture_data = storage.textures.get_data(fallback);
+        rendering_device->bind_texture_2d(
+            unit, texture_data != nullptr ? texture_data->texture_2d : 0);
+    };
+
     // 基础色贴图
-    TextureData *tex_albedo = storage.textures.get_data(material->texture_albedo == 0 ? default_texture_albedo : material->texture_albedo);
-    rendering_device->bind_texture_2d(0, tex_albedo->texture_2d);
+    bind_slot(0, material->texture_albedo, default_texture_albedo);
     rendering_device->set_uniform_int(program, "u_albedo_texture", 0);
 
     // 法线贴图
-    TextureData *tex_normal = storage.textures.get_data(material->texture_normal == 0 ? default_texture_normal : material->texture_normal);
-    rendering_device->bind_texture_2d(1, tex_normal->texture_2d);
+    bind_slot(1, material->texture_normal, default_texture_normal);
     rendering_device->set_uniform_int(program, "u_normal_texture", 1);
 
     // 粗糙度贴图
-    TextureData *tex_roughness = storage.textures.get_data(material->texture_roughness == 0 ? default_texture_roughness : material->texture_roughness);
-    rendering_device->bind_texture_2d(2, tex_roughness->texture_2d);
+    bind_slot(2, material->texture_roughness, default_texture_roughness);
     rendering_device->set_uniform_int(program, "u_roughness_texture", 2);
 
     // 金属度贴图
-    TextureData *tex_metallic = storage.textures.get_data(material->texture_metallic == 0 ? default_texture_metallic : material->texture_metallic);
-    rendering_device->bind_texture_2d(3, tex_metallic->texture_2d);
+    bind_slot(3, material->texture_metallic, default_texture_metallic);
     rendering_device->set_uniform_int(program, "u_metallic_texture", 3);
 
     // AO贴图
-    TextureData *tex_ao = storage.textures.get_data(material->texture_ao == 0 ? default_texture_ao : material->texture_ao);
-    rendering_device->bind_texture_2d(4, tex_ao->texture_2d);
+    bind_slot(4, material->texture_ao, default_texture_ao);
     rendering_device->set_uniform_int(program, "u_ao_texture", 4);
 
-    // 粗糙度贴图
-    TextureData *tex_height = storage.textures.get_data(material->texture_height == 0 ? default_texture_height : material->texture_height);
-    rendering_device->bind_texture_2d(5, tex_height->texture_2d);
+    // 高度贴图
+    bind_slot(5, material->texture_height, default_texture_height);
     rendering_device->set_uniform_int(program, "u_height_texture", 5);
 }

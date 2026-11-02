@@ -17,6 +17,7 @@ private:
     bool shadow = false;
     Color correlated_color;
     float temperature = 6000;
+    float intensity = 1.0f;
 protected:
     RID rid;
 
@@ -25,6 +26,13 @@ public:
     void set_shadow(bool shadow) { this->shadow = shadow; }
     void set_temperature(float temp) { temperature = temp; }
     void set_direction(const Vector3 &direction) { this->direction = direction; }
+    void set_intensity(float value)
+    {
+        intensity = value;
+        if (rid != 0)
+            RenderingServer::get_singleton()->set_light_intensity(rid, intensity);
+    }
+    float get_intensity() const { return intensity; }
     
     void _notification(int what) override
     {
@@ -37,6 +45,7 @@ public:
             rendering_server->set_light_transform(rid, get_global_transform());
             rendering_server->set_light_temperature(rid, temperature);
             rendering_server->set_light_color(rid, color);
+            rendering_server->set_light_intensity(rid, intensity);
             rendering_server->set_light_cast_shadow(rid, shadow);
             rendering_server->set_light_direction(rid, direction);
             rendering_server->set_light_scene(rid, get_world()->get_scene());

@@ -324,7 +324,9 @@ Ref<Resource> MtlLoader::load(const std::string url)
             {
                 // MTL 的 bump 是高度/凹凸图，对应 Height 槽位；-bm 作为视差强度。
                 current->set_texture_height(load_texture(url, map.path, false, "height"));
-                if (map.has_bump_scale) current->set_parallax_scale(map.bump_scale);
+                // -bm 不是 UV 空间高度，直接当视差强度容易过大；收敛到安全范围。
+                if (map.has_bump_scale)
+                    current->set_parallax_scale(std::clamp(map.bump_scale, 0.0f, 0.1f));
             }
             else if (key == "map_ks")
             {

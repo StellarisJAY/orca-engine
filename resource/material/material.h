@@ -37,8 +37,12 @@ private:
     // UV缩放
     Vector2 uv_scale = {1.0, 1.0};
     // 高度缩放
-    float parallax_scale = 1.0;
+    float parallax_scale = 0.02;
     bool parallax_flip = false;
+    // 法线强度
+    float normal_scale = 1.0;
+    // AO 强度
+    float ao_strength = 1.0;
     // 贴图槽位
     Ref<ImageTexture> texture_slots[6];
 
@@ -68,6 +72,8 @@ public:
     const Vector2 &get_uv_scale() const { return uv_scale; }
     float get_parallax_scale() const { return parallax_scale; }
     bool get_parallax_flip() const { return parallax_flip; }
+    float get_normal_scale() const { return normal_scale; }
+    float get_ao_strength() const { return ao_strength; }
 
     const std::vector<Ref<ImageTexture>> get_texture_slots() const 
     {
@@ -88,6 +94,8 @@ public:
     void set_uv_scale(const Vector2 &scales) { uv_scale = scales; }
     void set_parallax_scale(float scale) { parallax_scale = scale; }
     void set_parallax_flip(bool flip) { parallax_flip = flip; }
+    void set_normal_scale(float scale) { normal_scale = scale; }
+    void set_ao_strength(float strength) { ao_strength = strength; }
 
     void set_texture_albedo(Ref<ImageTexture> texture) { texture_slots[(uint8_t)(MaterialTextureSlot::Albedo)] = texture; }
     void set_texture_normal(Ref<ImageTexture> texture) { texture_slots[(uint8_t)(MaterialTextureSlot::Normal)] = texture; }

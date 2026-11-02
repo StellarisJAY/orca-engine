@@ -40,6 +40,8 @@ void MeshInstance3D::ensure_material(Ref<StandardMaterial> material)
         rendering_server->set_material_roughness(material->get_rid(), material->get_roughenss());
         rendering_server->set_material_metallic(material->get_rid(), material->get_metallic());
         rendering_server->set_material_scales(material->get_rid(), material->get_uv_scale(), material->get_parallax_scale(), material->get_parallax_flip());
+        rendering_server->set_material_normal_scale(material->get_rid(), material->get_normal_scale());
+        rendering_server->set_material_ao_strength(material->get_rid(), material->get_ao_strength());
     }
     // 保证材质所有贴图传递到GPU侧
     ensure_texture(material);
@@ -53,7 +55,11 @@ void MeshInstance3D::ensure_texture(Ref<StandardMaterial> material)
     {
         slot_idx++;
         if (texture.is_null())
+        {
+            // 贴图缺失或加载失败时清空对应槽位，shader 会回退到标量参数。
+            rendering_server->set_material_texture(material->get_rid(), slot_idx, 0);
             continue;
+        }
         if (texture->get_rid() == 0)
         {
             texture->set_rid(rendering_server->create_texture());

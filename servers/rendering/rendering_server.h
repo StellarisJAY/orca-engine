@@ -132,6 +132,14 @@ public:
     /// @param parallax_scale 视差缩放
     /// @param parallax_flip 视差深度/高度翻转
     void set_material_scales(RID mat, const Vector2 &uv_scale, float parallax_scale, bool parallax_flip);
+    /// @brief 设置法线贴图强度
+    /// @param mat RID
+    /// @param normal_scale 法线 XY 缩放
+    void set_material_normal_scale(RID mat, float normal_scale);
+    /// @brief 设置 AO 强度
+    /// @param mat RID
+    /// @param ao_strength AO 混合强度 0~1
+    void set_material_ao_strength(RID mat, float ao_strength);
 
     // 纹理资源
     
@@ -194,6 +202,10 @@ public:
     void set_light_cast_shadow(RID light, bool shadow);
     void set_light_temperature(RID light, float temperature);
     void set_light_direction(RID light, const Vector3 &direction);
+    /// @brief 设置灯光强度
+    /// @param light RID
+    /// @param intensity 强度，>=0
+    void set_light_intensity(RID light, float intensity);
 
     void free(RID rid);
     void sync(); // 同步指令

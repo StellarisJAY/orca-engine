@@ -43,9 +43,13 @@ struct MaterialData
     float specular = 1.0;
     Vector2 uv_scale = {1.0, 1.0};
     float normal_scale = 1.0;
+    float ao_strength = 1.0;
     float emission = 0.0;
-    float parallax_scale = 1.0;
+    float parallax_scale = 0.02;
     bool parallax_flip = false;
+
+    // 位掩码记录哪些槽位真正有可用贴图，位序与 TextureSlot 一致。
+    uint32_t texture_mask = 0;
 
     RID texture_albedo = 0;
     RID texture_normal = 0;
@@ -88,7 +92,8 @@ struct LightData
     Color final_color;
     int type;
     Color base_color;
-    float temperature;
+    float temperature = 6500.0f;
+    float intensity = 1.0f;
     bool cast_shadow = false;
     bool visible = true;
 };
