@@ -42,14 +42,5 @@ struct Color
     void linear(real_t *data) const
     {
         normalize_rgb(data);
-        data[0] = SRGBToLinear(data[0]);
-        data[1] = SRGBToLinear(data[1]);
-        data[2] = SRGBToLinear(data[2]);
-    }
-
-    real_t SRGBToLinear(real_t c) const
-    {
-        return (c <= 0.04045f) ? (c / 12.92f)
-                               : Math::pow((c + 0.055f) / 1.055f, 2.4f);
     }
 };

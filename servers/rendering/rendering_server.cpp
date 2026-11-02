@@ -322,6 +322,22 @@ void RenderingServer::set_texture_image(
 {
     if (TextureData *texture_data = storage.textures.get_data(texture))
     {
+        if (width == 0 || height == 0 || channels == 0 || channels > 4)
+        {
+            std::printf("[ERROR] set_texture_image: invalid texture size %ux%u, channels=%u\n",
+                        width, height, static_cast<unsigned>(channels));
+            return;
+        }
+
+        const size_t expected_size = static_cast<size_t>(width) * height * channels;
+        if (pixels.size() < expected_size)
+        {
+            std::printf("[ERROR] set_texture_image: pixel buffer too small (%llu < %llu)\n",
+                        static_cast<unsigned long long>(pixels.size()),
+                        static_cast<unsigned long long>(expected_size));
+            return;
+        }
+
         TextureDesc desc{
             .width = width,
             .height = height,
@@ -331,6 +347,16 @@ void RenderingServer::set_texture_image(
             .linear_filter = linear_filter,
             .srgb = srgb};
         uint32_t handle = RenderingDevice::get_singleton()->create_texture_2d(desc, pixels.data());
+        if (handle == 0)
+        {
+            std::printf("[ERROR] set_texture_image: failed to create GPU texture\n");
+            return;
+        }
+
+        // 重传时销毁旧句柄，避免 GPU 纹理泄漏。
+        if (texture_data->texture_2d != 0)
+            RenderingDevice::get_singleton()->destroy_texture_2d(texture_data->texture_2d);
+
         texture_data->width = width;
         texture_data->height = height;
         texture_data->texture_2d = handle;
@@ -479,6 +505,36 @@ void RenderingServer::free(RID rid)
     case RIDType::Instance:
         storage.instances.free(rid);
         break;
+    case RIDType::Texture:
+        if (TextureData *data = storage.textures.get_data(rid))
+        {
+            if (data->texture_2d != 0)
+                RenderingDevice::get_singleton()->destroy_texture_2d(data->texture_2d);
+            data->texture_2d = 0;
+        }
+        storage.textures.free(rid);
+        break;
+    case RIDType::Material:
+        storage.materials.free(rid);
+        break;
+    case RIDType::Scene:
+        if (current_scene == rid)
+            current_scene = 0;
+        storage.scenes.free(rid);
+        break;
+    case RIDType::Environment:
+        storage.environments.free(rid);
+        break;
+    case RIDType::Shader:
+        if (ShaderData *data = storage.shaders.get_data(rid))
+        {
+            if (data->shader_program != 0)
+                RenderingDevice::get_singleton()->destroy_shader_program(data->shader_program);
+        }
+        if (default_shader_program == rid)
+            default_shader_program = 0;
+        storage.shaders.free(rid);
+        break;
     case RIDType::Light:
         // 灯退出场景树后必须从 scene 的灯光列表中移除，
         // 否则它仍会参与绘制，强度参数也就无法真正归零。
@@ -524,6 +580,11 @@ void RenderingServer::draw()
             {
                 material_data = storage.materials.get_data(instance->override_material == 0 ? default_material : instance->override_material);
             }
+            if (material_data == nullptr)
+            {
+                std::printf("[WARN] drawing surface without a valid material\n");
+                continue;
+            }
             DrawItem item;
             item.surface = surface.surface;
             item.material = material_data;
@@ -534,10 +595,22 @@ void RenderingServer::draw()
     }
 
     SceneData *scene_data = storage.scenes.get_data(current_scene);
-    EnvironmentData *env_data = storage.environments.get_data(scene_data->env);
+    if (scene_data == nullptr)
+    {
+        std::printf("[WARN] draw: current scene is missing\n");
+        return;
+    }
+
     CameraData *camera_data = storage.cameras.get_data(scene_data->main_camera);
+    if (camera_data == nullptr)
+    {
+        std::printf("[WARN] draw: main camera is missing\n");
+        return;
+    }
+
+    EnvironmentData *env_data = storage.environments.get_data(scene_data->env);
     ShaderData *shader_data = storage.shaders.get_data(default_shader_program);
-    if (shader_data == nullptr)
+    if (shader_data == nullptr || shader_data->shader_program == 0)
         return;
     // shader程序切换，现在只有builtin shader
     const uint64_t program = shader_data->shader_program;
@@ -546,24 +619,22 @@ void RenderingServer::draw()
 
     // 相机变换
     real_t camera_transform[16];
-    if (camera_data != nullptr)
-    {
-        camera_data->transform.affine_inverse().get_mat4(camera_transform);
-        const real_t *projection = camera_data->projection.data;
-        rendering_device->set_uniform_vec3(program, "u_camera_position", camera_data->transform.origin.coords);
-        rendering_device->set_uniform_mat4(program, "u_view", camera_transform);
-        rendering_device->set_uniform_mat4(program, "u_projection", projection);
-    }
+    camera_data->transform.affine_inverse().get_mat4(camera_transform);
+    const real_t *projection = camera_data->projection.data;
+    rendering_device->set_uniform_vec3(program, "u_camera_position", camera_data->transform.origin.coords);
+    rendering_device->set_uniform_mat4(program, "u_view", camera_transform);
+    rendering_device->set_uniform_mat4(program, "u_projection", projection);
 
-    // 环境
+    // 环境；没有环境资源时使用全黑环境光，避免上一帧的 uniform 残留。
+    real_t ambient_color[4] = {0.0, 0.0, 0.0, 1.0};
+    float ambient_strength = 0.0f;
     if (env_data != nullptr)
     {
-        // 环境光
-        real_t ambient_color[4];
         env_data->ambient_color.linear(ambient_color);
-        rendering_device->set_uniform_vec4(program, "u_ambient_color", ambient_color);
-        rendering_device->set_uniform_float(program, "u_ambient_strength", env_data->ambient_strength);
+        ambient_strength = env_data->ambient_strength;
     }
+    rendering_device->set_uniform_vec4(program, "u_ambient_color", ambient_color);
+    rendering_device->set_uniform_float(program, "u_ambient_strength", ambient_strength);
 
     // 灯光
     float light_intensity = 0.0f;
@@ -577,7 +648,6 @@ void RenderingServer::draw()
             real_t light_color[3];
             light_data->final_color.linear(light_color);
             rendering_device->set_uniform_vec3(program, "u_light_color", light_color);
-            rendering_device->set_uniform_vec3(program, "u_light_position", light_data->transform.origin.coords);
             rendering_device->set_uniform_int(program, "u_light_type", light_data->type);
             rendering_device->set_uniform_vec3(program, "u_light_direction", light_data->direction.coords);
             light_intensity = std::max(light_data->intensity, 0.0f);
@@ -596,6 +666,8 @@ void RenderingServer::draw()
 
         // instance material
         MaterialData *material = item.material;
+        if (material == nullptr)
+            continue;
         real_t vec4[4];
         material->albedo.linear(vec4);
         rendering_device->set_uniform_vec4(program, "u_albedo", vec4);

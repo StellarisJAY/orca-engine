@@ -27,6 +27,8 @@ public:
             rendering_server->set_scene_env(scene, environment);
             break;
         case NOTIFICATION_EXIT_TREE:
+            rendering_server->free(environment);
+            environment = 0;
             rendering_server->free(scene);
             scene = 0;
             break;

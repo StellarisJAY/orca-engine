@@ -33,7 +33,10 @@ Ref<Resource> ImageTextureLoader::load(const std::string url)
     texture->set_pixels(std::vector<uint8_t>(data, data + total_bytes));
     texture->set_width(w);
     texture->set_height(h);
-    texture->set_srgb(channels == 4);
+    // 资源层不知道图片最终用于哪个材质槽位；默认按线性数据处理，
+    // 颜色槽位（albedo）由 MTL/材质加载器显式 set_srgb(true)，
+    // 避免按通道数猜测导致 normal/roughness 等数据图被错误地做 sRGB 解码。
+    texture->set_srgb(false);
     texture->set_channels(channels);
     std::printf("loaded image texture: \"%s\", w=%d,h=%d,c=%d\n", url.c_str(), w, h, channels);
 

@@ -346,39 +346,77 @@ void GLRenderingDevice::set_uniform_bool(uint64_t program, const char *uniform, 
 
 uint32_t GLRenderingDevice::create_texture_2d(const TextureDesc &desc, const void *pixels)
 {
-    GLuint texture = 0;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
+    if (desc.width == 0 || desc.height == 0 || pixels == nullptr)
+    {
+        std::printf("[ERROR] create_texture_2d: invalid size or null pixels\n");
+        return 0;
+    }
+    if (desc.channels < 1 || desc.channels > 4)
+    {
+        std::printf("[ERROR] create_texture_2d: unsupported channel count %u\n",
+                    static_cast<unsigned>(desc.channels));
+        return 0;
+    }
 
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    const GLuint internal_format = desc.srgb ? GL_RGBA8 : GL_RGB8;
-    GLuint image_format = GL_RGBA;
+    GLenum image_format = GL_RGBA;
+    GLint internal_format = GL_RGBA8;
     switch (desc.channels)
     {
     case 1:
         image_format = GL_RED;
+        internal_format = GL_R8;
         break;
     case 2:
         image_format = GL_RG;
+        internal_format = GL_RG8;
         break;
     case 3:
         image_format = GL_RGB;
+        internal_format = GL_RGB8;
         break;
     case 4:
         image_format = GL_RGBA;
+        internal_format = GL_RGBA8;
         break;
     }
-    glTexImage2D(GL_TEXTURE_2D, 0, internal_format, desc.width, desc.height, 0, image_format, GL_UNSIGNED_BYTE, pixels);
-    if (desc.gen_mipmap)
+
+    // sRGB 只对颜色纹理有意义，且必须使用对应的 sRGB 内部格式，
+    // 否则 sampler 读到的仍是 sRGB 编码值，光照会偏亮/偏灰。
+    if (desc.srgb)
     {
-        glGenerateMipmap(GL_TEXTURE_2D);
+        if (desc.channels >= 3)
+            internal_format = desc.channels == 4 ? GL_SRGB8_ALPHA8 : GL_SRGB8;
+        else
+            std::printf("[WARN] create_texture_2d: sRGB requested for %u-channel data texture, using linear format\n",
+                        static_cast<unsigned>(desc.channels));
     }
+
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    if (texture == 0)
+    {
+        std::printf("[ERROR] create_texture_2d: glGenTextures failed\n");
+        return 0;
+    }
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, internal_format, desc.width, desc.height, 0,
+                 image_format, GL_UNSIGNED_BYTE, pixels);
+
+    const GLint filter = desc.linear_filter ? GL_LINEAR : GL_NEAREST;
+    const GLint min_filter = desc.gen_mipmap
+        ? (desc.linear_filter ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST)
+        : filter;
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, desc.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, desc.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                    desc.gen_mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+
+    if (desc.gen_mipmap)
+        glGenerateMipmap(GL_TEXTURE_2D);
+
     return texture;
 }
 

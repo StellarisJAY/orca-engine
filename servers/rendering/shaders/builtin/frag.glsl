@@ -51,8 +51,6 @@ uniform vec3 u_camera_position;
 
 in vec2 v_uv;
 in vec3 v_normal;
-in vec3 v_view_direction;
-in vec3 v_tangent_view_dir;
 in vec3 v_world_position;
 in mat3 v_TBN;
 
@@ -173,8 +171,8 @@ void main() {
 
     // 逐像素视线方向比插值后的归一化向量更准确。
     vec3 V = normalize(u_camera_position - v_world_position);
-    // v_TBN 是世界空间 -> 切线空间，所以左乘得到切线空间视线。
-    vec3 tangent_view = normalize(v_TBN * V);
+    // v_TBN 是切线空间 -> 世界空间，左乘其转置得到切线空间视线。
+    vec3 tangent_view = normalize(transpose(v_TBN) * V);
 
     // 视差贴图
     vec2 uv = parallax_mapping(base_uv, tangent_view);
@@ -212,7 +210,7 @@ void main() {
         tangent_normal = tangent_normal * 2.0 - 1.0;
         tangent_normal.xy *= u_normal_scale;
         tangent_normal = normalize(tangent_normal);
-        normal = normalize(inverse(v_TBN) * tangent_normal);
+        normal = normalize(v_TBN * tangent_normal);
     }
 
     // 环境光项；有贴图时 AO 参与遮蔽，无贴图时 AO 为 1。

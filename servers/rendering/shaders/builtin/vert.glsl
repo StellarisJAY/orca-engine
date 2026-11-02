@@ -8,17 +8,13 @@ layout(location = 4) in vec3 a_bitangent;
 
 out vec2 v_uv;
 out vec3 v_normal;
-out vec3 v_view_direction;
 out vec3 v_world_position;
+// 切线空间 -> 世界空间，frag 中直接左乘切线空间法线。
 out mat3 v_TBN;
-out vec3 v_tangent_view_dir;
 
 uniform mat4 u_model;
 uniform mat4 u_view;
 uniform mat4 u_projection;
-uniform vec3 u_camera_position;
-
-uniform vec3 u_light_position;
 
 void main() {
     // mvp 顶点变换
@@ -26,14 +22,35 @@ void main() {
     v_world_position = vec3(surface_world_position);
     gl_Position = u_projection * u_view * surface_world_position;
     v_uv = a_uv;
-    // 法线变换
-    v_normal = normalize(mat3(u_model) * a_normal);
-    // 视线方向
-    v_view_direction = normalize(u_camera_position - vec3(surface_world_position));
 
-    // 切线空间
-    vec3 T = normalize(mat3(u_model) * a_tangent);
-    vec3 B = normalize(mat3(u_model) * a_bitangent);
-    v_TBN = transpose(mat3(T,B,v_normal));
-    v_tangent_view_dir = v_TBN * v_view_direction;
+    // 法线必须用逆转置矩阵变换；mat3(u_model) 在非均匀缩放下会拉歪法线。
+    mat3 model3 = mat3(u_model);
+    mat3 normal_matrix = transpose(inverse(model3));
+    if (abs(determinant(model3)) < 1e-8)
+        normal_matrix = mat3(1.0);
+
+    vec3 N = normal_matrix * a_normal;
+    if (dot(N, N) < 1e-8)
+        N = vec3(0.0, 0.0, 1.0);
+    else
+        N = normalize(N);
+    v_normal = N;
+
+    // 切线用模型矩阵变换后对法线做正交化，避免 UV 退化时产生 NaN。
+    vec3 T = model3 * a_tangent;
+    T -= N * dot(N, T);
+    if (dot(T, T) < 1e-8)
+    {
+        vec3 up = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        T = cross(up, N);
+    }
+    T = normalize(T);
+
+    // 使用副切线的方向决定手性，但副切线本身由 N × T 重建，保证正交。
+    vec3 B = model3 * a_bitangent;
+    vec3 NcrossT = cross(N, T);
+    float handedness = dot(NcrossT, B) < 0.0 ? -1.0 : 1.0;
+    B = NcrossT * handedness;
+
+    v_TBN = mat3(T, B, N);
 }
