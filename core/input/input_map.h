@@ -71,7 +71,7 @@ inline bool InputMap::add_action(const InputAction &action)
     if (input_actions.count(action.action_code) != 0)
         return false;
     
-    input_actions.emplace(std::pair(action.action_code, action));
+    input_actions.insert_or_assign(action.action_code, action);
     for(KeyboardKeyCode key_code : action.keys)
     {
         keycode_to_actions[static_cast<uint16_t>(key_code)].emplace(action.action_code);

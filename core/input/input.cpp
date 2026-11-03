@@ -87,21 +87,34 @@ Vector2 Input::get_mouse_velocity() const
 
 bool Input::is_action_pressed(std::string action_code) const
 {
-    return action_pressed.at(action_code);
+    if(auto iter = action_pressed.find(action_code); iter != action_pressed.end())
+    {
+        return iter->second;
+    }
+    return false;
 }
 
 bool Input::is_action_just_pressed(std::string action_code) const
 {
-    return action_pressed.at(action_code) && action_pressed_at_frame.at(action_code) == frame_counter;
+    if(auto iter = action_pressed_at_frame.find(action_code); iter != action_pressed_at_frame.end())
+    {
+        return is_action_pressed(action_code) && iter->second == frame_counter;
+    }
+    return false;
 }
 
 bool Input::is_action_just_released(std::string action_code) const
 {
-    return !action_pressed.at(action_code) && action_pressed_at_frame.at(action_code) == frame_counter - 1;
+    if(auto iter = action_pressed_at_frame.find(action_code); iter != action_pressed_at_frame.end())
+    {
+        return !is_action_pressed(action_code) && iter->second == frame_counter - 1;
+    }
+    return false;
 }
 
 void Input::start_frame()
 {
+    frame_counter++;
 }
 
 void Input::end_frame()
@@ -120,9 +133,12 @@ void Input::parse_event_actions(const InputEvent &event)
 
     for (std::string action_code : actions)
     {
-        action_pressed.emplace(std::pair(action_code, event.pressed));
+        action_pressed.insert_or_assign(action_code, event.pressed);
         // 非重复按下事件，记录第一次按下的帧
         if (!event.echo)
-            action_pressed_at_frame.emplace(std::pair(action_code, frame_counter));
+            action_pressed_at_frame.insert_or_assign(action_code, frame_counter);
+        // 释放action，在action_pressed_at_frame保存最后按下的帧为前一帧
+        if(!event.pressed)
+            action_pressed_at_frame.insert_or_assign(action_code, frame_counter - 1);
     }
 }

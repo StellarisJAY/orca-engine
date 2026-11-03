@@ -98,6 +98,7 @@ void Application::run()
     double last = Time::now();
     while(!window->get_should_close())
     {
+        Input::get_singleton()->start_frame();
         // 窗口事件
         window->poll_event();
         double t = Time::now();
@@ -107,6 +108,7 @@ void Application::run()
         scene_tree->tick(t);
         // 交换帧缓存
         window->swap_buffers();
+        Input::get_singleton()->end_frame();
     }
 }
 
