@@ -10,7 +10,11 @@ class SDL3Window : public Window
     SDL_Window *window = nullptr;
     SDL_GLContextState *gl_context = nullptr;
     bool should_close = false;
+    bool sdl_initialized = false;
     RenderingDriverType driver = RenderingDriverType::Vulkan;
+
+    // SDL3 的按键/按钮事件里不保证都带按住掩码，这里和 GLFW 后端一样自行维护。
+    uint32_t mouse_button_mask = WINDOW_MOUSE_MASK_NONE;
 
 public:
     bool init(const WindowDesc &desc);

@@ -9,7 +9,8 @@ add_library(orca-platform STATIC
     window.cpp
 )
 target_include_directories(orca-platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(orca-platform PUBLIC orca-rendering)
+# window.h 复用 core/input 的 KeyboardKeyCode / MouseButton，需要 orca-input 的头文件与符号。
+target_link_libraries(orca-platform PUBLIC orca-rendering orca-input)
 
 # 如果使用了vulkan图形后端，窗口创建需要vulkan库
 if(ORCA_RENDERER_VULKAN)

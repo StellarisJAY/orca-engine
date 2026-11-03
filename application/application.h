@@ -23,4 +23,6 @@ public:
     void run();
     void shutdown();
     void set_main_scene(Node *node);
+private:
+    void window_event_callback(const WindowEvent &event);
 };
