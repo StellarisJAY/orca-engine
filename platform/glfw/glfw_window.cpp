@@ -1,4 +1,5 @@
 #include "glfw_window.h"
+#include "input.h"
 
 #ifdef ORCA_RENDERER_VULKAN
 #include <vulkan/vulkan_core.h> // 必须在 glfw3.h 之前：glfwCreateWindowSurface 由 VK_VERSION_1_0 守卫
@@ -284,6 +285,22 @@ void GLFWWindow::swap_buffers()
         glfwSwapBuffers(window);
 }
 
+void GLFWWindow::set_mouse_mode(MouseMode mode)
+{
+    switch(mode)
+    {
+    case MouseMode::Hidden:
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+        break;
+    case MouseMode::Captured:
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_CAPTURED);
+        break;
+    case MouseMode::Visible:
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        break;
+    }
+}
+
 void GLFWWindow::key_callback(int key, int sc, int act, int mods)
 {
     (void)sc;
@@ -296,6 +313,7 @@ void GLFWWindow::key_callback(int key, int sc, int act, int mods)
     event.type = WindowEventType::Key;
     event.key_code = mapped;
     event.pressed = act != GLFW_RELEASE;
+    event.press_strength = act != GLFW_RELEASE ? 1.0 : 0.0; // 键盘只有0或1的力度
     event.repeat = act == GLFW_REPEAT;
     event.modifiers = map_modifiers(mods);
     emit(event);
@@ -319,6 +337,7 @@ void GLFWWindow::mouse_button_callback(int btn, int act, int mods)
     event.type = WindowEventType::MouseButton;
     event.mouse_button = mapped;
     event.pressed = act != GLFW_RELEASE;
+    event.press_strength = act != GLFW_RELEASE ? 1.0 : 0.0; // 鼠标只有0或1的力度
     event.modifiers = map_modifiers(mods);
 
     // 自己维护掩码：在回调内查询 glfwGetMouseButton 不一定反映本次事件。

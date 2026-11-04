@@ -60,6 +60,7 @@ void Application::window_event_callback(const WindowEvent &event)
     InputEvent input_event;
     input_event.key_code = event.key_code;
     input_event.pressed = event.pressed;
+    input_event.strength = event.press_strength;
     input_event.echo = event.repeat;
     
     input_event.mouse_button = event.mouse_button;

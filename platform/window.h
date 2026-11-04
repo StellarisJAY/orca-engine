@@ -79,6 +79,7 @@ struct WindowEvent
     uint16_t modifiers = WINDOW_MOD_NONE; ///< WindowKeyModifier 位组合
     bool pressed = false;                 ///< Key / MouseButton：按下为 true
     bool repeat = false;                  ///< Key：是否是自动重复
+    float press_strength = 0.0;           ///< 按压力度
 
     // ---- 键盘 ----
     KeyboardKeyCode key_code = KeyboardKeyCode::None;
@@ -129,6 +130,8 @@ public:
     virtual void get_frame_buffer_size(int &w, int &h) const = 0;
     // 呈现当前帧。OpenGL 需要（交换缓冲），Vulkan 由后端在 present 时完成，这里为空操作。
     virtual void swap_buffers() = 0;
+
+    virtual void set_mouse_mode(MouseMode mode) = 0;
 
     void register_event_callback(const EventCallback &callback);
     void emit(const WindowEvent &event) const;

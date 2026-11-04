@@ -25,7 +25,7 @@ public:
     void get_size(int &w, int &h) const;
     void get_frame_buffer_size(int &w, int &h) const;
     void swap_buffers();
-
+    void set_mouse_mode(MouseMode mode);
 private:
     // 以下回调由 init() 里注册的 GLFW 静态回调转发进来。
     void key_callback(int key, int sc, int act, int mods);

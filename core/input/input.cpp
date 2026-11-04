@@ -1,6 +1,7 @@
 #include "input.h"
 #include "os/memory.h"
 #include "input_map.h"
+#include "math/math_funcs.h"
 
 void Input::create_singleton()
 {
@@ -35,9 +36,9 @@ void Input::parse_input_event(const InputEvent &event)
             buffered_events.push_back(event);
         }
     case InputEventType::MouseMotion:
+        mouse_position = event.position;
         if (!event.relative.is_zero_approx())
         {
-            mouse_position = event.position;
             mouse_delta = event.relative;
             buffered_events.push_back(event);
         }
@@ -80,16 +81,16 @@ Vector2 Input::get_mouse_position() const
     return mouse_position;
 }
 
-Vector2 Input::get_mouse_velocity() const
+Vector2 Input::get_mouse_motion() const
 {
-    return mouse_delta; // TODO to velocity
+    return mouse_delta;
 }
 
 bool Input::is_action_pressed(std::string action_code) const
 {
     if(auto iter = action_pressed.find(action_code); iter != action_pressed.end())
     {
-        return iter->second;
+        return !Math::is_zero_approx(iter->second);
     }
     return false;
 }
@@ -112,6 +113,39 @@ bool Input::is_action_just_released(std::string action_code) const
     return false;
 }
 
+real_t Input::get_action_strength(std::string action) const
+{
+    // TODO action strength 兼容手柄等线性按键设备
+    if(auto iter = action_pressed.find(action); iter != action_pressed.end())
+    {
+        return iter->second;
+    }
+    return 0.0;
+}
+
+real_t Input::get_axis(const std::string negative, const std::string positive) const
+{
+    // TODO action strength 兼容手柄等线性按键设备
+    real_t nval = get_action_strength(negative);
+    real_t pval = get_action_strength(positive);
+    return pval - nval;
+}
+
+Vector2 Input::get_direction(const std::string neg_x, const std::string pos_x, const std::string neg_y, const std::string pos_y) const
+{
+    // TODO action strength 兼容手柄等线性按键设备
+    real_t nx = get_action_strength(neg_x);
+    real_t px = get_action_strength(pos_x);
+    real_t ny = get_action_strength(neg_y);
+    real_t py = get_action_strength(pos_y);
+    return Vector2(px-nx, py-ny);
+}
+
+void Input::set_mouse_mode(MouseMode mode)
+{
+    
+}
+
 void Input::start_frame()
 {
     frame_counter++;
@@ -119,6 +153,12 @@ void Input::start_frame()
 
 void Input::end_frame()
 {
+    // 如果上一帧都没有鼠标移动，设置motion为0
+    bool has_mouse_motion = std::any_of(buffered_events.begin(), buffered_events.end(), [](const InputEvent &event) { return event.type == InputEventType::MouseMotion; });
+    if(!has_mouse_motion)
+    {
+        mouse_delta = Vector2::ZERO;
+    }
     buffered_events.clear();
 }
 
@@ -133,7 +173,7 @@ void Input::parse_event_actions(const InputEvent &event)
 
     for (std::string action_code : actions)
     {
-        action_pressed.insert_or_assign(action_code, event.pressed);
+        action_pressed.insert_or_assign(action_code, event.strength);
         // 非重复按下事件，记录第一次按下的帧
         if (!event.echo)
             action_pressed_at_frame.insert_or_assign(action_code, frame_counter);

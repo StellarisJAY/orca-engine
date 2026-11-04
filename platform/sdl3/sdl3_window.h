@@ -25,4 +25,5 @@ public:
     void get_size(int &w, int &h) const;
     void get_frame_buffer_size(int &w, int &h) const;
     void swap_buffers();
+    void set_mouse_mode(MouseMode mode);
 };

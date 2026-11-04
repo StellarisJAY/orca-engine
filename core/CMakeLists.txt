@@ -24,3 +24,9 @@ add_library(orca-core STATIC
 )
 
 target_include_directories(orca-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_library(orca-input STATIC 
+    input/input.cpp
+)
+target_link_libraries(orca-input PRIVATE orca-math orca-core)
+target_include_directories(orca-input PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/input")

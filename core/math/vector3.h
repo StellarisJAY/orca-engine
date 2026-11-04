@@ -1,6 +1,7 @@
 #pragma once
 
 #include "math_defs.h"
+#include "vector2.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -112,6 +113,7 @@ struct Vector3
 
     constexpr Vector3() : x(0), y(0), z(0) {}
     constexpr Vector3(real_t x, real_t y, real_t z) : x(x), y(y), z(z) {}
+    constexpr Vector3(const Vector2 &xy, real_t z) : x(xy.x), y(xy.y), z(z) {}
 
     inline static constexpr real_t det3(const Vector3 matrix[3]);
 };

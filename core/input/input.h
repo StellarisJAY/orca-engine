@@ -26,6 +26,7 @@ struct InputEvent
 
     bool pressed = false; // 键盘按键事件，true为按下，false为释放
     bool echo = false; // 持续按下重复
+    float strength = 0.0;
 
     KeyboardKeyCode key_code = KeyboardKeyCode::None; // 键盘按键
     MouseButton mouse_button = MouseButton::None; // 鼠标按键
@@ -67,20 +68,23 @@ public:
     // 鼠标移动事件
 
     Vector2 get_mouse_position() const;
-    Vector2 get_mouse_velocity() const;
+    /// @brief 鼠标当前帧位置相对上一帧位置的位移
+    /// @return 位移 Vector2 
+    Vector2 get_mouse_motion() const;
 
     // 动作事件（InputMap）
 
     bool is_action_pressed(std::string action) const;
     bool is_action_just_pressed(std::string action) const;
     bool is_action_just_released(std::string action) const;
-
-    // 鼠标模式，显示、隐藏、捕获
-    enum class MouseMode: uint8_t {
-        Visible = 0,
-        Hidden = 1,
-        Captured = 2,
-    };
+    /// @brief 返回动作按下力度，键盘和鼠标返回0或1，手柄扳机等线性按键返回[0,1]
+    /// @brief 键盘、鼠标、手柄绑定同一动作同时按下，选最大值返回
+    /// @param action 动作名称
+    /// @return 按压力度 [0,1]
+    real_t get_action_strength(std::string action) const;
+    
+    real_t get_axis(const std::string negative, const std::string positive) const;
+    Vector2 get_direction(const std::string neg_x, const std::string pos_x, const std::string neg_y, const std::string pos_y) const;
     void set_mouse_mode(MouseMode mode);
     /// @brief 一帧开始，整理buffered_events，匹配命中的自定义输入动作
     void start_frame();
@@ -94,10 +98,10 @@ private:
     std::vector<InputEvent> buffered_events;
     std::vector<bool> key_pressed;
     std::vector<bool> mouse_button_pressed;
-    /// @brief input记录的当前帧
+    /// @brief input记录的当前帧编号
     uint64_t frame_counter = 0;
-    /// @brief 动作在当前帧是否被按下
-    std::unordered_map<std::string, bool> action_pressed;
+    /// @brief 动作在当前帧的按下力度
+    std::unordered_map<std::string, float> action_pressed;
     /// @brief 记录动作按下的首帧
     std::unordered_map<std::string, uint64_t> action_pressed_at_frame;
 
