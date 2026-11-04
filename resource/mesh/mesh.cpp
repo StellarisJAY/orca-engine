@@ -23,6 +23,50 @@ namespace
         tangent.normalize();
         bitangent = normal.cross(tangent);
     }
+
+    /// @brief 把累加后的切线正交化；零向量用基于法线的兜底基替换。
+    void finalize_tangents(Mesh::Surface &surface)
+    {
+        const size_t vertex_count = surface.vertices.size();
+        const bool has_normals = surface.normals.size() == vertex_count;
+
+        for (size_t i = 0; i < vertex_count; ++i)
+        {
+            Vector3 normal = has_normals ? surface.normals[i] : Vector3(0, 1, 0);
+            if (normal.length_squared() < 1e-12f)
+                normal = Vector3(0, 1, 0);
+            else
+                normal.normalize();
+
+            Vector3 tangent = surface.tangents[i];
+            tangent -= normal * normal.dot(tangent);
+
+            if (tangent.length_squared() < 1e-12f)
+            {
+                make_fallback_tangent(normal, tangent, surface.bitangents[i]);
+            }
+            else
+            {
+                tangent.normalize();
+                Vector3 bitangent = normal.cross(tangent);
+                // 保留 UV 解算出的手性。
+                if (surface.bitangents[i].dot(bitangent) < 0.0f)
+                    bitangent *= -1.0f;
+                surface.bitangents[i] = bitangent;
+            }
+
+            surface.tangents[i] = tangent;
+        }
+    }
+
+    /// @brief 不需要切线空间时只做 O(V) 的兜底基，避免跑完整三角形循环。
+    void generate_default_tangents(Mesh::Surface &surface)
+    {
+        const size_t vertex_count = surface.vertices.size();
+        surface.tangents.assign(vertex_count, Vector3::ZERO);
+        surface.bitangents.assign(vertex_count, Vector3::ZERO);
+        finalize_tangents(surface);
+    }
 } // namespace
 
 void compute_surface_tangents(Mesh::Surface &surface)
@@ -30,7 +74,6 @@ void compute_surface_tangents(Mesh::Surface &surface)
     std::vector<Vector3> &tangents = surface.tangents;
     std::vector<Vector3> &bitangents = surface.bitangents;
     std::vector<Vector3> &vertices = surface.vertices;
-    std::vector<Vector3> &normals = surface.normals;
     std::vector<Vector2> &uvs = surface.uvs;
     std::vector<uint32_t> &indices = surface.indices;
 
@@ -38,7 +81,6 @@ void compute_surface_tangents(Mesh::Surface &surface)
     tangents.assign(vertex_count, Vector3::ZERO);
     bitangents.assign(vertex_count, Vector3::ZERO);
 
-    const bool has_normals = normals.size() == vertex_count;
     const bool has_uvs = uvs.size() == vertex_count;
 
     if (has_uvs)
@@ -94,40 +136,27 @@ void compute_surface_tangents(Mesh::Surface &surface)
 
     // 对所有切线做施密特正交化；零向量使用根据法线生成的兜底基，
     // 避免 normalize(0) 产生 NaN 并传到 shader。
-    for (size_t i = 0; i < vertex_count; ++i)
-    {
-        Vector3 normal = has_normals ? normals[i] : Vector3(0, 1, 0);
-        if (normal.length_squared() < 1e-12f)
-            normal = Vector3(0, 1, 0);
-        else
-            normal.normalize();
-
-        Vector3 tangent = tangents[i];
-        tangent -= normal * normal.dot(tangent);
-
-        if (tangent.length_squared() < 1e-12f)
-        {
-            make_fallback_tangent(normal, tangent, bitangents[i]);
-        }
-        else
-        {
-            tangent.normalize();
-            Vector3 bitangent = normal.cross(tangent);
-            // 保留 UV 解算出的手性。
-            if (bitangents[i].dot(bitangent) < 0.0f)
-                bitangent *= -1.0f;
-            bitangents[i] = bitangent;
-        }
-
-        tangents[i] = tangent;
-    }
+    finalize_tangents(surface);
 }
 
 void Mesh::compute_tangents()
 {
-    for(Surface &surface : surfaces)
+    for (Surface &surface : surfaces)
     {
-        compute_surface_tangents(surface);
+        if (surface.vertices.empty())
+            continue;
+
+        const bool can_use_uv =
+            surface.uvs.size() == surface.vertices.size() &&
+            surface.indices.size() >= 3;
+
+        // 不能按 surface.material 判断：OBJ 可能没有 mtllib，材质是在
+        // MeshInstance3D 构造时后注入的（例如 sphere.obj + 运行时材质）。
+        // 只要存在 UV，就必须用 UV 解算切线，否则法线/视差方向会错。
+        if (can_use_uv)
+            compute_surface_tangents(surface);
+        else
+            generate_default_tangents(surface);
     }
 }
 

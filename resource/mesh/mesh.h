@@ -7,6 +7,7 @@
 #include "object/ref_counted.h"
 #include "material/material.h"
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 /// @brief CPU 侧网格资源。
@@ -66,6 +67,10 @@ public:
 
     Surface &get_surface(uint32_t idx) { return surfaces[idx]; }
     const Surface &get_surface(uint32_t idx) const { return surfaces[idx]; }
-    void add_surface(Surface &surface) { surfaces.push_back(surface); }
+    /// @brief 拷贝一个 surface（保留给需要共享 CPU 数据的调用方）。
+    void add_surface(const Surface &surface) { surfaces.push_back(surface); }
+    /// @brief 移动一个 surface，避免加载器把整份顶点/索引再复制一遍。
+    void add_surface(Surface &&surface) { surfaces.push_back(std::move(surface)); }
+    void reserve_surfaces(size_t count) { surfaces.reserve(count); }
     const std::vector<Surface> &get_surfaces() const { return surfaces; }
 };

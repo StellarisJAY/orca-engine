@@ -122,6 +122,7 @@ void Application::shutdown()
     RenderingServer::destroy_singletone();
     RenderingDevice::destroy_singleton();
     ResourceLoader::destroy_singleton();
+    ResourceCache::destroy_singleton();
     window->shutdown();
 }
 

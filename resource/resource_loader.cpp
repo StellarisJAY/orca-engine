@@ -32,6 +32,16 @@ void ResourceLoader::register_loader(ResourceFormatLoader *loader)
 
 Ref<Resource> ResourceLoader::load(const std::string url)
 {
+    ResourceCache *cache = ResourceCache::get_singleton();
+    if (cache != nullptr)
+    {
+        Ref<Resource> cached = cache->get_resource(url);
+        if (cached.is_valid())
+        {
+            return cached;
+        }
+    }
+
     std::string ext = Path::get_extension(url);
     std::transform(ext.begin(), ext.end(), ext.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -43,7 +53,19 @@ Ref<Resource> ResourceLoader::load(const std::string url)
         return Ref<Resource>(nullptr);
     }
 
-    return it->second->load(url);
+    Ref<Resource> resource = it->second->load(url);
+    if (resource.is_null())
+    {
+        return resource;
+    }
+
+    // 只有加载成功且拥有 URL 的资源才进入弱引用缓存。
+    resource->set_url(url);
+    if (cache != nullptr)
+    {
+        cache->save_resource(resource.ptr());
+    }
+    return resource;
 }
 
 ResourceLoader::~ResourceLoader()

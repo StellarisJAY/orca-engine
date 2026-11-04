@@ -27,7 +27,19 @@ public:
     void set_rid(RID rid) { this->rid = rid; }
     Ref<Resource> duplicate() const override 
     {
-        return Ref<Resource>(memnew(ImageTexture));
+        ImageTexture *copy = memnew(ImageTexture);
+        copy->width = width;
+        copy->height = height;
+        copy->channels = channels;
+        copy->pixels = pixels;
+        copy->srgb = srgb;
+        copy->generate_mipmap = generate_mipmap;
+        copy->linear_filter = linear_filter;
+        copy->repeat = repeat;
+        // 新资源没有 GPU RID，第一次上传时由渲染服务器创建。
+        copy->rid = 0;
+        copy->rid_dirty = false;
+        return Ref<Resource>(copy);
     }
 
     std::vector<uint8_t> &get_pixels() { return pixels; }

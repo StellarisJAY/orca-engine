@@ -154,11 +154,11 @@ cd build
 
 | 目标 | 内容 | 是否注册到 CTest |
 |---|---|---|
-| `orca-tests` | doctest 单元测试：math / object / os / scene | 是，名称为 `orca-tests` |
+| `orca-tests` | doctest 单元测试：math / object / os / resource（OBJ + 缓存）/ scene | 是，名称为 `orca-tests` |
 | `orca-platform-window-test` | 创建窗口并初始化 OpenGL 设备，手动运行 | 否 |
 | `orca-application-test` | 演示程序（加载资源、渲染场景），手动运行 | 否 |
 
-> 已知测试缺口：`tests/resource/test_obj_loader.cpp` **没有**加入 `tests/CMakeLists.txt`，且其中使用的 `Mesh::Surface::get_vertex_count()` 等 API 与当前 `mesh.h` 不一致，属于过期测试。修改 OBJ/资源加载时不要指望它兜底，应补新的、可编译的测试。
+> `tests/resource/test_obj_loader.cpp` 已重写并加入 `orca-tests`，覆盖四边形、负索引、缺失/混合法线、空面过滤、UV/兜底切线方向，以及 `ResourceLoader` 的 URL 缓存。修改 OBJ/资源加载时请同步更新这些用例。
 
 ### 3.5 测试编写规范
 
@@ -221,7 +221,7 @@ orca-engine/
 │  └─ sdl3/sdl3_window.h/.cpp      # SDL3 实现
 ├─ resource/                       # CPU-first 资源层（不依赖渲染服务器）
 │  ├─ resource.h/.cpp              # Resource 基类（url、get_rid、duplicate）
-│  ├─ resource_cache.h/.cpp        # url -> Resource* 弱引用缓存（当前尚未接入加载流程）
+│  ├─ resource_cache.h/.cpp        # url -> Resource* 弱引用缓存（ResourceLoader 已接入）
 │  ├─ resource_loader.h/.cpp       # 单例 + 扩展名 -> loader 注册表
 │  ├─ loaders/
 │  │  ├─ obj_loader.h/.cpp         # .obj -> Mesh，支持 mtllib/usemtl、负索引、切线
@@ -253,7 +253,7 @@ orca-engine/
 │  ├─ core/object/…                # RefCounted、RID 测试
 │  ├─ core/os/…                    # Memory、Time 测试
 │  ├─ scene/…                      # Node3D 全局变换、场景树
-│  ├─ resource/test_obj_loader.cpp # 过期且未加入构建，勿直接依赖
+│  ├─ resource/test_obj_loader.cpp # OBJ 解析、按需切线、ResourceLoader 缓存测试
 │  ├─ platform/test_window.cpp     # 窗口+设备初始化集成测试
 │  └─ application/test_application.cpp # 可交互演示程序
 ├─ docs/
@@ -306,7 +306,7 @@ Application::run()
 - 数学库与单元测试（向量、矩阵/变换、投影等）。
 - `Path`/`FileAccess`，`res://`、`user://` 解析。
 - `Resource`、`ResourceLoader`、`ResourceFormatLoader` 注册表；`ObjMeshLoader`、`MtlLoader`、`ImageTextureLoader`。
-- OBJ 解析：`v/vn/vt/f`、`v/vt/vn`、负索引、按 `usemtl` 拆分 surface、缺法线自动计算、`compute_tangents()`。
+- OBJ 解析：`v/vn/vt/f`、`v/vt/vn`、负索引、按 `usemtl` 拆分 surface、按 surface 补缺失法线、有 UV 时用 UV 解算切线（无 UV 时生成基于法线的兜底基）。切线不能按材质判断，因为材质可能在加载后由 `MeshInstance3D` 注入。
 - MTL 解析：`newmtl`、`Kd/Ka/Ks/Ke`、`Ns/Pr/Pm/d/Tr`、`map_Kd/map_Ka/map_Ns/map_Pm/norm/bump`、`-s`/`-bm`。
 - `Mesh`（CPU 数据 + dirty RID）、`StandardMaterial`（albedo/metal/roughness/6 纹理槽/uv_scale/parallax）。
 - `RenderingServer` + `RenderingStorage`：scene/environment/camera/light/mesh/instance/material/texture 的创建与更新。
@@ -320,14 +320,14 @@ Application::run()
 | 项目 | 现状 |
 |---|---|
 | Vulkan 后端 | `init/init_device/init_swapchain` 有较完整骨架；`create_mesh_surface`、`draw_call`、shader、纹理接口全部返回 0/空实现，不能渲染 |
-| 资源缓存 | `ResourceCache` 已存在，但 `ResourceLoader::load()` **既不查缓存也不写入缓存**；`Resource` 没有 `set_url()`，`get_resource()` 用 `cache.at()` 未命中会抛异常 |
+| 资源缓存 | `ResourceLoader::load()` 已接入 `ResourceCache`（弱引用、URL 键、析构自动摘除）；同一 URL 的 Mesh/MTL/纹理返回同一实例。纹理 sRGB 不一致时 MTL 加载器会复制一份，避免共享实例被改写 |
 | `RenderingServer::sync()` | 空实现；资源上传发生在节点进树时 |
 | `RenderingServer::free()` | 只处理 `Camera/Mesh/Instance`；Material/Texture/Scene/Environment/Light 的 GPU 释放未实现 |
 | 资源释放 | 资源析构为空；`ImageTexture`/`Material` 的 GPU RID 生命周期未与资源生命周期绑定 |
 | 多光源 | 只取 `scene_data->lights[0]`；只有方向光，无阴影、无点光/聚光、无 IBL |
 | 材质 | `StandardMaterial::duplicate()` 返回空 Ref；`get_roughenss()` 是历史拼写；emission/specular 未接入 shader |
 | 纹理 | `ImageTextureLoader` 直接使用 stb 解码后的通道数；`srgb` 仅按 `channels == 4` 猜测，MTL 加载器会按槽位覆盖，但直接 `load()` 的纹理可能 sRGB 标记错误 |
-| 测试 | 仅 `orca-tests` 注册到 CTest；OBJ/resource 测试过期未编译；无 CI、无格式化/静态检查配置 |
+| 测试 | `orca-tests` 已包含 OBJ loader 与资源缓存用例；无 CI、无格式化/静态检查配置 |
 | 场景功能 | `SceneTree::find_node()` 返回 nullptr；`SceneTree::destroy()` 为空；`Viewport::find_world_3d()` 返回 nullptr；`SceneTree` 不支持切换场景的完整清理 |
 | 序列化/编辑器 | 完全没有 |
 

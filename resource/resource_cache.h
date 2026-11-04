@@ -14,7 +14,7 @@ public:
     static void destroy_singleton();
     Ref<Resource> get_resource(const std::string url) const;
     void save_resource(Resource *resource);
-    void remove_resource(const std::string url);
+    void remove_resource(const std::string url, Resource *resource);
 private:
     static ResourceCache *singleton;
     std::unordered_map<std::string, Resource*> cache;

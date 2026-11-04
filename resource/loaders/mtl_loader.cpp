@@ -158,7 +158,22 @@ namespace
         }
 
         // 贴图最终用途决定是否做 sRGB 解码：albedo 是颜色，其他贴图是数据。
-        texture->set_srgb(srgb);
+        // 纹理现在可能来自共享缓存；同一张图被不同槽位复用时不能原地改标志，
+        // 否则会影响其他材质，因此 sRGB 不一致时复制一份独立纹理。
+        if (texture->is_srgb() != srgb)
+        {
+            Ref<Resource> copy = texture->duplicate();
+            Ref<ImageTexture> converted = copy.cast<ImageTexture>();
+            if (converted.is_valid())
+            {
+                converted->set_srgb(srgb);
+                texture = converted;
+            }
+            else
+            {
+                texture->set_srgb(srgb);
+            }
+        }
         return texture;
     }
 } // namespace

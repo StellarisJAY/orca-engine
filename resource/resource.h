@@ -14,11 +14,13 @@ public:
     virtual Ref<Resource> duplicate() const = 0;
     ~Resource();
     const std::string get_url() const { return url; }
+    /// @brief 由 ResourceLoader 在加载成功后写入，作为缓存键。
+    void set_url(const std::string &p_url) { url = p_url; }
 };
 
 inline Resource::~Resource()
 {
     if(auto cache = ResourceCache::get_singleton()) {
-        cache->remove_resource(url);
+        cache->remove_resource(url, this);
     }
 }
