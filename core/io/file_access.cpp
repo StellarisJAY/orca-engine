@@ -54,6 +54,28 @@ bool FileAccess::file_exists(const std::string path)
     return false;
 }
 
+bool FileAccess::read_file_bytes(const std::string &path, std::vector<uint8_t> &out)
+{
+    FileAccess *file_access = open(path, ModeFlag::READ);
+    if (file_access == nullptr)
+    {
+        return false;
+    }
+
+    // get_buffer 从当前位置读到末尾；打开后位置为 0，因此读出的字节数应当等于文件总长度。
+    std::vector<uint8_t> bytes = file_access->get_buffer();
+    const size_t expected_length = file_access->get_length();
+    memdelete(file_access);
+
+    if (bytes.size() != expected_length)
+    {
+        return false;
+    }
+
+    out = std::move(bytes);
+    return true;
+}
+
 void FileAccess::close()
 {
     if (file != nullptr)
@@ -104,6 +126,46 @@ void FileAccess::seek_end()
         const long position = ftell(file);
         cursor = position < 0 ? 0 : static_cast<size_t>(position);
     }
+}
+
+size_t FileAccess::get_length() const
+{
+    if (file == nullptr) return 0;
+
+    const long position = ftell(file);
+    if (fseek(file, 0, SEEK_END) != 0) return 0;
+    const long end = ftell(file);
+    // 无论成功与否都尝试恢复原来的读取位置
+    if (position >= 0) fseek(file, position, SEEK_SET);
+    if (end < 0) return 0;
+    return static_cast<size_t>(end);
+}
+
+std::vector<uint8_t> FileAccess::get_buffer() const
+{
+    std::vector<uint8_t> buffer;
+    if (file == nullptr) return buffer;
+
+    const long start = ftell(file);
+    if (start < 0) return buffer;
+
+    if (fseek(file, 0, SEEK_END) != 0) return buffer;
+    const long end = ftell(file);
+    if (end < 0) return buffer;
+
+    const long length = end - start;
+    if (length <= 0)
+    {
+        fseek(file, start, SEEK_SET);
+        return buffer;
+    }
+
+    if (fseek(file, start, SEEK_SET) != 0) return buffer;
+
+    buffer.resize(static_cast<size_t>(length));
+    const size_t read_bytes = fread(buffer.data(), 1, static_cast<size_t>(length), file);
+    buffer.resize(read_bytes);
+    return buffer;
 }
 
 std::string FileAccess::get_as_text() const

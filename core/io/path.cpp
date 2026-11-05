@@ -47,6 +47,15 @@ namespace
         return get_run_dir();
     }
 
+    /// @brief 单个十六进制字符的数值，非法字符返回 -1
+    int hex_value(char c)
+    {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    }
+
     /// @brief 相对路径转绝对路径并规范化
     std::string make_absolute(const std::filesystem::path &path)
     {
@@ -125,6 +134,35 @@ const std::string Path::join(const std::string dir, const std::string relative)
         return base + normalized_relative;
 
     return base + "/" + normalized_relative;
+}
+
+std::string Path::decode_uri(const std::string &uri)
+{
+    std::string decoded;
+    decoded.reserve(uri.size());
+
+    for (size_t i = 0; i < uri.size(); ++i)
+    {
+        if (uri[i] != '%' || i + 2 >= uri.size())
+        {
+            decoded.push_back(uri[i]);
+            continue;
+        }
+
+        const int high = hex_value(uri[i + 1]);
+        const int low = hex_value(uri[i + 2]);
+        if (high < 0 || low < 0)
+        {
+            // 非法转义原样保留，避免把不规范的 URI 解坏
+            decoded.push_back(uri[i]);
+            continue;
+        }
+
+        decoded.push_back(static_cast<char>((high << 4) | low));
+        i += 2;
+    }
+
+    return decoded;
 }
 
 const std::string Path::get_extension(const std::string path)
