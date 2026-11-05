@@ -1,10 +1,14 @@
 # glTF 加载方案（cgltf）
 
-> 状态：设计稿，尚未实现
+> 状态：**阶段 0–2 已实现**（前置修复、`PackedScene` 通用场景资源、`GLTFLoader` 解析 + 材质/贴图）；
+> 阶段 3（`instantiate_scene` 实例化与演示）与阶段 4（手动 GPU 验证）尚未实现。
+> 实现细节与偏差见 §5 各阶段的状态说明。
 > 目标格式：`.gltf`（JSON + 外部 bin/贴图）与 `.glb`（二进制容器）
 > 支持内容：模型、材质、贴图
 > 明确不支持（本期）：相机、灯光、动画、skin、morph target、多 UV、透明混合
-> 结果形态：`Node3D` 根节点 + 树状子节点（需要模型节点为 `MeshInstance3D`）
+> 资源形态：**与格式无关的通用 `Scene` 资源**；glTF loader 只是该资源的一个生产者
+> 结果形态：scene 层 `instantiate_scene(Ref<Scene>)` 生成 `Node3D` 根节点 + 树状子节点
+> （模型节点实例化为 `MeshInstance3D`，其余节点为 `Node3D`）
 
 ---
 
@@ -23,10 +27,16 @@ ResourceLoader::load(url)
 glTF 是场景文件，不能像 OBJ 一样只返回一个 `Mesh`。本方案的目标是：
 
 1. 新增 `.gltf/.glb` 的 `ResourceFormatLoader`；
-2. 解析结果为 `GltfDocument`（纯 CPU 场景描述，`Resource` 子类）；
-3. 在 scene 层把 `GltfDocument` 实例化为 `Node3D` 树；
+2. 解析结果为**通用 `Scene` 资源**（纯 CPU 场景描述，`Resource` 子类，与文件格式无关）；
+3. 在 scene 层用通用函数 `instantiate_scene(Ref<Scene>)` 把 `Scene` 实例化为 `Node3D` 树；
 4. 复用现有 `Mesh / StandardMaterial / ImageTexture / RenderingServer`，不新增渲染 API；
 5. 保持 `resource` 不依赖 `rendering/scene` 的分层约束。
+
+**为什么统一成 `Scene` 而不是 `GltfDocument`：** `ResourceLoader::load()` 对所有扩展名都返回
+`Ref<Resource>`，调用方不应该“知道这个 URL 是 glTF 才能 cast 成对应文档类”。场景资源统一为
+`Scene` 后，以后新增 FBX / COLLADA / 自有 `.scn` 时只需要新增 loader，把结果填进同一个 `Scene`，
+实例化、演示程序、后续场景切换/序列化都不需要改。glTF 的格式细节（cgltf、URI、UV、颜色空间、
+多 scene）全部留在 `GltfLoader` 内部。
 
 非目标：编辑器、场景序列化、动画播放、骨骼蒙皮、GLB 之外的打包格式。
 
@@ -38,7 +48,7 @@ glTF 是场景文件，不能像 OBJ 一样只返回一个 `Mesh`。本方案的
 
 | 现有能力 | 位置 | 对 glTF 的意义 |
 |---|---|---|
-| `ResourceLoader` 扩展名注册 + URL 弱引用缓存 | `resource/resource_loader.cpp` | 注册 `.gltf/.glb`，同一文档只解析一次 |
+| `ResourceLoader` 扩展名注册 + URL 弱引用缓存 | `resource/resource_loader.cpp` | 注册 `.gltf/.glb`，同一 `Scene` 只解析一次 |
 | `Mesh` 多 `Surface` | `resource/mesh/mesh.h` | 一个 glTF mesh 的多个 primitive 映射为多个 Surface |
 | Surface 独立材质 | `resource/mesh/mesh.h` | 一个模型多材质无需改结构 |
 | `StandardMaterial` 6 贴图槽 + 标量参数 | `resource/material/material.h` | 可映射 baseColor/normal/roughness/metallic/AO |
@@ -49,7 +59,9 @@ glTF 是场景文件，不能像 OBJ 一样只返回一个 `Mesh`。本方案的
 ### 2.2 关键缺口
 
 1. **资源层不能返回 Node3D**
-   `Resource : RefCounted`，`Node3D : Object`，且 `resource` 不能依赖 `scene`。必须拆分为“解析成文档”和“scene 层实例化”。
+   `Resource : RefCounted`，`Node3D : Object`，且 `resource` 不能依赖 `scene`。必须拆分为
+   “解析成通用 `Scene` 资源（CPU 数据）”和“scene 层实例化”。`Scene` 不提供 `instantiate()`
+   成员函数，否则 `orca-resource` 会反向依赖 `orca-scene`。
 
 2. **没有 JSON / GLB / accessor 解析能力**
    `thirdparty` 中没有 JSON 库；`FileAccess` 缺少明确的二进制读取 API。GLB chunk、bufferView、accessor、byteStride 都需要解析库或自研。
@@ -88,25 +100,45 @@ glTF 是场景文件，不能像 OBJ 一样只返回一个 `Mesh`。本方案的
 ```text
 resource 层（不依赖 rendering / scene）
   GltfLoader : ResourceFormatLoader
-      .gltf/.glb -> cgltf 解析 -> GltfDocument : Resource
-          - 节点层级 + 局部 Transform3D
-          - 每个 glTF mesh -> Ref<Mesh>（多个 Surface）
+      .gltf/.glb -> cgltf 解析 -> Scene : Resource       （通用场景资源）
+          - 节点树：局部 Transform3D + 节点种类（NODE_3D / MESH_INSTANCE_3D）
+          - 每个带 mesh 的节点 -> Ref<Mesh>（多个 Surface，可被多个节点共享）
           - 每个 Surface -> Ref<StandardMaterial>
           - 材质 -> Ref<ImageTexture>
+          - 不包含 cgltf 类型、URI、多 scene、scene_index 等格式细节
 
 scene 层（依赖 resource）
-  GltfScene::load(url)
-      ResourceLoader::load -> GltfDocument
-      GltfScene::instantiate(doc) -> Node3D*（树）
-          - 纯变换节点 -> Node3D
-          - 带 mesh 的节点 -> MeshInstance3D(Ref<Mesh>)
-          - 先 add_child、再 set_transform，保证全局变换正确
-          - 返回合成根节点
+  instantiate_scene(Ref<Scene>) -> Node3D*（树）
+      - 纯变换节点 -> Node3D
+      - 带 mesh 的节点 -> MeshInstance3D(Ref<Mesh>)
+      - mesh 为空的节点降级为 Node3D 并警告（MeshInstance3D 进树时必须非空）
+      - 先 add_child、再 set_transform，保证全局变换正确
+      - 返回合成根节点
+  load_scene_instance(url)   // 便捷入口：load + instantiate
 
 调用方：
-  Node3D *root = GltfScene::load("res://scene.glb");
+  Ref<Scene> scene = ResourceLoader::get_singleton()->load("res://scene.glb")
+                         .cast_checked<Scene>();
+  Node3D *root = instantiate_scene(scene);
   world->add_child(root);   // 进树后自动上传并渲染
 ```
+
+分层规则：
+
+1. **格式相关的 loader 可以叫 `GltfLoader`，但输出类型必须是通用的 `Scene`。** 资源类型与文件
+   格式解耦，这是本方案的核心约束。
+2. **`Scene` 不提供 `instantiate()` 成员函数。** `Scene` 属于 `resource` 层，
+   `Node3D`/`MeshInstance3D` 属于 `scene` 层；成员函数会导致 `resource` 反向依赖 `scene`。
+   实例化以 scene 层自由函数的形式提供。
+3. **`Scene` 只保存“节点树 + 每节点 payload”。** 材质、贴图已在 `Mesh::Surface::material`
+   的引用图里，不需要再建一张资源表。
+4. **多 scene 的取舍留在 loader。** `.gltf` 有多个 scene 时只构建默认 scene（与本方案
+   “不支持多场景切换”一致）并打印警告；通用 `Scene` 不背 `scenes[]` 数组。
+
+> 命名提示：`Scene` 与 `SceneTree::current_scene`（运行时根节点）、
+> `RenderingServer::create_scene()`（`World3D` 背后的渲染 scene RID）是不同层的东西。
+> 若团队更希望与 Godot 对齐，可改名为 `PackedScene` 或 `SceneResource`，结构不变；
+> 关键是**只保留一个通用场景资源类型**。
 
 ### 3.2 为什么选 cgltf
 
@@ -114,44 +146,101 @@ scene 层（依赖 resource）
 - 覆盖 `.gltf/.glb`、buffer/bufferView/accessor/byteStride、normalized、sparse；
 - 直接暴露 glTF 规范字段（PBR、normal scale、occlusion strength、sampler），映射清晰；
 - 不负责图片解码，正好复用现有 `stb_image`；
-- 可以完全封装在 `GltfLoader` 内部，`GltfDocument` 不暴露 cgltf 类型。
+- 可以完全封装在 `GltfLoader` 内部，`Scene` 不暴露 cgltf 类型。
 
 与 Assimp 的取舍见附录 A。
 
 ### 3.3 数据结构
 
+通用场景资源（`resource/scene/scene.h`）：
+
 ```cpp
-// resource/gltf/gltf_document.h
-class GltfDocument : public Resource
+#pragma once
+
+#include "resource.h"
+#include "math/transform_3d.h"
+#include "mesh/mesh.h"
+#include "object/ref_counted.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+/// @brief 与文件格式无关的场景资源：一棵（或一组根组成的）节点树的 CPU 描述。
+///
+/// 资源层只描述数据，不包含 Node3D / MeshInstance3D；实例化在 scene 层由
+/// instantiate_scene() 完成。任何“场景型”格式（glTF、FBX、自有 .scn）都应产出本类型。
+class Scene : public Resource
 {
 public:
+    enum class NodeKind : uint8_t
+    {
+        NODE_3D = 0,
+        MESH_INSTANCE_3D = 1,
+        // 后续扩展：CAMERA_3D / LIGHT_3D / ...
+    };
+
     struct Node
     {
         std::string name;
+        NodeKind kind = NodeKind::NODE_3D;
+        /// @brief 父节点索引，-1 表示根。与 children 互为冗余，由 loader 保持一致。
         int parent = -1;
         std::vector<int> children;
+        /// @brief 局部变换；全局变换由 scene 层在父子挂接后计算。
         Transform3D local_transform;
-        int mesh = -1;          // 索引进 meshes；-1 表示纯变换节点
-    };
-
-    struct SceneDesc
-    {
-        std::string name;
-        std::vector<int> roots;
+        /// @brief 仅 MESH_INSTANCE_3D 使用；多个节点可以共享同一个 Mesh。
+        Ref<Mesh> mesh;
     };
 
     RID get_rid() const override { return 0; }
-    Ref<Resource> duplicate() const override; // 复制节点数组，Mesh 共享
 
-    std::vector<Node> nodes;
-    std::vector<Ref<Mesh>> meshes;
-    std::vector<SceneDesc> scenes;
-    int default_scene = -1;
+    /// @brief 深拷贝节点数组；Mesh / Material / Texture 按 Ref 共享。
+    Ref<Resource> duplicate() const override;
+
+    const std::string &get_scene_name() const { return scene_name; }
+    const std::vector<Node> &get_nodes() const { return nodes; }
+    const std::vector<int> &get_roots() const { return roots; }
+
+    /// @brief loader 构建用；返回新节点索引。
+    int add_node(const Node &node);
+    void add_root(int node_index);
+    void set_scene_name(const std::string &name) { scene_name = name; }
+
+    /// @brief 校验索引引用是否自洽；loader 的产物在实例化前应过一次。
+    bool validate(std::string *error = nullptr) const;
+
+private:
+    std::string scene_name;
+    std::vector<Node> nodes; // 索引即节点 id，与来源格式的节点顺序一致
+    std::vector<int> roots;
 };
 ```
 
+> **实现命名说明**：实际代码中的类型名是 `PackedScene`（`resource/scene/scene.h`），
+> 与 Godot 的命名对齐；结构与本节 `Scene` 完全一致。下文出现的 `Scene` 均指该 `PackedScene`。
+> `PackedScene::validate()` 会校验 `children` / `parent_idx` / `roots` 三者的双向一致性。
+
+设计要点：
+
+- **扁平数组 + 索引**：节点 id 与 glTF `node` 下标一一对应，loader 不需要额外映射表；
+  `duplicate()` 只是 `nodes` 的拷贝，不存在递归析构问题。
+- **`roots` 是数组**：glTF 的一个 scene 允许挂多个根；通用资源直接支持“森林”，实例化时
+  统一挂到合成根下。
+- **节点 payload 用 `Ref<Mesh>` 而不是 `meshes` 索引表**：`Ref` 本身已经做共享，重复引用
+  同一个 glTF mesh 时拿到同一个 `Ref<Mesh>`；材质/贴图通过 `Mesh::Surface::material`
+  间接持有。少一张表、少一层索引换算。
+- **`NodeKind` 枚举而不是字符串类型名**：当前引擎没有 `Variant` / `ClassDB`，硬编码枚举与
+  现有风格一致；新增相机、灯光时在枚举和实例化函数里各加一个分支。
+- **不包含**：`scenes[]`、`default_scene`、`scene_index`、`cgltf_*`、源文件 URI、sampler
+  参数、UV 翻转标记——这些全部是 loader 的私有实现细节。
+- **`get_rid()` 返回 0**：`Scene` 是纯 CPU 资源；`World3D` 的渲染 scene RID 是运行时对象，
+  不是它。
+- **未来扩展位**（不本期）：`Environment3D`/世界设置、相机/灯光节点字段、动画轨道、节点可见性。
+
+加载器（`resource/loaders/gltf_loader.h`）——名字保持格式相关，输出类型通用：
+
 ```cpp
-// resource/loaders/gltf_loader.h
 class GltfLoader : public ResourceFormatLoader
 {
 public:
@@ -160,22 +249,22 @@ public:
         return {".gltf", ".glb"};
     }
 
+    // 输出通用 Scene，调用方不需要知道这是 glTF。
     Ref<Resource> load(const std::string url) override;
 };
 ```
 
-```cpp
-// scene/3d/gltf_scene.h
-class GltfScene
-{
-public:
-    /// @brief 加载文档并实例化，返回合成根节点；失败返回 nullptr。
-    static Node3D *load(const std::string &url, int scene_index = -1);
+实例化入口（`scene/3d/scene_instantiate.h`）：
 
-    /// @brief 从已加载文档实例化，可重复调用，共享 Mesh/Material/Texture。
-    static Node3D *instantiate(const Ref<GltfDocument> &document,
-                               int scene_index = -1);
-};
+```cpp
+class Scene;
+
+/// @brief 把通用场景资源实例化为 Node 树；失败返回 nullptr。
+///        返回的根节点尚未进入场景树，调用方 add_child 后才会上传渲染资源。
+Node3D *instantiate_scene(const Ref<Scene> &scene);
+
+/// @brief 便捷入口：ResourceLoader::load + instantiate_scene。
+Node3D *load_scene_instance(const std::string &url);
 ```
 
 ### 3.4 加载流程
@@ -190,51 +279,102 @@ GltfLoader::load(url)
   4. 校验 asset.version 为 2.x，检查 required_extensions
   5. 构建材质/贴图
   6. 构建 Mesh（每个 glTF mesh 一个，多个 primitive -> 多个 Surface）
-  7. 构建节点/场景（变换、父子关系、mesh 引用）
-  8. cgltf_free，返回 Ref<GltfDocument>
+  7. 构建通用 Scene
+        - glTF node 下标直接作为 Scene::Node 下标
+        - 局部变换：cgltf_node_transform_local -> Transform3D
+        - 只有 node.mesh 非空时 kind = MESH_INSTANCE_3D，否则 NODE_3D
+        - 只构建一个 scene：默认 scene（data->scene）> 第 0 个 scene > 无父节点集合
+        - 多 scene 时打印警告，记录被忽略的 scene 名称
+  8. cgltf_free，返回 Ref<Scene>
 ```
 
 加载失败策略沿用现有风格：`printf` 明确错误，返回空 `Ref`；单个 primitive / 单张贴图失败只跳过该部分，不整体失败。
 
+多 scene 策略：`Scene` 只装一棵树；同一 `.gltf` 的其它 scene 不会被保留。若后续确实要访问，
+增加格式专用入口 `GltfLoader::load_scene(url, scene_index)`（不走 `ResourceLoader` 的 URL 缓存，
+或用 `url#index` 作为缓存键），**不要**因此把 `scenes[]` 塞回通用资源。
+
+loader 产物防御：`children` 越界、`parent` 不一致、mesh 下标越界在 loader 内过滤并警告；
+`Scene::validate()` 作为实例化前的最后一道检查。
+
 ### 3.5 实例化流程
 
 ```cpp
-Node3D *GltfScene::instantiate(const Ref<GltfDocument> &document, int scene_index)
+// scene/3d/scene_instantiate.cpp
+namespace
 {
-    Node3D *root = memnew(Node3D); // 合成根，代表 glTF scene
-    // 选择 scene：参数 > default_scene > 第一个 scene > 无父节点的节点集合
-    for (int root_index : selected_scene.roots)
+Node3D *build_node(const Scene &scene, int index, Node *parent)
+{
+    const Scene::Node &desc = scene.get_nodes()[index];
+
+    Node3D *node = nullptr;
+    if (desc.kind == Scene::NodeKind::MESH_INSTANCE_3D && desc.mesh.is_valid())
     {
-        build_node(*document, root_index, root);
+        node = memnew(MeshInstance3D(desc.mesh));
+    }
+    else
+    {
+        // Mesh 缺失（加载失败或引用了空 mesh）时退回纯变换节点。
+        // 注意：MeshInstance3D 的 ENTER_TREE 会直接解引用 mesh，不能传空 Ref。
+        if (desc.kind == Scene::NodeKind::MESH_INSTANCE_3D)
+            std::printf("[WARN] scene node \"%s\" has no mesh, falling back to Node3D\n",
+                        desc.name.c_str());
+        node = memnew(Node3D);
+    }
+
+    // 关键顺序：先挂父节点，再设置局部变换。
+    // Node3D::transform() 用 get_parent_global_transform() 计算全局变换。
+    parent->add_child(node);
+    node->set_transform(desc.local_transform);
+    if (!desc.name.empty())
+        node->set_name(desc.name);
+
+    for (int child : desc.children)
+    {
+        build_node(scene, child, node);
+    }
+    return node;
+}
+} // namespace
+
+Node3D *instantiate_scene(const Ref<Scene> &scene)
+{
+    if (scene.is_null()) return nullptr;
+
+    Node3D *root = memnew(Node3D); // 合成根，恒等变换
+    root->set_name(scene->get_scene_name());
+
+    for (int node_index : scene->get_roots())
+    {
+        build_node(*scene, node_index, root);
     }
     return root;
 }
 
-Node3D *build_node(const GltfDocument &doc, int index, Node *parent)
+Node3D *load_scene_instance(const std::string &url)
 {
-    const GltfDocument::Node &src = doc.nodes[index];
-    Node3D *node = (src.mesh >= 0)
-        ? static_cast<Node3D *>(memnew(MeshInstance3D(doc.meshes[src.mesh])))
-        : memnew(Node3D);
+    Ref<Resource> resource = ResourceLoader::get_singleton()->load(url);
+    if (resource.is_null()) return nullptr;
 
-    // 关键顺序：先挂父节点，再设置局部变换。
-    // Node3D::transform() 依赖父节点的 global_transform。
-    parent->add_child(node);
-    node->set_transform(src.local_transform);
-
-    for (int child : src.children)
+    Ref<Scene> scene = resource.cast_checked<Scene>();
+    if (scene.is_null())
     {
-        build_node(doc, child, node);
+        std::printf("[ERROR] resource is not a Scene: %s\n", url.c_str());
+        return nullptr;
     }
-    return node;
+    return instantiate_scene(scene);
 }
 ```
 
 说明：
 
-- 多根节点统一挂到合成根下，行为可预测；
-- 合成根不进入场景树时，`MeshInstance3D` 不会触发上传；加入场景树后由 `ENTER_TREE` 统一上传；
+- 多根节点统一挂到合成根下，行为可预测；合成根使用场景名（没有名字时用空串）。
+- `Scene` 的节点种类到 `Node` 类型的映射只在这里出现；以后新增相机/灯光节点，只改这个函数。
+- 合成根不进入场景树时，`MeshInstance3D` 不会触发上传；加入场景树后由 `ENTER_TREE` 统一上传。
 - 如果调用方在实例化后移动合成根，`Node3D` 的变换通知会同步到渲染实例。
+- 返回裸 `Node3D *`，所有权与现有 `Node`/`add_child` 风格一致；调用方负责在销毁时递归释放。
+- 为什么不放进 `SceneTree`：`SceneTree::destroy()`、`find_node()` 目前还是空实现，先做独立
+  函数风险最低；等 `change_scene` 落地时让它内部调用 `instantiate_scene()` 即可。
 
 ---
 
@@ -244,11 +384,11 @@ Node3D *build_node(const GltfDocument &doc, int index, Node *parent)
 
 | glTF | 引擎 |
 |---|---|
-| `node.matrix` 或 `translation/rotation/scale` | `Node3D` 的局部 `Transform3D` |
-| `scene.nodes` | 场景根节点 |
-| `node.children` | `Node::add_child` |
-| `node.mesh` | 该节点使用 `MeshInstance3D`，否则 `Node3D` |
-| `node.camera`、`KHR_lights_punctual` | 忽略，但保留 `Node3D` 占位，保证子节点变换正确 |
+| `node.matrix` 或 `translation/rotation/scale` | `Scene::Node::local_transform`（实例化时写入 `Node3D::set_transform`） |
+| `scene.nodes` | `Scene::roots` |
+| `node.children` | `Scene::Node::children`，实例化时 `Node::add_child` |
+| `node.mesh` | `Scene::NodeKind::MESH_INSTANCE_3D` + `Ref<Mesh>`，否则 `NODE_3D` |
+| `node.camera`、`KHR_lights_punctual` | 忽略，但保留 `NODE_3D` 占位，保证子节点变换正确 |
 | `node.skin` | 忽略，按 bind pose 渲染并警告 |
 | `node.weights` / morph targets | 忽略，使用基础网格并警告 |
 
@@ -371,7 +511,7 @@ sampler 映射：
 | `minFilter` 带 mipmap | `gen_mipmap = true` |
 | `minFilter = NEAREST/LINEAR` | `gen_mipmap = false` |
 
-同一 image 被不同槽位复用时，按 `(texture index, srgb)` 做文档内缓存；外部纹理从 `ResourceLoader` 拿到后如果 sRGB 不一致，沿用 MTL 的做法 `duplicate()` 后改标志，避免污染共享实例。
+同一 image 被不同槽位复用时，按 `(texture index, srgb)` 在 loader 内缓存；外部纹理从 `ResourceLoader` 拿到后如果 sRGB 不一致，沿用 MTL 的做法 `duplicate()` 后改标志，避免污染共享实例。
 
 ### 4.5 UV 方向
 
@@ -429,6 +569,11 @@ uint8_t to_srgb_byte(float linear)
 ## 5. 分阶段实施
 
 ### 阶段 0：前置修复（约 1.5–2 天）
+
+> 状态：**已完成**。0.1–0.5 均已落地并有单元测试覆盖（见 `tests/core/io/test_file_access_and_path.cpp`、
+> `tests/resource/test_image_texture_loader.cpp`、`tests/resource/test_mesh.cpp`、
+> `tests/scene/test_node3d_transform.cpp`）。实施中发现 `Vector3::is_normalized()` 用精确比较，
+> 会让 `Basis::set_axis_angle()` 静默忽略 `(1,1,1)/sqrt(3)` 这类浮点单位轴，已一并改为近似比较。
 
 这些不改，glTF 即使解析出来也会出现变换错误、重复面、贴图方向错误。
 
@@ -510,6 +655,10 @@ Transform3D get_transform() const; // 局部变换
 - 负缩放；
 - 带旋转的父节点下设置子节点变换。
 
+> 实现补充：`set_transform()` 直接保存局部矩阵，并把 `position/rotation/scale` 反解为缓存值；
+> 负缩放无法唯一确定镜像轴，约定镜像归到 X 轴（`scale.x` 取负）。`Basis::scale()` 仍保持
+> “忽略非正缩放因子”的既有语义，负缩放只通过 `set_transform()` 的矩阵路径支持。
+
 #### 0.5 修复共享 Mesh 重复上传
 
 文件：`scene/3d/mesh_instance_3d.cpp`、`resource/mesh/mesh.h`
@@ -554,6 +703,15 @@ void mark_rid_clean() { rid_dirty = false; }
 
 ### 阶段 1：解析层骨架（约 3–4 天）
 
+> 状态：**已完成**（1.1–1.5）。实现细节：
+> - cgltf 只提供 `thirdparty/cgltf/cgltf.h`，以 INTERFACE target 引入；
+>   `#define CGLTF_IMPLEMENTATION` 放在 `resource/loaders/gltf_loader.cpp`，
+>   没有单独的 `cgltf_impl.cpp`（不要在其它翻译单元再定义一次，否则符号重复）。
+> - 外部 `.bin` 的读取走 `FileAccess` + `Path::decode_uri`，通过 cgltf 的 file callback 接入；
+>   `cgltf_load_buffers()` 的 `gltf_path` 传 `Path::replace_url(url)` 的绝对路径。
+> - 单元测试：`tests/resource/test_scene.cpp`（`PackedScene`）、
+>   `tests/resource/test_gltf_loader.cpp`（.gltf/.glb、节点层级、多 primitive、外部 bin、内嵌/data URI 图片）。
+
 #### 1.1 引入 cgltf
 
 文件：
@@ -574,15 +732,17 @@ target_include_directories(cgltf PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/cgltf)
 
 注意：cgltf 是 C99 代码，作为 C++ 编译通常可行；若 MinGW 下报错，则在顶层 CMake 打开 C 语言并用 `.c` 编译，或在 include 外增加 `extern "C"`。
 
-#### 1.2 GltfDocument
+#### 1.2 通用 Scene 资源
 
-文件：`resource/gltf/gltf_document.h/.cpp`
+文件：`resource/scene/scene.h/.cpp`
 
-实现：
+实现（结构见 3.3 节）：
 
 - `get_rid()` 返回 0；
-- `duplicate()` 复制 `nodes/scenes/default_scene`，`meshes` 共享；
-- 提供只读访问器，供 scene 层实例化。
+- `duplicate()` 复制 `nodes/roots/scene_name`，`Ref<Mesh>` 共享；
+- `add_node` / `add_root` / `validate` 供 loader 构建与校验；
+- 只读访问器供 scene 层实例化；
+- 不包含任何 glTF 字段。
 
 #### 1.3 GltfLoader 解析流程
 
@@ -618,12 +778,12 @@ Ref<Resource> GltfLoader::load(const std::string url)
         return Ref<Resource>(nullptr);
     }
 
-    GltfDocument *document = memnew(GltfDocument);
+    Scene *scene = memnew(Scene);
     // 1) 材质/贴图
     // 2) Mesh / Surface
-    // 3) 节点 / 场景
+    // 3) 节点 / 根集合 -> Scene（多 scene 只取默认 scene）
     cgltf_free(data);
-    return Ref<Resource>(document);
+    return Ref<Resource>(scene);
 }
 ```
 
@@ -631,7 +791,7 @@ Ref<Resource> GltfLoader::load(const std::string url)
 
 - `data->asset.version` 以 `"2."` 开头；
 - `data->required_extensions` 中出现不支持项时报错；
-- `data->meshes/nodes/scenes` 为空时给出警告，返回空文档或空 Ref。
+- `data->meshes/nodes/scenes` 为空时给出警告，返回空 Ref。
 
 #### 1.4 节点与场景构建
 
@@ -650,10 +810,11 @@ Transform3D transform_from_gltf(const cgltf_float m[16])
 }
 ```
 
-- `node->parent` 用于确定 parent 索引；`node->children` 填 children；
-- `node->mesh` 转成 `meshes` 索引；
-- 场景根：`scene->nodes[]`；无 scene 时使用无父节点的节点集合；
-- `default_scene` = `data->scene`（若为空则 -1）。
+- `node->parent` 用于确定 `Scene::Node::parent` 索引；`node->children` 填 `children`；
+- `node->mesh` 非空时 `kind = MESH_INSTANCE_3D` 并填入 `Ref<Mesh>`，否则 `NODE_3D`；
+- 场景根：`scene->nodes[]` 填入 `Scene::roots`；无 scene 时使用无父节点的节点集合；
+- 选择哪个 glTF scene（`data->scene` > 第 0 个 > 无父节点集合）是 **loader 内部逻辑**，
+  `Scene` 不保存 `default_scene`/`scene_index`。
 
 #### 1.5 注册与基础测试
 
@@ -665,11 +826,21 @@ singleton->register_loader(memnew(GltfLoader));
 
 测试：
 
-- 最小 `.gltf` 三角形：顶点/索引/法线/UV；
-- `ResourceLoader` 按 URL 缓存同一文档；
+- 最小 `.gltf` 三角形：`Scene` 节点 / 根 / `Mesh` 的顶点/索引/法线/UV；
+- `ResourceLoader` 按 URL 缓存同一 `Scene`；
 - 扩展名注册为大写 `.GLTF` 也能命中（`ResourceLoader` 会小写化）。
 
 ### 阶段 2：材质与贴图（约 2 天）
+
+> 状态：**已完成**（2.1–2.4）。实现说明：
+> - 外部图片不经过 `ResourceLoader`，而是直接读字节后调用
+>   `ImageTextureLoader::load_from_memory`，保证同一张图在不同槽位（sRGB / 线性）与
+>   sampler 设置下互不污染；缓存粒度为 `(texture index, srgb)`，只在单次加载内有效。
+> - `metallicRoughnessTexture` 从已解码的 `ImageTexture` 像素中拆出 G/B，生成两张单通道
+>   贴图（`channels = 1`、`srgb = false`），并复制源贴图的 repeat/linear/mipmap 设置。
+> - sampler 缺省值按 glTF 规范：`wrap = REPEAT`、`mag = LINEAR`、`min = LINEAR`（不生成 mipmap）。
+> - 必需扩展采用“白名单”策略：材质/灯光类扩展（含 `KHR_texture_transform`）只警告并降级，
+>   `KHR_draco_mesh_compression`、`EXT_meshopt_compression`、`KHR_texture_basisu` 等直接报错返回空 Ref。
 
 #### 2.1 图片加载
 
@@ -745,24 +916,26 @@ Color color_from_linear(const cgltf_float rgba[4])
 - normal scale / occlusion strength；
 - 缺失贴图回退标量。
 
-### 阶段 3：场景实例化与演示（约 1–1.5 天）
+### 阶段 3：场景实例化与演示（约 0.5–1 天）
 
-#### 3.1 GltfScene
+#### 3.1 通用实例化函数
 
-文件：`scene/3d/gltf_scene.h/.cpp`
+文件：`scene/3d/scene_instantiate.h/.cpp`
 
-实现 `load()` 与 `instantiate()`，核心递归见 3.5 节。
+实现 `instantiate_scene()` 与 `load_scene_instance()`，核心递归见 3.5 节。
 
 要点：
 
 - 先 `add_child`，再 `set_transform`；
-- 合成根节点使用恒等变换；
-- 场景选择顺序：参数 > `default_scene` > 第一个 scene > 无父节点集合；
+- 合成根节点使用恒等变换，名字取 `Scene::scene_name`；
+- 场景选择已在 loader 内完成，实例化函数不再接收 `scene_index`；
+- `mesh` 为空的节点降级为 `Node3D` 并警告（见 3.5 节和 9 节风险）；
 - 实例化失败返回 `nullptr` 并打印错误；
 - 重复实例化共享 `Ref<Mesh>`，依赖阶段 0.5 的修复避免重复 surface。
 
-#### 3.2 可选：Node 名称
+#### 3.2 Node 名称（实例化的前置条件）
 
+`instantiate_scene()` 会把 `Scene::Node::name` 写入节点，所以 `Node` 必须先具备名称接口。
 给 `Node` 增加：
 
 ```cpp
@@ -770,7 +943,8 @@ const std::string &get_name() const;
 void set_name(const std::string &);
 ```
 
-glTF `node.name` 写入，方便调试和后续 `find_node`。合成根可用 scene 名称或文件名。
+glTF `node.name` 写入，方便调试和后续 `find_node`。合成根使用 `Scene::scene_name`（loader 取
+glTF scene 名称，没有时用文件名）。
 
 #### 3.3 演示
 
@@ -787,9 +961,11 @@ glTF `node.name` 写入，方便调试和后续 `find_node`。合成根可用 sc
 1. 新测试文件加入 `tests/CMakeLists.txt`，并补回 `resource/test_obj_loader.cpp`；
 2. 更新 `AGENTS.md`：
    - 技术栈加 cgltf；
-   - 目录结构加 `resource/gltf/`、`resource/loaders/gltf_loader.*`、`scene/3d/gltf_scene.*`；
-   - 状态表加 glTF 能力与限制；
+   - 目录结构加 `resource/scene/`（通用 `Scene`）、`resource/loaders/gltf_loader.*`、
+     `scene/3d/scene_instantiate.*`；
+   - 状态表加通用场景资源、glTF 能力与限制；
    - 已知陷阱加 UV 翻转、打包 MR、共享 Mesh 上传、glTF 因子颜色空间；
+   - 新增“场景类型统一”说明：`.gltf/.glb` 产出 `Scene`，实例化入口 `instantiate_scene`；
 3. 本文档与 `docs/resource_module_roadmap.md` 互相引用；
 4. 手动跑 Khronos 样例验证。
 
@@ -801,25 +977,25 @@ glTF `node.name` 写入，方便调试和后续 `find_node`。合成根可用 sc
 
 ```text
 thirdparty/cgltf/cgltf.h
-thirdparty/cgltf/cgltf_impl.cpp
-resource/gltf/gltf_document.h
-resource/gltf/gltf_document.cpp
+thirdparty/cgltf/cgltf_impl.cpp   # 实际未单独建文件，CGLTF_IMPLEMENTATION 定义在 gltf_loader.cpp
+resource/scene/scene.h            # 实现类型名为 PackedScene
+resource/scene/scene.cpp
 resource/loaders/gltf_loader.h
 resource/loaders/gltf_loader.cpp
-scene/3d/gltf_scene.h
-scene/3d/gltf_scene.cpp
+scene/3d/scene_instantiate.h
+scene/3d/scene_instantiate.cpp
+tests/resource/test_scene.cpp
 tests/resource/test_gltf_loader.cpp
-tests/scene/test_gltf_scene.cpp
+tests/scene/test_scene_instantiate.cpp
 tests/scene/test_node3d_transform.cpp
-docs/gltf_loader_plan.md
 ```
 
 ### 修改
 
 ```text
 thirdparty/CMakeLists.txt          # cgltf 目标
-resource/CMakeLists.txt            # gltf_document / gltf_loader
-scene/CMakeLists.txt               # gltf_scene
+resource/CMakeLists.txt            # scene/scene.cpp、loaders/gltf_loader.cpp
+scene/CMakeLists.txt               # 3d/scene_instantiate.cpp
 tests/CMakeLists.txt               # 新测试 + 补回 test_obj_loader
 resource/resource_loader.cpp       # 注册 GltfLoader
 resource/loaders/image_texture_loader.h/.cpp  # load_from_memory
@@ -828,11 +1004,18 @@ core/io/file_access.h/.cpp         # 二进制读取
 core/io/path.h/.cpp                # decode_uri
 core/math/basis.h/.cpp             # get_scale / determinant / 四元数
 core/math/quaternion.h             # Basis 构造
+core/object/ref_counted.h          # cast_checked（见第 9 节风险）
+scene/node.h/.cpp                  # set_name / get_name
 scene/3d/node3d.h/.cpp             # set_transform / get_transform
 scene/3d/mesh_instance_3d.cpp      # 共享 Mesh 上传保护
 resource/mesh/mesh.h               # mark_rid_clean
+docs/gltf_loader_plan.md           # 本文档（已合并通用 Scene 方案）
 AGENTS.md
 ```
+
+与原 `GltfDocument`/`GltfScene` 方案相比：`resource/gltf/gltf_document.*`、
+`scene/3d/gltf_scene.*` 不再新增，替换为 `resource/scene/scene.*`、
+`scene/3d/scene_instantiate.*`。
 
 ---
 
@@ -840,9 +1023,16 @@ AGENTS.md
 
 ### 7.1 单元测试（不依赖窗口/GPU）
 
-`tests/resource/test_gltf_loader.cpp`：
+`tests/resource/test_scene.cpp`（通用 `Scene` 资源）：
 
-1. 最小 `.gltf` 三角形：顶点/索引/法线/UV 数量正确；
+1. `add_node` / `add_root` 后索引与 `children` 自洽；
+2. `duplicate()` 复制节点数组与 `roots`，共享同一个 `Ref<Mesh>`；
+3. `validate()` 能识别越界 `children`、`parent` 不一致；
+4. `get_rid() == 0`。
+
+`tests/resource/test_gltf_loader.cpp`（原用例保留，断言对象改为 `Scene`）：
+
+1. 最小 `.gltf` 三角形：`Scene` 节点/根数、`Mesh` 的顶点/索引/法线/UV 数量正确；
 2. 多 primitive + 多材质：Surface 数、材质对应正确；
 3. 节点层级：TRS 与 matrix 两种写法；
 4. 索引类型：u8/u16/u32、无索引自动生成、越界索引过滤；
@@ -855,15 +1045,18 @@ AGENTS.md
    - MR 拆分 G/B；
    - normal scale / occlusion strength；
 9. UV 翻转：glTF `(0,0)` 导入后为 `(0,1)`；
-10. glTF 2.0 版本校验、未知必需扩展报错。
+10. glTF 2.0 版本校验、未知必需扩展报错；
+11. 多 scene 文件只保留默认 scene 并告警；
+12. 加载 `.obj` 得到的资源 `cast_checked<Scene>()` 为空（防止误 cast）。
 
-`tests/scene/test_gltf_scene.cpp`：
+`tests/scene/test_scene_instantiate.cpp`：
 
-1. 根节点/子节点数量正确；
-2. 带 mesh 的节点是 `MeshInstance3D`，纯变换节点是 `Node3D`；
-3. 父子全局变换正确；
-4. 同一文档实例化两次，共享 `Ref<Mesh>`；
-5. 递归 `memdelete` 清理，避免影响 `Memory::get_allocation_count()`。
+1. 根节点/子节点数量、名称正确；
+2. `MESH_INSTANCE_3D` → `MeshInstance3D`，`NODE_3D` → `Node3D`；
+3. 父子全局变换正确（含带旋转的父节点）；
+4. `mesh` 为空的节点退回 `Node3D` 且不崩溃；
+5. 同一 `Scene` 实例化两次共享 `Ref<Mesh>`，且（配合阶段 0.5）不重复追加 surface；
+6. 递归 `memdelete` 清理，避免影响 `Memory::get_allocation_count()`。
 
 `tests/scene/test_node3d_transform.cpp`：
 
@@ -896,7 +1089,9 @@ cd build
 ## 8. 验收标准
 
 - [ ] `.gltf` 与 `.glb` 均可加载，外部/内嵌贴图正常；
-- [ ] 加载结果为 `Node3D` 根节点，层级与 glTF 节点一致；
+- [ ] loader 输出通用 `Scene` 资源，且 `.gltf/.glb` 的解析结果不暴露任何格式专用类型；
+- [ ] `instantiate_scene(Ref<Scene>)` 返回 `Node3D` 根节点，层级与 glTF 节点一致；
+- [ ] 同一 `Scene` 类型可由任意场景格式产出，实例化入口与格式无关；
 - [ ] 一个 glTF mesh 的多个 primitive 正确变成多个 Surface；
 - [ ] 材质 baseColor / normal / metallic / roughness / AO 映射正确；
 - [ ] 贴图方向、法线方向、金属/粗糙度通道正确；
@@ -920,6 +1115,11 @@ cd build
 | 透明/自发光/多 UV | 部分模型效果不完整 | 明确警告，文档写清 |
 | Draco/meshopt/KTX2 | 模型无法加载 | 检测必需扩展，明确报错 |
 | 节点树无自动释放 | 内存泄漏 | 文档说明；测试中手动递归释放 |
+| `Ref::cast` 是 `static_cast` | 把 `Mesh` 误 cast 成 `Scene` 是 UB | 新增 `Ref::cast_checked`（`dynamic_cast`），实例化入口只用它 |
+| `Scene` 中 mesh 为空的节点 | `MeshInstance3D::ENTER_TREE` 直接解引用空 `Ref` 会崩溃 | 实例化时降级为 `Node3D` 并警告 |
+| 多 scene 只保留默认 scene | 其它 scene 丢失 | loader 打印警告；需要时用 `GltfLoader::load_scene(url, index)` 专用入口 |
+| `Scene` 命名歧义 | 与 `SceneTree::current_scene`、渲染 scene RID 混淆 | 类注释写清“CPU 资源”；如仍担心可改名 `PackedScene`/`SceneResource` |
+| `Scene::duplicate()` 的共享语义 | 调用方误以为贴图也被复制 | 注释写明“节点数组深拷贝、Mesh/Material/Texture 共享”，并补测试 |
 
 本期明确不支持：
 
@@ -936,11 +1136,14 @@ cd build
 | 阶段 | 内容 | 预估 |
 |---|---|---|
 | 0 | 前置修复（Node3D、FileAccess、ImageTexture、共享 Mesh） | 1.5–2 天 |
-| 1 | cgltf + GltfDocument + GltfLoader 骨架 | 3–4 天 |
+| 1 | cgltf + 通用 `Scene` 资源 + `GltfLoader` 骨架 | 3–4 天 |
 | 2 | 材质/贴图/sampler/MR 拆分 | 2 天 |
-| 3 | GltfScene 实例化 + 演示 | 1–1.5 天 |
+| 3 | `instantiate_scene` + 演示 | 0.5–1 天 |
 | 4 | 测试、文档、AGENTS 更新 | 1.5–2 天 |
-| **合计** | | **约 9–11.5 人天** |
+| **合计** | | **约 8.5–11 人天** |
+
+阶段 1 相比 `GltfDocument` 方案少一个格式专用数据类，阶段 3 的通用函数比 `GltfScene` 工具类更简单；
+测试量略有增加（多一组通用 `Scene` 用例，少一组 `GltfScene` 用例）。
 
 ---
 
@@ -962,7 +1165,8 @@ Assimp 的调用点更简单（一次 `ReadFile`），但对当前需求总体�
 
 - 当前只做 glTF 模型/材质/贴图 → **cgltf 更简单、风险更低**；
 - 若近期要统一 FBX/DAE/OBJ 或导入动画/skin → 再评估 Assimp；
-- 无论选哪个，`GltfDocument` + `GltfScene` 的接口保持不变，loader 内部可替换。
+- 无论选哪个，loader 的输出类型都是通用 `Scene`，实例化入口都是 `instantiate_scene()`，
+  只替换 loader 内部实现即可。
 
 ---
 
@@ -980,19 +1184,22 @@ Assimp 的调用点更简单（一次 `ReadFile`），但对当前需求总体�
 
 按顺序勾选，避免漏改：
 
-- [ ] `FileAccess` 支持二进制读取
-- [ ] `Path::decode_uri`
-- [ ] `ImageTextureLoader::load_from_memory`
-- [ ] `ImageTexture` sampler setter
-- [ ] `Basis::get_scale/determinant/四元数`
-- [ ] `Node3D::set_transform/get_transform`
-- [ ] 共享 Mesh 上传修复 + `Mesh::mark_rid_clean`
-- [ ] 引入 cgltf 并编译通过
-- [ ] `GltfDocument` 数据模型
-- [ ] `GltfLoader` 节点/场景/网格/材质/贴图
-- [ ] 注册 `.gltf/.glb`
-- [ ] `GltfScene::instantiate/load`
-- [ ] 单元测试通过
-- [ ] 手动 GPU 验证
-- [ ] 更新 `AGENTS.md`
-- [ ] 更新 CMake 源文件列表
+- [x] `FileAccess` 支持二进制读取
+- [x] `Path::decode_uri`
+- [x] `ImageTextureLoader::load_from_memory`
+- [x] `ImageTexture` sampler setter
+- [x] `Basis::get_scale/determinant/四元数`
+- [x] `Node3D::set_transform/get_transform`
+- [x] `Vector3::is_normalized` 改为近似比较（阶段 0 实施时发现的额外前置问题）
+- [ ] `Node::set_name/get_name`
+- [ ] `Ref::cast_checked`（可选，用于安全向下转换）
+- [x] 共享 Mesh 上传修复 + `Mesh::mark_rid_clean`
+- [x] 引入 cgltf 并编译通过
+- [x] 通用 `Scene` 资源（`resource/scene/scene.*`，实现类型名为 `PackedScene`）
+- [x] `GltfLoader` 节点/网格/材质/贴图 → `PackedScene`（多 scene 只取默认 scene）
+- [x] 注册 `.gltf/.glb`
+- [ ] `instantiate_scene` / `load_scene_instance`
+- [x] 单元测试通过（`test_scene.cpp` / `test_gltf_loader.cpp`）
+- [ ] 手动 GPU 验证（目前只用 Sponza 做过 CPU 加载冒烟）
+- [x] 更新 `AGENTS.md`
+- [x] 更新 CMake 源文件列表

@@ -7,6 +7,7 @@
 #include "loaders/obj_loader.h"
 #include "loaders/image_texture_loader.h"
 #include "loaders/mtl_loader.h"
+#include "loaders/gltf_loader.h"
 
 void ResourceLoader::create_singleton()
 {
@@ -14,6 +15,7 @@ void ResourceLoader::create_singleton()
     singleton->register_loader(memnew(ObjMeshLoader));
     singleton->register_loader(memnew(ImageTextureLoader));
     singleton->register_loader(memnew(MtlLoader));
+    singleton->register_loader(memnew(GLTFLoader));
 }
 
 void ResourceLoader::destroy_singleton()
