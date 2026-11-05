@@ -4,6 +4,8 @@
 #include "math_funcs.h"
 #include "vector3.h"
 
+struct Quaternion;
+
 struct Basis
 {
     // 三个坐标轴的单位向量（列向量）
@@ -35,6 +37,15 @@ struct Basis
 
     void invert();
     Basis inverse() const;
+
+    /// @brief 3x3 行列式；负值表示含镜像（负缩放）
+    real_t determinant() const;
+
+    /// @brief 各列向量长度，即从矩阵中反解出的缩放分量（恒为非负）
+    Vector3 get_scale() const;
+
+    /// @brief 从矩阵提取旋转四元数。要求本 Basis 只含旋转（可先按 get_scale() 归一化）。
+    Quaternion get_rotation_quaternion() const;
 
     void scale(const Vector3 &scales);
     Basis scaled(const Vector3 &scales) const;

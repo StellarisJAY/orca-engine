@@ -58,6 +58,12 @@ public:
     void set_height(uint32_t h) { height = h; }
     void set_channels(uint8_t c) { channels = c; }
     void set_srgb(bool srgb) { this->srgb = srgb; }
+    /// @brief 设置 sampler 的 wrap 模式；颜色/数据图都可能是 repeat 或 clamp
+    void set_repeat(bool repeat) { this->repeat = repeat; }
+    /// @brief 设置 sampler 是否使用线性过滤（false 为最近邻）
+    void set_linear_filter(bool linear_filter) { this->linear_filter = linear_filter; }
+    /// @brief 设置是否生成 mipmap（glTF sampler 没有该字段，由调用方按用途决定）
+    void set_gen_mipmap(bool generate_mipmap) { this->generate_mipmap = generate_mipmap; }
 
     bool is_rid_dirty() const { return rid_dirty; }
     void mark_dirty(bool dirty) { rid_dirty = dirty; }

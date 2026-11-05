@@ -1,6 +1,7 @@
 #include "doctest/doctest.h"
 #include "math/math_funcs.h"
 #include "math/basis.h"
+#include "math/quaternion.h"
 #include "math/vector3.h"
 
 #include <cmath>
@@ -14,6 +15,12 @@ namespace
     Basis identity_basis()
     {
         return Basis(1, 0, 0, 0, 1, 0, 0, 0, 1);
+    }
+
+    /// @brief 旋转 + 非均匀缩放，用于分解测试
+    Basis rotated_scaled()
+    {
+        return Basis(Vector3::BACKWARD, Math::deg_to_rad(20)).scaled(Vector3(2, 3, 4));
     }
 
     // 单位轴 (1,1,1)/sqrt(3)，其 length_squared 精确等于 1
@@ -376,4 +383,68 @@ TEST_CASE("Basis: inverse")
     Basis inplace(Vector3::UP, Math::deg_to_rad(60));
     inplace.invert();
     CHECK(inplace.is_equal_approx(inverted));
+}
+
+TEST_CASE("Basis: determinant")
+{
+    CHECK(identity_basis().determinant() == Approx(1.0));
+
+    // 纯旋转行列式恒为 +1
+    CHECK(Basis(Vector3::UP, Math::deg_to_rad(37)).determinant() == Approx(1.0));
+
+    // 缩放矩阵的行列式等于三个缩放分量之积
+    const Basis scaled = Basis(Vector3::BACKWARD, Math::deg_to_rad(20)).scaled(Vector3(2, 3, 4));
+    CHECK(scaled.determinant() == Approx(24.0));
+
+    // 镜像（负缩放）行列式为负
+    Basis mirrored = identity_basis();
+    mirrored.columns[0] *= -1;
+    CHECK(mirrored.determinant() == Approx(-1.0));
+}
+
+TEST_CASE("Basis: get_scale")
+{
+    CHECK(identity_basis().get_scale() == Vector3(1, 1, 1));
+
+    const Basis rot(Vector3::UP, Math::deg_to_rad(35));
+    CHECK(rot.get_scale().is_equal_approx(Vector3(1, 1, 1)));
+
+    // 先旋转再按列缩放，反解出的缩放应当与设置值一致
+    const Basis scaled = rot.scaled(Vector3(2, 3, 4));
+    CHECK(scaled.get_scale().is_equal_approx(Vector3(2, 3, 4)));
+
+    // 负缩放的矩阵列长为正，符号信息由 determinant 提供
+    Basis mirrored = rotated_scaled();
+    mirrored.columns[0] *= -1;
+    CHECK(mirrored.get_scale().is_equal_approx(Vector3(2, 3, 4)));
+    CHECK(mirrored.determinant() < 0);
+}
+
+TEST_CASE("Quaternion: 从旋转矩阵构造")
+{
+    const Vector3 axes[] = {Vector3::UP, Vector3::RIGHT, Vector3::BACKWARD,
+                            Vector3(1, 1, 1).normalized(), Vector3(2, -1, 3).normalized()};
+    const real_t angles[] = {0.0, 0.3, HALF_PI, 2.1, -1.7};
+
+    for (const Vector3 &axis : axes)
+    {
+        for (real_t angle : angles)
+        {
+            const Basis expected(axis, static_cast<real_t>(angle));
+            const Quaternion quaternion(expected);
+            // 转回矩阵后应当还原原始旋转
+            CHECK(quaternion.get_transform().basis.is_equal_approx(expected));
+            // Basis 上的便捷入口等价于直接构造
+            CHECK(expected.get_rotation_quaternion().get_transform().basis.is_equal_approx(expected));
+        }
+    }
+}
+
+TEST_CASE("Quaternion: 单位阵与 180 度旋转")
+{
+    const Quaternion identity(identity_basis());
+    CHECK(identity.get_transform().basis.is_equal_approx(identity_basis()));
+
+    const Basis half_turn(Vector3::UP, Math::PI);
+    CHECK(Quaternion(half_turn).get_transform().basis.is_equal_approx(half_turn));
 }

@@ -14,7 +14,8 @@
 ///
 /// 资源模块不依赖渲染服务器：这里只保存顶点 / 法线 / UV / 索引等 CPU 数据，
 /// 以及一个可选的 RID。RID 由渲染服务器在后续阶段回填，通过
-/// is_rid_dirty() / set_rid() 追踪“数据已变更、需要重新上传”的状态。
+/// is_rid_dirty() / mark_rid_dirty() / mark_rid_clean() 追踪
+/// “数据已变更、需要重新上传”的状态。
 class Mesh : public Resource
 {
 public:
@@ -46,14 +47,14 @@ public:
     /// @brief 数据相对 GPU 是否已过期（需要重新上传）。
     bool is_rid_dirty() const { return rid_dirty; }
 
-    /// @brief 由渲染服务器上传完成后回填 RID。
-    void set_rid(RID p_rid)
-    {
-        rid = p_rid;
-        rid_dirty = false;
-    }
+    /// @brief 创建/回填 GPU 侧的 RID。
+    /// 注意：不会清除 dirty 标志；surface 上传完成后要显式调用 mark_rid_clean()。
+    void set_rid(RID p_rid) { rid = p_rid; }
 
     void mark_rid_dirty() { rid_dirty = true; }
+
+    /// @brief 标记 CPU 数据已经完整上传到渲染服务器
+    void mark_rid_clean() { rid_dirty = false; }
 
     /// @brief 加载顶点数据后在CPU侧计算切线空间，避免shader每帧计算
     void compute_tangents();

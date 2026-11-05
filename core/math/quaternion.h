@@ -30,6 +30,10 @@ struct Quaternion
         w = Math::cos(angle / 2.0);
     }
 
+    /// @brief 从旋转矩阵构造四元数
+    /// @param basis 必须是正交且行列式为 +1 的纯旋转矩阵（含缩放的矩阵请先归一化）
+    Quaternion(const Basis &basis);
+
     /// @brief 四元数转旋转矩阵
     /// @return 旋转Transform
     Transform3D get_transform() const;
@@ -39,6 +43,54 @@ struct Quaternion
     /// @return x,y,z旋转
     Vector3 euler_angles(EulerOrder order) const;
 };
+
+inline Quaternion::Quaternion(const Basis &basis)
+{
+    // columns[col][row] 即矩阵元素 m[row][col]
+    const real_t m00 = basis.columns[0][0];
+    const real_t m10 = basis.columns[0][1];
+    const real_t m20 = basis.columns[0][2];
+    const real_t m01 = basis.columns[1][0];
+    const real_t m11 = basis.columns[1][1];
+    const real_t m21 = basis.columns[1][2];
+    const real_t m02 = basis.columns[2][0];
+    const real_t m12 = basis.columns[2][1];
+    const real_t m22 = basis.columns[2][2];
+
+    const real_t trace = m00 + m11 + m22;
+    if (trace > (real_t)0)
+    {
+        const real_t s = Math::sqrt(trace + (real_t)1) * (real_t)2;
+        w = (real_t)0.25 * s;
+        x = (m21 - m12) / s;
+        y = (m02 - m20) / s;
+        z = (m10 - m01) / s;
+    }
+    else if (m00 > m11 && m00 > m22)
+    {
+        const real_t s = Math::sqrt((real_t)1 + m00 - m11 - m22) * (real_t)2;
+        w = (m21 - m12) / s;
+        x = (real_t)0.25 * s;
+        y = (m01 + m10) / s;
+        z = (m02 + m20) / s;
+    }
+    else if (m11 > m22)
+    {
+        const real_t s = Math::sqrt((real_t)1 + m11 - m00 - m22) * (real_t)2;
+        w = (m02 - m20) / s;
+        x = (m01 + m10) / s;
+        y = (real_t)0.25 * s;
+        z = (m12 + m21) / s;
+    }
+    else
+    {
+        const real_t s = Math::sqrt((real_t)1 + m22 - m00 - m11) * (real_t)2;
+        w = (m10 - m01) / s;
+        x = (m02 + m20) / s;
+        y = (m12 + m21) / s;
+        z = (real_t)0.25 * s;
+    }
+}
 
 inline Transform3D Quaternion::get_transform() const
 {

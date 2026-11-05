@@ -27,7 +27,9 @@ Vector3 Vector3::normalized() const
 
 bool Vector3::is_normalized() const
 {
-    return length_squared() == 1;
+    // 浮点误差下 length_squared 很难精确等于 1（例如 (1,1,1)/sqrt(3)），
+    // 用近似比较，否则 Basis::set_axis_angle 会把合法的单位轴当成非法轴直接忽略。
+    return Math::is_equal_approx(length_squared(), (real_t)1);
 }
 
 real_t Vector3::length() const

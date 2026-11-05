@@ -1,4 +1,20 @@
 #include "basis.h"
+#include "quaternion.h"
+
+real_t Basis::determinant() const
+{
+    return Vector3::det3(columns);
+}
+
+Vector3 Basis::get_scale() const
+{
+    return Vector3(columns[0].length(), columns[1].length(), columns[2].length());
+}
+
+Quaternion Basis::get_rotation_quaternion() const
+{
+    return Quaternion(*this);
+}
 
 void Basis::set_axis_angle(const Vector3 &axis, real_t angle) 
 {   
