@@ -17,7 +17,6 @@ void World3D::ensure_skybox()
             auto image_texture = skybox->get_slot(slot);
             pixels.insert(pixels.end(), image_texture->get_pixels().begin(), image_texture->get_pixels().end());
         }
-
         rendering_server->set_skybox_cubemap(
             skybox->get_rid(),
             skybox->get_width(),
@@ -27,5 +26,6 @@ void World3D::ensure_skybox()
             true,
             true
         );
+        rendering_server->set_environment_skybox(environment->get_rid(), skybox->get_rid());
     }
 }

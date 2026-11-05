@@ -689,13 +689,13 @@ void RenderingServer::draw()
 
     if (skybox_data != nullptr && skybox_data->handle != 0)
     {
-        
-        rendering_device->bind_shader_program(builtin_skybox_shader_program);
-
-        rendering_device->set_uniform_mat4(builtin_skybox_shader_program, "u_view", camera_transform);
-        rendering_device->set_uniform_mat4(builtin_skybox_shader_program, "u_projection", projection);
+        auto skybox_shader_data = storage.shaders.get_data(builtin_skybox_shader_program);
+        rendering_device->bind_shader_program(skybox_shader_data->shader_program);
+        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_view", camera_transform);
+        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_projection", projection);
         // 绑定天空盒纹理
-        rendering_device->bind_cube_map_texture(0, skybox_data->handle);
+        rendering_device->bind_cube_map_texture(1, skybox_data->handle);
+        rendering_device->set_uniform_int(skybox_shader_data->shader_program, "u_skybox_texture", 1);
         // 绘制天空盒
         DrawItem draw_skybox{
             .surface = builtin_skybox_cube_surface,

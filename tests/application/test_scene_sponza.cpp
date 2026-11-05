@@ -42,7 +42,22 @@ public:
 
 Ref<CubeMapSkybox> load_skybox()
 {
-    return Ref<CubeMapSkybox>();
+    auto resource_loader = ResourceLoader::get_singleton();
+    Ref<Resource> front_res = resource_loader->load("res://tests/skybox/front.jpg");
+    Ref<Resource> back_res = resource_loader->load("res://tests/skybox/back.jpg");
+    Ref<Resource> left_res = resource_loader->load("res://tests/skybox/left.jpg");
+    Ref<Resource> right_res = resource_loader->load("res://tests/skybox/right.jpg");
+    Ref<Resource> bottom_res = resource_loader->load("res://tests/skybox/bottom.jpg");
+    Ref<Resource> top_res = resource_loader->load("res://tests/skybox/top.jpg");
+
+    Ref<CubeMapSkybox> skybox = Ref(memnew(CubeMapSkybox));
+    skybox->set_image_texture(CubeMapSkybox::Slot::NEG_X, left_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::POS_X, right_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::POS_Z, front_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::NEG_Z, back_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::NEG_Y, bottom_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::POS_Y, top_res.cast<ImageTexture>());
+    return skybox;
 }
 
 int main()
