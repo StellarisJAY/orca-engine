@@ -82,26 +82,55 @@ uint32_t GLRenderingDevice::create_mesh_surface(
     const std::vector<uint32_t> &indices)
 {
     const size_t vertex_count = vertices.size();
-    if (vertex_count == 0 || normals.size() != vertex_count || uvs.size() != vertex_count || tangents.size() != vertex_count || bitangents.size() != vertex_count)
+    if (vertex_count == 0 || indices.empty())
     {
-        std::printf("[ERROR] create_mesh_surface: vertex/normal/uv count mismatch\n");
+        std::printf("[ERROR] create_mesh_surface: empty vertex or index data\n");
         return 0;
     }
 
-    // 交错打包 [px,py,pz, nx,ny,nz, u,v, tx,ty,tz, btx,bty,btz]。
+    // 顶点属性有两种合法组合：
+    //   1. 完整网格：法线/UV/切线/副切线都必须与顶点数一致；
+    //   2. 仅有位置：四者全部为空，用于天空盒立方体这类只吃 position 的几何体。
+    // 只给其中一部分属性没有明确定义，直接拒绝。
+    const bool position_only = normals.empty() && uvs.empty() && tangents.empty() && bitangents.empty();
+    if (!position_only &&
+        (normals.size() != vertex_count || uvs.size() != vertex_count ||
+         tangents.size() != vertex_count || bitangents.size() != vertex_count))
+    {
+        std::printf("[ERROR] create_mesh_surface: vertex/normal/uv/tangent/bitangent count mismatch\n");
+        return 0;
+    }
+
+    for (const uint32_t index : indices)
+    {
+        if (index >= vertex_count)
+        {
+            std::printf("[ERROR] create_mesh_surface: index %u out of range (vertex count %llu)\n",
+                        index, static_cast<unsigned long long>(vertex_count));
+            return 0;
+        }
+    }
+
+    // 交错打包。完整网格为 [px,py,pz, nx,ny,nz, u,v, tx,ty,tz, btx,bty,btz]，
+    // 仅位置时只打包 [px,py,pz]，stride 相应缩短。
+    const size_t floats_per_vertex = position_only ? 3 : 14;
     std::vector<real_t> packed;
-    packed.reserve(vertex_count * 14);
+    packed.reserve(vertex_count * floats_per_vertex);
     for (size_t i = 0; i < vertex_count; i++)
     {
         const Vector3 &p = vertices[i];
+        packed.push_back(p.x);
+        packed.push_back(p.y);
+        packed.push_back(p.z);
+
+        if (position_only)
+            continue;
+
         const Vector3 &n = normals[i];
         const Vector2 &uv = uvs[i];
         const Vector3 &tangent = tangents[i];
         const Vector3 &bitangent = bitangents[i];
 
-        packed.push_back(p.x);
-        packed.push_back(p.y);
-        packed.push_back(p.z);
         packed.push_back(n.x);
         packed.push_back(n.y);
         packed.push_back(n.z);
@@ -130,7 +159,7 @@ uint32_t GLRenderingDevice::create_mesh_surface(
                  static_cast<GLsizeiptr>(packed.size() * sizeof(real_t)),
                  packed.data(), GL_STATIC_DRAW);
 
-    const GLsizei stride = static_cast<GLsizei>(14 * sizeof(real_t));
+    const GLsizei stride = static_cast<GLsizei>(floats_per_vertex * sizeof(real_t));
     const auto offset = [](size_t element)
     {
         return reinterpret_cast<void *>(element * sizeof(real_t));
@@ -138,14 +167,20 @@ uint32_t GLRenderingDevice::create_mesh_surface(
 
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, offset(0)); // position
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, offset(3)); // normal
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, offset(6)); // uv
-    glEnableVertexAttribArray(3);
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, stride, offset(8)); // tangent
-    glEnableVertexAttribArray(4);
-    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, stride, offset(11)); // bitangent
+
+    // 仅位置时其余属性保持禁用，VAO 中它们的值不会被读取；
+    // builtin-skybox 着色器也只声明了 location 0。
+    if (!position_only)
+    {
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, offset(3)); // normal
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, offset(6)); // uv
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, stride, offset(8)); // tangent
+        glEnableVertexAttribArray(4);
+        glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, stride, offset(11)); // bitangent
+    }
 
     // 索引缓冲：EBO 绑定属于 VAO 状态，必须在 VAO 绑定期间设置。
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
@@ -329,7 +364,7 @@ void GLRenderingDevice::set_uniform_vec2(uint64_t program, const char *uniform, 
     glUniform2fv(location, 1, data);
 }
 
-bool resolve_texture_desc(const TextureDesc &desc, GLenum &image_format, GLint &internal_format)
+void resolve_texture_desc(const TextureDesc &desc, GLenum &image_format, GLint &internal_format)
 {
     switch (desc.channels)
     {
@@ -475,12 +510,19 @@ uint32_t GLRenderingDevice::create_cube_map_texture(const TextureDesc &desc, con
     }
 
     // 设置立方体贴图的属性
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    const GLint filter = desc.linear_filter ? GL_LINEAR : GL_NEAREST;
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, filter);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
     return texture;
+}
+
+void GLRenderingDevice::bind_cube_map_texture(uint32_t unit, uint32_t texture)
+{
+    glActiveTexture(GL_TEXTURE0 + unit);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, texture);
 }
 
 void GLRenderingDevice::destroy_cube_map_texture(uint32_t texture)

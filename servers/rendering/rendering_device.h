@@ -120,8 +120,13 @@ public:
     // 在 VBO 绑定之后，EBO 绑定又属于 VAO 状态。拆开调用无法保证顺序，极易出错。
     // 对 Vulkan 而言，顶点/索引缓冲 + 显存绑定同样应作为一次原子提交。
     //
-    // vertices/normals/uvs 按 [p(3), n(3), uv(2)] 交错打包，分量类型为 real_t；
+    // vertices/normals/uvs/tangents/bitangents 按
+    // [p(3), n(3), uv(2), t(3), bt(3)] 交错打包，分量类型为 real_t；
     // indices 为 32 位索引。返回后端无关的 surface 句柄（OpenGL: VAO）。
+    //
+    // normals/uvs/tangents/bitangents 允许全部为空：此时只上传 position，
+    // 适用于只按顶点位置渲染的几何体（例如天空盒立方体）。这四个参数必须
+    // 同时为空或同时与 vertices 等长，部分提供会被拒绝。
     virtual uint32_t create_mesh_surface(
         const std::vector<Vector3> &vertices,
         const std::vector<Vector3> &normals,
@@ -164,6 +169,7 @@ public:
     /// @param pixels 6张图片打包的像素数据，按+x,-x,+y,-y,+z,-z顺序打包
     /// @return rendering侧cube map handle
     virtual uint32_t create_cube_map_texture(const TextureDesc &desc, const void *pixels) = 0;
+    virtual void bind_cube_map_texture(uint32_t unit, uint32_t texture) = 0;
     virtual void destroy_cube_map_texture(uint32_t texture) = 0;
 };
 

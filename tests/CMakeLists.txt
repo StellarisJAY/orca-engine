@@ -21,12 +21,14 @@ add_executable(orca-tests
 
     scene/test_scene_tree_and_node.cpp
     scene/test_node3d_transform.cpp
+
+    servers/test_skybox_cube.cpp
 )
 
 add_executable(orca-platform-window-test platform/test_window.cpp)
 add_executable(orca-application-test application/test_application.cpp)
 add_executable(orca-app-test-sponza application/test_scene_sponza.cpp)
-target_link_libraries(orca-tests PRIVATE orca-core orca-math orca-scene orca-resource doctest)
+target_link_libraries(orca-tests PRIVATE orca-core orca-math orca-scene orca-rendering orca-resource doctest)
 target_link_libraries(orca-application-test PUBLIC orca-application)
 target_link_libraries(orca-app-test-sponza PUBLIC orca-application)
 # 该测试通过平台抽象（window.h）使用当前后端，无需直接链接具体后端库。

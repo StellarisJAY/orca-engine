@@ -20,12 +20,18 @@ struct SkyboxData
 {
     /// @brief GPU侧立方体贴图handle
     uint32_t handle = 0;
+    /// @brief 默认天空盒立方体的 device surface 句柄（所有天空盒共享）
+    uint32_t cube_surface = 0;
+    /// @brief 默认天空盒立方体的索引数量
+    uint32_t cube_index_count = 0;
 };
 
 struct EnvironmentData
 {
     Color ambient_color = {255, 255, 255, 255};
     float ambient_strength = 1.0;
+
+    RID skybox = 0;
 };
 
 struct Surface

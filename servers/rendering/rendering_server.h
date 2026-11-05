@@ -27,6 +27,12 @@ private:
 
     RID default_shader_program = 0;
 
+    RID builtin_skybox_shader_program = 0;
+
+    // 天空盒默认立方体：只含 position 的 device surface，所有天空盒共享。
+    uint32_t builtin_skybox_cube_surface = 0;
+    uint32_t builtin_skybox_cube_index_count = 0;
+
     RID default_texture_albedo = 0;
     RID default_texture_normal = 0;
     RID default_texture_roughness = 0;
@@ -55,6 +61,7 @@ public:
 
     RID create_environment();
     void set_environment_ambient_light(RID env, const Color &color, float strength);
+    void set_environment_skybox(RID env, RID skybox);
     /// @brief 创建天空盒
     /// @return RID
     RID create_skybox();
@@ -232,6 +239,9 @@ public:
 private:
     void bind_textures(MaterialData *material, uint64_t program);
     void create_default_textures();
+    /// @brief 创建天空盒使用的默认立方体（只有 vertices 与 indices）
+    /// @return 创建成功返回 true
+    bool create_builtin_skybox_cube();
 };
 
 inline RenderingServer *RenderingServer::singleton;

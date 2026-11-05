@@ -16,6 +16,15 @@ void CubeMapSkybox::set_image_texture(Slot slot, const Ref<ImageTexture> &textur
     if(texture.is_valid())
     {
         cubemap_slots[static_cast<uint8_t>(slot)] = texture;
+        if(width == 0 && height == 0)
+        {
+            width = texture->get_width();
+            height = texture->get_height();
+        }
+        if(channels == 0)
+        {
+            channels = texture->get_channels();
+        }
         mark_dirty(true);
     }
 }

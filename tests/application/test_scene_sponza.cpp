@@ -40,6 +40,11 @@ public:
     }
 };
 
+Ref<CubeMapSkybox> load_skybox()
+{
+    return Ref<CubeMapSkybox>();
+}
+
 int main()
 {
     Application app;
@@ -59,8 +64,11 @@ int main()
 
     Ref<PackedScene> sponza_scene = sponza_res.cast<PackedScene>();
 
-    World3D *world = memnew(World3D);
-    world->set_ambient({128,128,128,1}, 1.0);
+    Ref<Environment3D> environment = Ref(memnew(Environment3D));
+    environment->set_ambient_color({128, 128, 128}, 1.0);
+    environment->set_skybox(load_skybox());
+    
+    World3D *world = memnew(World3D(environment));
     app.set_main_scene(world);
 
     Node3D *sponza_node = Instantiate::instantiate_scene(sponza_scene);

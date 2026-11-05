@@ -107,5 +107,6 @@ public:
     void bind_texture_2d(uint32_t unit, uint32_t texture) {}
     void destroy_texture_2d(uint32_t texture) {}
     uint32_t create_cube_map_texture(const TextureDesc &desc, const void *pixels) override { return 0;}
+    void bind_cube_map_texture(uint32_t unit, uint32_t texture) override {}
     void destroy_cube_map_texture(uint32_t texture) override {}
 };

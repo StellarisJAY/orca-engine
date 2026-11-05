@@ -11,6 +11,7 @@ add_library(orca-resource STATIC
     loaders/image_texture_loader.cpp
     loaders/gltf_loader.cpp
     scene/scene.cpp
+    environment/skybox.cpp
 )
 
 target_link_libraries(orca-resource PRIVATE orca-object orca-math orca-core stb_image cgltf)
