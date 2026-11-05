@@ -1,16 +1,49 @@
 #include "mesh_instance_3d.h"
 
+void MeshInstance3D::upload_if_needed()
+{
+    if (mesh.is_null())
+    {
+        return;
+    }
+
+    RenderingServer *rendering_server = RenderingServer::get_singleton();
+
+    // RID 只在第一次上传时创建；set_rid 不清除 dirty，surface 是否已上传由 dirty 决定。
+    if (mesh->get_rid() == 0)
+    {
+        mesh->set_rid(rendering_server->create_mesh());
+    }
+
+    // 材质/贴图上传是幂等的，每次进树都可以确保一次（共享 Mesh 被多个实例引用时，
+    // 不同实例可能注入不同材质）。
+    for (const Mesh::Surface &surface : mesh->get_surfaces())
+    {
+        if (surface.material.is_valid())
+        {
+            ensure_material(surface.material);
+        }
+    }
+
+    // surface 只能追加一次：同一个 Mesh 被多个 MeshInstance3D 引用时，
+    // 第二个实例不能再次 add_mesh_surface，否则会出现重复面/过绘。
+    if (mesh->is_rid_dirty())
+    {
+        ensure_surfaces();
+        mesh->mark_rid_clean();
+    }
+}
+
 void MeshInstance3D::ensure_surfaces()
 {
     RenderingServer *rendering_server = RenderingServer::get_singleton();
     for (const Mesh::Surface &surface : mesh->get_surfaces())
     {
-        // 如果表面没有材质，那么设置为默认材质
+        // 材质已经在 upload_if_needed() 里上传过，这里只取 RID。
+        // 如果表面没有材质，则留 0，渲染端回退到 instance override / 默认材质。
         RID material_rid = 0;
         if (surface.material.is_valid())
         {
-            // 保证表面的材质传递到Rendering侧
-            ensure_material(surface.material);
             material_rid = surface.material->get_rid();
         }
         rendering_server->add_mesh_surface(

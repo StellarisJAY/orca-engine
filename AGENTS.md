@@ -154,11 +154,12 @@ cd build
 
 | 目标 | 内容 | 是否注册到 CTest |
 |---|---|---|
-| `orca-tests` | doctest 单元测试：math / object / os / resource（OBJ + 缓存）/ scene | 是，名称为 `orca-tests` |
+| `orca-tests` | doctest 单元测试：math / object / os / io / resource（OBJ + 贴图解码 + Mesh 状态）/ scene（含 Node3D 变换） | 是，名称为 `orca-tests` |
 | `orca-platform-window-test` | 创建窗口并初始化 OpenGL 设备，手动运行 | 否 |
 | `orca-application-test` | 演示程序（加载资源、渲染场景），手动运行 | 否 |
 
 > `tests/resource/test_obj_loader.cpp` 已重写并加入 `orca-tests`，覆盖四边形、负索引、缺失/混合法线、空面过滤、UV/兜底切线方向，以及 `ResourceLoader` 的 URL 缓存。修改 OBJ/资源加载时请同步更新这些用例。
+> 另有 `tests/core/io/test_file_access_and_path.cpp`（二进制读取、`decode_uri`）、`tests/resource/test_image_texture_loader.cpp`（内存解码 PNG、sampler setter）、`tests/resource/test_mesh.cpp`（RID dirty 状态）、`tests/scene/test_node3d_transform.cpp`（`set_transform`/负缩放/父子变换），修改对应实现时同步维护。
 
 ### 3.5 测试编写规范
 
@@ -190,7 +191,7 @@ orca-engine/
 │  │                              # TriangleMesh、math_defs（real_t = float）、math_funcs
 │  ├─ io/
 │  │  ├─ path.h/.cpp               # 路径拼接、扩展名、res:// 与 user:// 解析
-│  │  ├─ file_access.h/.cpp        # 基于 FILE* 的最小文件读取
+│  │  ├─ file_access.h/.cpp        # 基于 FILE* 的文件读取，含二进制 get_buffer/read_file_bytes
 │  │  └─ dir_access.h/.cpp
 │  └─ os/
 │     ├─ memory.h                  # memnew / memdelete / memnew_arr / 分配计数
@@ -254,6 +255,9 @@ orca-engine/
 │  ├─ core/os/…                    # Memory、Time 测试
 │  ├─ scene/…                      # Node3D 全局变换、场景树
 │  ├─ resource/test_obj_loader.cpp # OBJ 解析、按需切线、ResourceLoader 缓存测试
+│  ├─ resource/test_image_texture_loader.cpp # 内存解码、sampler setter
+│  ├─ resource/test_mesh.cpp       # Mesh RID dirty 状态
+│  ├─ scene/test_node3d_transform.cpp # Node3D TRS/负缩放/父子变换
 │  ├─ platform/test_window.cpp     # 窗口+设备初始化集成测试
 │  └─ application/test_application.cpp # 可交互演示程序
 ├─ docs/
@@ -304,7 +308,9 @@ Application::run()
 
 - `Object` / `RefCounted` / `Ref<T>` / `RID` / `RIDStorage`，含 generation 防悬空句柄。
 - 数学库与单元测试（向量、矩阵/变换、投影等）。
-- `Path`/`FileAccess`，`res://`、`user://` 解析。
+- `Path`/`FileAccess`，`res://`、`user://` 解析；`FileAccess::get_buffer`/`read_file_bytes` 支持二进制读取（`\0` 安全），`Path::decode_uri` 处理百分号转义。
+- `ImageTextureLoader::load_from_memory` 可从内存解码贴图（供 glTF 的 data URI / GLB 内嵌图片使用），`ImageTexture` 提供 `set_repeat/set_linear_filter/set_gen_mipmap`，`load()` 与内存路径共用同一解码函数。
+- `Basis::get_scale/determinant/get_rotation_quaternion` 与 `Quaternion(const Basis&)` 支持从矩阵反解 TRS；`Node3D::set_transform/get_transform` 可直接设置任意局部变换（含负缩放，镜像约定归到 X 轴）。
 - `Resource`、`ResourceLoader`、`ResourceFormatLoader` 注册表；`ObjMeshLoader`、`MtlLoader`、`ImageTextureLoader`。
 - OBJ 解析：`v/vn/vt/f`、`v/vt/vn`、负索引、按 `usemtl` 拆分 surface、按 surface 补缺失法线、有 UV 时用 UV 解算切线（无 UV 时生成基于法线的兜底基）。切线不能按材质判断，因为材质可能在加载后由 `MeshInstance3D` 注入。
 - MTL 解析：`newmtl`、`Kd/Ka/Ks/Ke`、`Ns/Pr/Pm/d/Tr`、`map_Kd/map_Ka/map_Ns/map_Pm/norm/bump`、`-s`/`-bm`。
@@ -326,8 +332,8 @@ Application::run()
 | 资源释放 | 资源析构为空；`ImageTexture`/`Material` 的 GPU RID 生命周期未与资源生命周期绑定 |
 | 多光源 | 只取 `scene_data->lights[0]`；只有方向光，无阴影、无点光/聚光、无 IBL |
 | 材质 | `StandardMaterial::duplicate()` 返回空 Ref；`get_roughenss()` 是历史拼写；emission/specular 未接入 shader |
-| 纹理 | `ImageTextureLoader` 直接使用 stb 解码后的通道数；`srgb` 仅按 `channels == 4` 猜测，MTL 加载器会按槽位覆盖，但直接 `load()` 的纹理可能 sRGB 标记错误 |
-| 测试 | `orca-tests` 已包含 OBJ loader 与资源缓存用例；无 CI、无格式化/静态检查配置 |
+| 纹理 | `ImageTextureLoader` 直接使用 stb 解码后的通道数；`srgb` 默认 false，由材质/MTL 加载器按槽位覆盖，直接 `load()` 得到的纹理需要调用方自己标记 sRGB |
+| 测试 | `orca-tests` 已包含 OBJ loader、贴图内存解码、Mesh RID 状态、二进制 IO、Node3D 变换用例；无 CI、无格式化/静态检查配置 |
 | 场景功能 | `SceneTree::find_node()` 返回 nullptr；`SceneTree::destroy()` 为空；`Viewport::find_world_3d()` 返回 nullptr；`SceneTree` 不支持切换场景的完整清理 |
 | 序列化/编辑器 | 完全没有 |
 
@@ -339,11 +345,12 @@ Application::run()
 4. **`res://` 依赖进程当前目录。** 从仓库根运行会找 `E:/code/orca-engine/resources`，必然失败；测试/演示统一从 `build/` 运行。
 5. **纹理槽顺序是硬编码的契约。** `RenderingServer` 的 `TextureSlotAlbedo..TextureSlotHeight` 与 `MaterialTextureSlot` 枚举、mesh_instance 上传顺序、shader 的 texture unit 0..5 必须保持一致。新增槽位要同步改这四处。
 6. **场景层目前只在 `NOTIFICATION_ENTER_TREE` 上传一次。** 运行时修改 mesh 顶点、材质参数或贴图不会自动同步到渲染端；`NOTIFICATION_MATERIAL_CHANGE` 仍是 TODO。
-7. **`MeshInstance3D` 只处理一次进树。** 退出时 `VisualInstance3D` 会释放 `instance`，但 mesh/material/texture 的 RID 不释放；重复 enter 会重新创建 instance，且 `ensure_surfaces()` 会向同一个 mesh RID 再次追加 surface。
-8. **`RenderingServer::draw()` 对 `scene_data->env`、`scene_data->main_camera` 直接解引用。** 没有场景/相机时可能崩溃；新增测试或最小场景时要先创建 `World3D` 和 `Camera3D`。
-9. **`StandardMaterial` 的默认值不是中性值**（`metallic = 1.0`、`roughness = 1.0`；`Color` 默认白色）。通过 `memnew(StandardMaterial)` 后仍应显式设置所有参数，避免依赖默认值。
-10. **shader 只在启动时编译一次。** 修改 GLSL 后必须重启进程；`ShaderLoader` 的源码树回退只解决文件定位，不是热重载。
-11. **`thirdparty/` 是预编译二进制。** 不要随意替换或升级 GLFW/SDL3/glad，除非同步验证 `Window` 与 `RenderingWindowInfo` 的原生句柄约定。
+7. **共享 Mesh 的 surface 只会上传一次。** `MeshInstance3D::upload_if_needed()` 只在 `Mesh::is_rid_dirty()` 时 `add_mesh_surface()`，完成后 `mark_rid_clean()`。注意 `Mesh::set_rid()` 不再自动清除 dirty（创建 RID ≠ 上传完成）；`Mesh::mark_rid_dirty()` 才会让下次进树重新上传。退出场景树时 mesh/material/texture 的 RID 仍不释放，重复 enter 会重新创建 instance。
+8. **`Vector3::is_normalized()` 使用近似比较。** 浮点误差下 `(1,1,1)/sqrt(3)` 这类单位向量的 `length_squared()` 不精确等于 1；改成精确比较会让 `Basis::set_axis_angle` 静默忽略合法轴。
+9. **`RenderingServer::draw()` 对 `scene_data->env`、`scene_data->main_camera` 直接解引用。** 没有场景/相机时可能崩溃；新增测试或最小场景时要先创建 `World3D` 和 `Camera3D`。
+10. **`StandardMaterial` 的默认值不是中性值**（`metallic = 1.0`、`roughness = 1.0`；`Color` 默认白色）。通过 `memnew(StandardMaterial)` 后仍应显式设置所有参数，避免依赖默认值。
+11. **shader 只在启动时编译一次。** 修改 GLSL 后必须重启进程；`ShaderLoader` 的源码树回退只解决文件定位，不是热重载。
+12. **`thirdparty/` 是预编译二进制。** 不要随意替换或升级 GLFW/SDL3/glad，除非同步验证 `Window` 与 `RenderingWindowInfo` 的原生句柄约定。
 
 ---
 

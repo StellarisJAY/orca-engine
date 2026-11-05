@@ -11,8 +11,14 @@ add_executable(orca-tests
     core/object/test_rid.cpp
     core/os/test_memory.cpp
     core/os/test_time.cpp
+    core/io/test_file_access_and_path.cpp
+
+    resource/test_obj_loader.cpp
+    resource/test_image_texture_loader.cpp
+    resource/test_mesh.cpp
 
     scene/test_scene_tree_and_node.cpp
+    scene/test_node3d_transform.cpp
 )
 
 add_executable(orca-platform-window-test platform/test_window.cpp)
