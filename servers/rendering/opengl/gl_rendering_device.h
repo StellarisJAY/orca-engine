@@ -72,5 +72,8 @@ public:
     uint32_t create_texture_2d(const TextureDesc &desc, const void *pixels) override;
     void bind_texture_2d(uint32_t unit, uint32_t texture) override;
     void destroy_texture_2d(uint32_t texture) override;
+
+    uint32_t create_cube_map_texture(const TextureDesc &desc, const void *pixels) override;
+    void destroy_cube_map_texture(uint32_t texture) override;
 };
 

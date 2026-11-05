@@ -117,6 +117,24 @@ void RenderingServer::set_environment_ambient_light(RID env, const Color &color,
     }
 }
 
+RID RenderingServer::create_skybox()
+{
+    return storage.skyboxes.create(SkyboxData());
+}
+
+void RenderingServer::set_skybox_cubemap(RID skybox, uint32_t width, uint32_t height, uint8_t channels, const std::vector<uint8_t> &pixels, bool srgb, bool linear_filter)
+{
+    if(auto skybox_data = storage.skyboxes.get_data(skybox))
+    {
+        skybox_data->handle = RenderingDevice::get_singleton()->create_cube_map_texture(TextureDesc{
+            .width = width,
+            .height = height,
+            .channels = channels,
+            .srgb = srgb,
+        }, pixels.data());
+    }
+}
+
 RID RenderingServer::create_mesh()
 {
     // 只分配存储；真正的 GPU surface 在顶点 + 索引都到齐后创建。

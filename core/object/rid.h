@@ -37,9 +37,10 @@ enum class RIDType : uint16_t
     Texture = 8,
 
     Shader = 9,
+    Skybox = 10,
     
-    Light = 10,
-    MaxType = 11,
+    Light = 11,
+    MaxType = 12,
 };
 
 /// @brief RID 的编码 / 解码工具。

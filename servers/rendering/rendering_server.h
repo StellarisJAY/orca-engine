@@ -51,8 +51,26 @@ public:
     void set_scene_env(RID scene, RID env);
     void set_scene_main_camera(RID scene, RID camera);
 
+    // 世界环境
+
     RID create_environment();
     void set_environment_ambient_light(RID env, const Color &color, float strength);
+    /// @brief 创建天空盒
+    /// @return RID
+    RID create_skybox();
+    /// @brief 设置立方体贴图天空盒
+    /// @param skybox RID
+    /// @param width 宽
+    /// @param height 高
+    /// @param channels 通道数
+    /// @param pixels 打包后的像素数据，一共6张贴图按+x,-x,+y,-y,+z,-z顺序打包
+    /// @param srgb 是否sRGB
+    void set_skybox_cubemap(RID skybox,
+        uint32_t width, uint32_t height,
+        uint8_t channels,
+        const std::vector<uint8_t> &pixels,
+        bool srgb,
+        bool linear_filter);
 
     // 网格体资源
     

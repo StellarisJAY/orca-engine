@@ -156,6 +156,15 @@ public:
     virtual uint32_t create_texture_2d(const TextureDesc &desc, const void *pixels) = 0;
     virtual void bind_texture_2d(uint32_t unit, uint32_t texture) = 0;
     virtual void destroy_texture_2d(uint32_t texture) = 0;
+
+    // 立方体纹理
+    
+    /// @brief 创建立方体贴图，要求必须6张纹理图片，每张图片宽高相同且都为正方形
+    /// @param desc 纹理描述，每张图片必须具有相同的描述
+    /// @param pixels 6张图片打包的像素数据，按+x,-x,+y,-y,+z,-z顺序打包
+    /// @return rendering侧cube map handle
+    virtual uint32_t create_cube_map_texture(const TextureDesc &desc, const void *pixels) = 0;
+    virtual void destroy_cube_map_texture(uint32_t texture) = 0;
 };
 
 inline std::shared_ptr<RenderingDevice> RenderingDevice::singleton;

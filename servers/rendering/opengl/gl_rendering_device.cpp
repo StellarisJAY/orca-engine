@@ -82,11 +82,7 @@ uint32_t GLRenderingDevice::create_mesh_surface(
     const std::vector<uint32_t> &indices)
 {
     const size_t vertex_count = vertices.size();
-    if (vertex_count == 0 
-        || normals.size() != vertex_count 
-        || uvs.size() != vertex_count 
-        || tangents.size() != vertex_count 
-        || bitangents.size() != vertex_count)
+    if (vertex_count == 0 || normals.size() != vertex_count || uvs.size() != vertex_count || tangents.size() != vertex_count || bitangents.size() != vertex_count)
     {
         std::printf("[ERROR] create_mesh_surface: vertex/normal/uv count mismatch\n");
         return 0;
@@ -333,33 +329,8 @@ void GLRenderingDevice::set_uniform_vec2(uint64_t program, const char *uniform, 
     glUniform2fv(location, 1, data);
 }
 
-void GLRenderingDevice::set_uniform_bool(uint64_t program, const char *uniform, bool data)
+bool resolve_texture_desc(const TextureDesc &desc, GLenum &image_format, GLint &internal_format)
 {
-    GLProgram *shader_program = shader_programs.at(program);
-    if (shader_program == nullptr || shader_program->program == 0)
-        return;
-    int64_t location = shader_program->get_uniform_location(uniform);
-    if (location < 0)
-        return;
-    glUniform1i(location, data ? 1 : 0);
-}
-
-uint32_t GLRenderingDevice::create_texture_2d(const TextureDesc &desc, const void *pixels)
-{
-    if (desc.width == 0 || desc.height == 0 || pixels == nullptr)
-    {
-        std::printf("[ERROR] create_texture_2d: invalid size or null pixels\n");
-        return 0;
-    }
-    if (desc.channels < 1 || desc.channels > 4)
-    {
-        std::printf("[ERROR] create_texture_2d: unsupported channel count %u\n",
-                    static_cast<unsigned>(desc.channels));
-        return 0;
-    }
-
-    GLenum image_format = GL_RGBA;
-    GLint internal_format = GL_RGBA8;
     switch (desc.channels)
     {
     case 1:
@@ -390,6 +361,37 @@ uint32_t GLRenderingDevice::create_texture_2d(const TextureDesc &desc, const voi
             std::printf("[WARN] create_texture_2d: sRGB requested for %u-channel data texture, using linear format\n",
                         static_cast<unsigned>(desc.channels));
     }
+}
+
+void GLRenderingDevice::set_uniform_bool(uint64_t program, const char *uniform, bool data)
+{
+    GLProgram *shader_program = shader_programs.at(program);
+    if (shader_program == nullptr || shader_program->program == 0)
+        return;
+    int64_t location = shader_program->get_uniform_location(uniform);
+    if (location < 0)
+        return;
+    glUniform1i(location, data ? 1 : 0);
+}
+
+uint32_t GLRenderingDevice::create_texture_2d(const TextureDesc &desc, const void *pixels)
+{
+    if (desc.width == 0 || desc.height == 0 || pixels == nullptr)
+    {
+        std::printf("[ERROR] create_texture_2d: invalid size or null pixels\n");
+        return 0;
+    }
+    if (desc.channels < 1 || desc.channels > 4)
+    {
+        std::printf("[ERROR] create_texture_2d: unsupported channel count %u\n",
+                    static_cast<unsigned>(desc.channels));
+        return 0;
+    }
+
+    GLenum image_format = GL_RGBA;
+    GLint internal_format = GL_RGBA8;
+
+    resolve_texture_desc(desc, image_format, internal_format);
 
     GLuint texture = 0;
     glGenTextures(1, &texture);
@@ -406,8 +408,8 @@ uint32_t GLRenderingDevice::create_texture_2d(const TextureDesc &desc, const voi
 
     const GLint filter = desc.linear_filter ? GL_LINEAR : GL_NEAREST;
     const GLint min_filter = desc.gen_mipmap
-        ? (desc.linear_filter ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST)
-        : filter;
+                                 ? (desc.linear_filter ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST)
+                                 : filter;
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, desc.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, desc.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
@@ -427,6 +429,61 @@ void GLRenderingDevice::bind_texture_2d(uint32_t unit, uint32_t texture)
 }
 
 void GLRenderingDevice::destroy_texture_2d(uint32_t texture)
+{
+    const GLuint texture_handle = texture;
+    glDeleteTextures(1, &texture_handle);
+}
+
+uint32_t GLRenderingDevice::create_cube_map_texture(const TextureDesc &desc, const void *pixels)
+{
+    if (desc.width == 0 || desc.height == 0 || pixels == nullptr)
+    {
+        std::printf("[ERROR] create_cube_map_texture: invalid size or null pixels\n");
+        return 0;
+    }
+    if (desc.width != desc.height)
+    {
+        std::printf("[ERROR] create_cube_map_texture: invalid width and height, width must equals to height\n");
+        return 0;
+    }
+    if (desc.channels < 1 || desc.channels > 4)
+    {
+        std::printf("[ERROR] create_cube_map_texture: unsupported channel count %u\n",
+                    static_cast<unsigned>(desc.channels));
+        return 0;
+    }
+
+    GLenum image_format = GL_RGBA;
+    GLint internal_format = GL_RGBA8;
+    resolve_texture_desc(desc, image_format, internal_format);
+
+    // 创建立方体贴图
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    if (texture == 0)
+    {
+        std::printf("[ERROR] create_cube_map_texture: glGenTextures failed\n");
+        return 0;
+    }
+    glBindTexture(GL_TEXTURE_CUBE_MAP, texture);
+
+    // 绑定立方体六个面
+    for (uint64_t i = 0; i < 6; i++)
+    {
+        uint64_t offset = i * desc.width * desc.height * desc.channels;
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, internal_format, desc.width, desc.height, 0, image_format, GL_UNSIGNED_BYTE, pixels + offset);
+    }
+
+    // 设置立方体贴图的属性
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    return texture;
+}
+
+void GLRenderingDevice::destroy_cube_map_texture(uint32_t texture)
 {
     const GLuint texture_handle = texture;
     glDeleteTextures(1, &texture_handle);

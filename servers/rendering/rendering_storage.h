@@ -16,6 +16,12 @@ struct SceneData
     std::vector<RID> lights;
 };
 
+struct SkyboxData
+{
+    /// @brief GPU侧立方体贴图handle
+    uint32_t handle = 0;
+};
+
 struct EnvironmentData
 {
     Color ambient_color = {255, 255, 255, 255};
@@ -115,4 +121,5 @@ public:
     RIDStorage<MaterialData> materials{RIDType::Material};
     RIDStorage<LightData> lights{RIDType::Light};
     RIDStorage<TextureData> textures{RIDType::Texture};
+    RIDStorage<SkyboxData> skyboxes{RIDType::Skybox};
 };
