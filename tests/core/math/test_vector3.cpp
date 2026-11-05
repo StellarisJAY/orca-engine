@@ -130,6 +130,12 @@ TEST_CASE("Vector3: normalization")
 
     CHECK(Vector3(1, 0, 0).is_normalized());
     CHECK_FALSE(Vector3(2, 0, 0).is_normalized());
+
+    // 单位对角轴 (1,1,1)/sqrt(3) 的 float 表示 length_squared 不精确等于 1，
+    // 仍应判定为单位向量，否则 axis-angle 旋转会被静默忽略
+    const Vector3 diagonal(Math::SQRT13, Math::SQRT13, Math::SQRT13);
+    CHECK_FALSE(diagonal.length_squared() == 1);
+    CHECK(diagonal.is_normalized());
 }
 
 TEST_CASE("Vector3: limit_length")
