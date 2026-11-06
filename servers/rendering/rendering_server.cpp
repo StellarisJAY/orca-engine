@@ -2,6 +2,7 @@
 #include "rendering_device.h"
 #include "os/memory.h"
 #include "shader_loader.h"
+#include "skybox_cube.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -39,6 +40,32 @@ void RenderingServer::create_default_textures()
     default_texture_height = white;
 }
 
+bool RenderingServer::create_builtin_skybox_cube()
+{
+    std::vector<Vector3> vertices;
+    std::vector<uint32_t> indices;
+    SkyboxCube::create_geometry(vertices, indices);
+
+    // 天空盒立方体只有位置：法线/UV/切线/副切线全部传空，
+    // 后端会创建仅含 position 属性的 surface。
+    builtin_skybox_cube_surface = RenderingDevice::get_singleton()->create_mesh_surface(
+        vertices,
+        {},
+        {},
+        {},
+        {},
+        indices);
+
+    if (builtin_skybox_cube_surface == 0)
+    {
+        std::printf("[ERROR] failed to create builtin skybox cube surface\n");
+        return false;
+    }
+
+    builtin_skybox_cube_index_count = static_cast<uint32_t>(indices.size());
+    return true;
+}
+
 bool RenderingServer::init()
 {
     // 从 glsl 文件加载 builtin shader
@@ -57,6 +84,25 @@ bool RenderingServer::init()
         return false;
     }
     default_shader_program = storage.shaders.create(ShaderData{.shader_program = shader_program});
+
+    // 创建builtin 天空盒shader程序
+    const ShaderSource skybox_source = ShaderLoader::load("builtin-skybox");
+    if (!skybox_source.is_valid())
+    {
+        std::printf("[ERROR] failed to load builtin skybox shader source\n");
+        return false;
+    }
+    const uint64_t skybox_shader_program = RenderingDevice::get_singleton()->create_shader_program(skybox_source.vertex, skybox_source.fragment);
+    if (skybox_shader_program == 0)
+    {
+        std::printf("[ERROR] failed to create builtin skybox shader program");
+        return false;
+    }
+    builtin_skybox_shader_program = storage.shaders.create(ShaderData{.shader_program = skybox_shader_program});
+
+    // 天空盒默认立方体，所有天空盒共享
+    if (!create_builtin_skybox_cube())
+        return false;
 
     // 默认贴图，材质没有贴图时使用
     create_default_textures();
@@ -117,6 +163,50 @@ void RenderingServer::set_environment_ambient_light(RID env, const Color &color,
     }
 }
 
+void RenderingServer::set_environment_skybox(RID env, RID skybox)
+{
+    if(auto env_data = storage.environments.get_data(env))
+    {
+        env_data->skybox = skybox;
+    }
+}
+
+RID RenderingServer::create_skybox()
+{
+    // 每个天空盒复用 init() 中创建的默认立方体，只额外持有一张立方体贴图。
+    return storage.skyboxes.create(SkyboxData{
+        .cube_map_texture = 0,
+        .cube_surface = builtin_skybox_cube_surface,
+        .cube_index_count = builtin_skybox_cube_index_count,
+    });
+}
+
+void RenderingServer::set_skybox_cubemap(RID skybox, uint32_t width, uint32_t height, uint8_t channels, const std::vector<uint8_t> &pixels, bool srgb, bool linear_filter)
+{
+    if (auto skybox_data = storage.skyboxes.get_data(skybox))
+    {
+        const uint32_t handle = RenderingDevice::get_singleton()->create_cube_map_texture(TextureDesc{
+                                                                                              .width = width,
+                                                                                              .height = height,
+                                                                                              .channels = channels,
+                                                                                              .gen_mipmap = false,
+                                                                                              .linear_filter = linear_filter,
+                                                                                              .srgb = srgb,
+                                                                                          },
+                                                                                          pixels.data());
+        if (handle == 0)
+        {
+            std::printf("[ERROR] set_skybox_cubemap: failed to create cube map texture\n");
+            return;
+        }
+
+        // 重传时销毁旧句柄，避免 GPU 纹理泄漏。
+        if (skybox_data->cube_map_texture != 0)
+            RenderingDevice::get_singleton()->destroy_cube_map_texture(skybox_data->cube_map_texture);
+        skybox_data->cube_map_texture = handle;
+    }
+}
+
 RID RenderingServer::create_mesh()
 {
     // 只分配存储；真正的 GPU surface 在顶点 + 索引都到齐后创建。
@@ -124,13 +214,13 @@ RID RenderingServer::create_mesh()
 }
 
 void RenderingServer::add_mesh_surface(
-    RID mesh, 
+    RID mesh,
     RID material,
-    const std::vector<Vector3> &vertices, 
-    const std::vector<Vector3> &normals, 
-    const std::vector<Vector2> &uvs, 
-    const std::vector<Vector3> &tangents, 
-    const std::vector<Vector3> &bitangents, 
+    const std::vector<Vector3> &vertices,
+    const std::vector<Vector3> &normals,
+    const std::vector<Vector2> &uvs,
+    const std::vector<Vector3> &tangents,
+    const std::vector<Vector3> &bitangents,
     const std::vector<uint32_t> &indices)
 {
     MeshData *data = storage.meshes.get_data(mesh);
@@ -145,8 +235,7 @@ void RenderingServer::add_mesh_surface(
         uvs,
         tangents,
         bitangents,
-        indices
-    );
+        indices);
     data->surfaces.push_back(surface);
 }
 
@@ -525,6 +614,16 @@ void RenderingServer::free(RID rid)
     case RIDType::Environment:
         storage.environments.free(rid);
         break;
+    case RIDType::Skybox:
+        if (SkyboxData *data = storage.skyboxes.get_data(rid))
+        {
+            if (data->cube_map_texture != 0)
+                RenderingDevice::get_singleton()->destroy_cube_map_texture(data->cube_map_texture);
+            // cube_surface 是 RenderingServer 共享的内置立方体，不能在这里释放。
+            data->cube_map_texture = 0;
+        }
+        storage.skyboxes.free(rid);
+        break;
     case RIDType::Shader:
         if (ShaderData *data = storage.shaders.get_data(rid))
         {
@@ -557,6 +656,35 @@ void RenderingServer::sync()
 void RenderingServer::draw()
 {
     RenderingDevice::get_singleton()->clear();
+    auto rendering_device = RenderingDevice::get_singleton();
+
+    // 数据准备 ---------------------------------------------------------------------------------
+
+    SceneData *scene_data = storage.scenes.get_data(current_scene);
+    if (scene_data == nullptr)
+    {
+        std::printf("[WARN] draw: current scene is missing\n");
+        return;
+    }
+    CameraData *camera_data = storage.cameras.get_data(scene_data->main_camera);
+    if (camera_data == nullptr)
+    {
+        std::printf("[WARN] draw: main camera is missing\n");
+        return;
+    }
+    EnvironmentData *env_data = storage.environments.get_data(scene_data->env);
+    if (env_data == nullptr)
+    {
+        std::printf("[WARN] draw: environment is missing\n");
+        return;
+    }
+    auto skybox_data = storage.skyboxes.get_data(env_data->skybox);
+
+    // 相机变换
+    real_t camera_transform[16];
+    camera_data->transform.affine_inverse().get_mat4(camera_transform);
+    const real_t *projection = camera_data->projection.data;
+
     draw_items.clear();
 
     // 过滤出可渲染的实例
@@ -594,33 +722,15 @@ void RenderingServer::draw()
         }
     }
 
-    SceneData *scene_data = storage.scenes.get_data(current_scene);
-    if (scene_data == nullptr)
-    {
-        std::printf("[WARN] draw: current scene is missing\n");
-        return;
-    }
+    // pass1 instances ------------------------------------------------------------------------
 
-    CameraData *camera_data = storage.cameras.get_data(scene_data->main_camera);
-    if (camera_data == nullptr)
-    {
-        std::printf("[WARN] draw: main camera is missing\n");
-        return;
-    }
-
-    EnvironmentData *env_data = storage.environments.get_data(scene_data->env);
     ShaderData *shader_data = storage.shaders.get_data(default_shader_program);
     if (shader_data == nullptr || shader_data->shader_program == 0)
         return;
     // shader程序切换，现在只有builtin shader
     const uint64_t program = shader_data->shader_program;
-    std::shared_ptr<RenderingDevice> rendering_device = RenderingDevice::get_singleton();
     rendering_device->bind_shader_program(program);
 
-    // 相机变换
-    real_t camera_transform[16];
-    camera_data->transform.affine_inverse().get_mat4(camera_transform);
-    const real_t *projection = camera_data->projection.data;
     rendering_device->set_uniform_vec3(program, "u_camera_position", camera_data->transform.origin.coords);
     rendering_device->set_uniform_mat4(program, "u_view", camera_transform);
     rendering_device->set_uniform_mat4(program, "u_projection", projection);
@@ -683,6 +793,25 @@ void RenderingServer::draw()
         bind_textures(material, program);
 
         rendering_device->draw_call(item);
+    }
+
+    // pass2 skybox -------------------------------------------------------------------
+
+    if (skybox_data != nullptr && skybox_data->cube_map_texture != 0)
+    {
+        auto skybox_shader_data = storage.shaders.get_data(builtin_skybox_shader_program);
+        rendering_device->bind_shader_program(skybox_shader_data->shader_program);
+        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_view", camera_transform);
+        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_projection", projection);
+        // 绑定天空盒纹理
+        rendering_device->bind_cube_map_texture(1, skybox_data->cube_map_texture);
+        rendering_device->set_uniform_int(skybox_shader_data->shader_program, "u_skybox_texture", 1);
+        
+        // 绘制天空盒
+        DrawItem draw_skybox{
+            .surface = builtin_skybox_cube_surface,
+            .index_count = builtin_skybox_cube_index_count};
+        rendering_device->draw_call(draw_skybox);
     }
 }
 

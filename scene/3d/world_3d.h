@@ -4,30 +4,33 @@
 #include "object/rid.h"
 #include "rendering_server.h"
 #include "math/color.h"
+#include "environment/environment_3d.h"
 
-class World3D: public Node3D
+class World3D : public Node3D
 {
     RID scene = 0;
-    RID environment = 0;
-    Color ambient_color = {0, 0, 0, 255};
-    float ambient_strength = 1.0f;
+    Ref<Environment3D> environment;
+
 public:
-    World3D() {}
+    World3D(const Ref<Environment3D> &env) : environment(env) {}
 
     void _notification(int what) override
     {
         Node3D::_notification(what);
         auto rendering_server = RenderingServer::get_singleton();
-        switch(what)
+        switch (what)
         {
         case NOTIFICATION_ENTER_TREE:
             scene = rendering_server->create_scene();
-            environment = rendering_server->create_environment();
-            rendering_server->set_environment_ambient_light(environment, ambient_color, ambient_strength);
-            rendering_server->set_scene_env(scene, environment);
+            environment->set_rid(rendering_server->create_environment());
+            rendering_server->set_scene_env(scene, environment->get_rid());
+            rendering_server->set_environment_ambient_light(environment->get_rid(), environment->get_ambiemt_color(), environment->get_ambient_strength());
+            ensure_skybox();
             break;
         case NOTIFICATION_EXIT_TREE:
-            rendering_server->free(environment);
+            if (environment->get_skybox().is_valid())
+                rendering_server->free(environment->get_skybox()->get_rid());
+            rendering_server->free(environment->get_rid());
             environment = 0;
             rendering_server->free(scene);
             scene = 0;
@@ -35,17 +38,13 @@ public:
         }
     }
 
-    void set_main_camera(RID camera) 
+    void set_main_camera(RID camera)
     {
         RenderingServer::get_singleton()->set_scene_main_camera(scene, camera);
     }
 
-    void set_ambient(const Color &color, float strength)
-    {
-        ambient_color = color;
-        ambient_strength = strength;
-        RenderingServer::get_singleton()->set_environment_ambient_light(environment, ambient_color, ambient_strength);
-    }
-
     RID get_scene() const { return scene; }
+
+private:
+    void ensure_skybox();
 };

@@ -11,6 +11,19 @@ precision highp float;
 #define TEX_AO_BIT        (1 << 4)
 #define TEX_HEIGHT_BIT    (1 << 5)
 
+// 颜色管线：光照全部在线性空间计算。
+// - 颜色贴图以 sRGB 内部格式上传（GL_SRGB8/SRGB8_ALPHA8），采样时由硬件解码成线性；
+// - C++ 侧上传的 albedo / 环境光 / 灯光颜色已经过 Color::linear 做 sRGB -> linear；
+// - 因此最终颜色是线性值，写进非 sRGB 的默认帧缓冲前必须手动编码回 sRGB，
+//   否则整幅画面会偏暗（mid-tone 被当成线性值直接显示）。
+vec3 linear_to_srgb(vec3 color)
+{
+    color = clamp(color, 0.0, 1.0);
+    vec3 low = color * 12.92;
+    vec3 high = 1.055 * pow(color, vec3(1.0 / 2.4)) - 0.055;
+    return mix(low, high, step(vec3(0.0031308), color));
+}
+
 uniform vec4 u_ambient_color;
 uniform float u_ambient_strength;
 
@@ -221,7 +234,7 @@ void main() {
     vec3 light_dir = -u_light_direction;
     if (u_light_intensity <= 0.0 || dot(light_dir, light_dir) < 1e-8)
     {
-        fragColor = vec4(ambient, 1.0);
+        fragColor = vec4(linear_to_srgb(ambient), 1.0);
         return;
     }
 
@@ -239,7 +252,7 @@ void main() {
     // 无光面
     if (NdotL <= 0.0)
     {
-        fragColor = vec4(ambient, 1.0);
+        fragColor = vec4(linear_to_srgb(ambient), 1.0);
         return;
     }
 
@@ -259,5 +272,6 @@ void main() {
     // 灯光强度由 Light 参数提供，不再写死乘 4。
     vec3 radiance = u_light_color * max(u_light_intensity, 0.0);
     vec3 Lo = (Kd * f_diffuse * ao + f_specular) * radiance * NdotL;
-    fragColor = vec4(Lo + ambient, 1.0);
+    // 线性光照结果编码成 sRGB 后输出画面。
+    fragColor = vec4(linear_to_srgb(Lo + ambient), 1.0);
 }

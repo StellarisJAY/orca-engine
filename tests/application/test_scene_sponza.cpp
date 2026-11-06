@@ -40,6 +40,27 @@ public:
     }
 };
 
+Ref<CubeMapSkybox> load_skybox()
+{
+    auto resource_loader = ResourceLoader::get_singleton();
+    Ref<Resource> front_res = resource_loader->load("res://tests/skybox/front.jpg");
+    Ref<Resource> back_res = resource_loader->load("res://tests/skybox/back.jpg");
+    Ref<Resource> left_res = resource_loader->load("res://tests/skybox/left.jpg");
+    Ref<Resource> right_res = resource_loader->load("res://tests/skybox/right.jpg");
+    Ref<Resource> bottom_res = resource_loader->load("res://tests/skybox/bottom.jpg");
+    Ref<Resource> top_res = resource_loader->load("res://tests/skybox/top.jpg");
+
+    Ref<CubeMapSkybox> skybox = Ref(memnew(CubeMapSkybox));
+    // 相机默认朝 -Z，因此“正前方”是 NEG_Z 面、“正后方”是 POS_Z 面。
+    skybox->set_image_texture(CubeMapSkybox::Slot::NEG_X, left_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::POS_X, right_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::NEG_Z, front_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::POS_Z, back_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::NEG_Y, bottom_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::POS_Y, top_res.cast<ImageTexture>());
+    return skybox;
+}
+
 int main()
 {
     Application app;
@@ -59,8 +80,11 @@ int main()
 
     Ref<PackedScene> sponza_scene = sponza_res.cast<PackedScene>();
 
-    World3D *world = memnew(World3D);
-    world->set_ambient({128,128,128,1}, 1.0);
+    Ref<Environment3D> environment = Ref(memnew(Environment3D));
+    environment->set_ambient_color({128, 128, 128}, 1.0);
+    environment->set_skybox(load_skybox());
+    
+    World3D *world = memnew(World3D(environment));
     app.set_main_scene(world);
 
     Node3D *sponza_node = Instantiate::instantiate_scene(sponza_scene);

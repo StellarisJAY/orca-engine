@@ -851,6 +851,8 @@ MeshInstance3D *instance = memnew(MeshInstance3D(mesh, material));
 - albedo 纹理使用 `GL_SRGB8_ALPHA8`，让 GPU 自动解码到线性空间。
 - normal / roughness / metallic / AO 使用 `GL_RGBA8`，不能做 sRGB 解码。
 - 同一张图如果同时用于 albedo 和线性槽位，需要明确约定或复制资源；前期建议按槽位区分图片用途。
+- 颜色类 uniform（albedo / 环境光 / 灯光颜色）在 `RenderingServer` 上传前通过 `Color::linear()` 做 sRGB → linear。
+- shader 里所有光照都在线性空间计算，最后一步用 `linear_to_srgb()` 编码输出（`builtin/frag.glsl` 与 `builtin-skybox/frag.glsl` 各有一份）。默认帧缓冲不是 sRGB 格式，不编码会把线性值直接当显示值，画面整体偏暗。
 
 ### 5.2 纹理通道约定
 

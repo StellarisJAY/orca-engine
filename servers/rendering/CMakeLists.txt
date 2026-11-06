@@ -7,6 +7,7 @@ add_library(orca-rendering STATIC
     rendering_server.cpp
     rendering_storage.cpp
     shader_loader.cpp
+    skybox_cube.cpp
 )
 
 target_include_directories(orca-rendering PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
