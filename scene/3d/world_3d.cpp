@@ -1,31 +1,36 @@
 #include "world_3d.h"
+#include <cstdio>
+#include <string>
+#include <vector>
 
 void World3D::ensure_skybox()
 {
     auto skybox = environment->get_skybox();
-    auto rendering_server = RenderingServer::get_singleton();
-    if (skybox.is_valid())
-    {
-        if (skybox->get_rid() == 0)
-            skybox->set_rid(rendering_server->create_skybox());
-        // 合并skybox的多个贴图槽位
+    if (skybox.is_null())
+        return;
 
-        std::vector<uint8_t> pixels;
-        for(uint8_t i = 0; i < 6; i++)
-        {
-            CubeMapSkybox::Slot slot = static_cast<CubeMapSkybox::Slot>(i);
-            auto image_texture = skybox->get_slot(slot);
-            pixels.insert(pixels.end(), image_texture->get_pixels().begin(), image_texture->get_pixels().end());
-        }
-        rendering_server->set_skybox_cubemap(
-            skybox->get_rid(),
-            skybox->get_width(),
-            skybox->get_height(),
-            skybox->get_channels(),
-            pixels,
-            true,
-            true
-        );
-        rendering_server->set_environment_skybox(environment->get_rid(), skybox->get_rid());
+    auto rendering_server = RenderingServer::get_singleton();
+
+    // 先把六个面校验并拼成一整块立方体贴图数据；失败则不创建/挂接天空盒。
+    std::vector<uint8_t> pixels;
+    std::string error;
+    if (!skybox->build_cubemap_pixels(pixels, &error))
+    {
+        std::printf("[ERROR] World3D: invalid skybox: %s\n", error.c_str());
+        return;
     }
+
+    if (skybox->get_rid() == 0)
+        skybox->set_rid(rendering_server->create_skybox());
+
+    rendering_server->set_skybox_cubemap(
+        skybox->get_rid(),
+        skybox->get_width(),
+        skybox->get_height(),
+        skybox->get_channels(),
+        pixels,
+        true,
+        true
+    );
+    rendering_server->set_environment_skybox(environment->get_rid(), skybox->get_rid());
 }

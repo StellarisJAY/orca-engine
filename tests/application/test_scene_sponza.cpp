@@ -51,10 +51,11 @@ Ref<CubeMapSkybox> load_skybox()
     Ref<Resource> top_res = resource_loader->load("res://tests/skybox/top.jpg");
 
     Ref<CubeMapSkybox> skybox = Ref(memnew(CubeMapSkybox));
+    // 相机默认朝 -Z，因此“正前方”是 NEG_Z 面、“正后方”是 POS_Z 面。
     skybox->set_image_texture(CubeMapSkybox::Slot::NEG_X, left_res.cast<ImageTexture>());
     skybox->set_image_texture(CubeMapSkybox::Slot::POS_X, right_res.cast<ImageTexture>());
-    skybox->set_image_texture(CubeMapSkybox::Slot::POS_Z, front_res.cast<ImageTexture>());
-    skybox->set_image_texture(CubeMapSkybox::Slot::NEG_Z, back_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::NEG_Z, front_res.cast<ImageTexture>());
+    skybox->set_image_texture(CubeMapSkybox::Slot::POS_Z, back_res.cast<ImageTexture>());
     skybox->set_image_texture(CubeMapSkybox::Slot::NEG_Y, bottom_res.cast<ImageTexture>());
     skybox->set_image_texture(CubeMapSkybox::Slot::POS_Y, top_res.cast<ImageTexture>());
     return skybox;

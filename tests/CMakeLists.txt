@@ -18,6 +18,7 @@ add_executable(orca-tests
     "resource/test_mesh.cpp"
     "resource/test_scene.cpp"
     "resource/test_gltf_loader.cpp"
+    "resource/test_skybox.cpp"
 
     scene/test_scene_tree_and_node.cpp
     scene/test_node3d_transform.cpp

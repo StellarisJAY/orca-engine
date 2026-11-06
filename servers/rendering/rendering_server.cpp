@@ -175,7 +175,7 @@ RID RenderingServer::create_skybox()
 {
     // 每个天空盒复用 init() 中创建的默认立方体，只额外持有一张立方体贴图。
     return storage.skyboxes.create(SkyboxData{
-        .handle = 0,
+        .cube_map_texture = 0,
         .cube_surface = builtin_skybox_cube_surface,
         .cube_index_count = builtin_skybox_cube_index_count,
     });
@@ -201,9 +201,9 @@ void RenderingServer::set_skybox_cubemap(RID skybox, uint32_t width, uint32_t he
         }
 
         // 重传时销毁旧句柄，避免 GPU 纹理泄漏。
-        if (skybox_data->handle != 0)
-            RenderingDevice::get_singleton()->destroy_cube_map_texture(skybox_data->handle);
-        skybox_data->handle = handle;
+        if (skybox_data->cube_map_texture != 0)
+            RenderingDevice::get_singleton()->destroy_cube_map_texture(skybox_data->cube_map_texture);
+        skybox_data->cube_map_texture = handle;
     }
 }
 
@@ -617,10 +617,10 @@ void RenderingServer::free(RID rid)
     case RIDType::Skybox:
         if (SkyboxData *data = storage.skyboxes.get_data(rid))
         {
-            if (data->handle != 0)
-                RenderingDevice::get_singleton()->destroy_cube_map_texture(data->handle);
+            if (data->cube_map_texture != 0)
+                RenderingDevice::get_singleton()->destroy_cube_map_texture(data->cube_map_texture);
             // cube_surface 是 RenderingServer 共享的内置立方体，不能在这里释放。
-            data->handle = 0;
+            data->cube_map_texture = 0;
         }
         storage.skyboxes.free(rid);
         break;
@@ -685,26 +685,6 @@ void RenderingServer::draw()
     camera_data->transform.affine_inverse().get_mat4(camera_transform);
     const real_t *projection = camera_data->projection.data;
 
-    // pass1 skybox -----------------------------------------------------------------------------
-
-    if (skybox_data != nullptr && skybox_data->handle != 0)
-    {
-        auto skybox_shader_data = storage.shaders.get_data(builtin_skybox_shader_program);
-        rendering_device->bind_shader_program(skybox_shader_data->shader_program);
-        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_view", camera_transform);
-        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_projection", projection);
-        // 绑定天空盒纹理
-        rendering_device->bind_cube_map_texture(1, skybox_data->handle);
-        rendering_device->set_uniform_int(skybox_shader_data->shader_program, "u_skybox_texture", 1);
-        // 绘制天空盒
-        DrawItem draw_skybox{
-            .surface = builtin_skybox_cube_surface,
-            .index_count = builtin_skybox_cube_index_count};
-        rendering_device->draw_call(draw_skybox);
-    }
-
-    // pass2 instances ------------------------------------------------------------------------
-
     draw_items.clear();
 
     // 过滤出可渲染的实例
@@ -741,6 +721,8 @@ void RenderingServer::draw()
             draw_items.push_back(item);
         }
     }
+
+    // pass1 instances ------------------------------------------------------------------------
 
     ShaderData *shader_data = storage.shaders.get_data(default_shader_program);
     if (shader_data == nullptr || shader_data->shader_program == 0)
@@ -811,6 +793,25 @@ void RenderingServer::draw()
         bind_textures(material, program);
 
         rendering_device->draw_call(item);
+    }
+
+    // pass2 skybox -------------------------------------------------------------------
+
+    if (skybox_data != nullptr && skybox_data->cube_map_texture != 0)
+    {
+        auto skybox_shader_data = storage.shaders.get_data(builtin_skybox_shader_program);
+        rendering_device->bind_shader_program(skybox_shader_data->shader_program);
+        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_view", camera_transform);
+        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_projection", projection);
+        // 绑定天空盒纹理
+        rendering_device->bind_cube_map_texture(1, skybox_data->cube_map_texture);
+        rendering_device->set_uniform_int(skybox_shader_data->shader_program, "u_skybox_texture", 1);
+        
+        // 绘制天空盒
+        DrawItem draw_skybox{
+            .surface = builtin_skybox_cube_surface,
+            .index_count = builtin_skybox_cube_index_count};
+        rendering_device->draw_call(draw_skybox);
     }
 }
 

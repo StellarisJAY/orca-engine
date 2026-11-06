@@ -155,12 +155,12 @@ cd build
 
 | 目标 | 内容 | 是否注册到 CTest |
 |---|---|---|
-| `orca-tests` | doctest 单元测试：math / object / os / io / resource（OBJ + glTF + 贴图解码 + PackedScene + Mesh 状态）/ scene（含 Node3D 变换） | 是，名称为 `orca-tests` |
+| `orca-tests` | doctest 单元测试：math / object / os / io / resource（OBJ + glTF + 贴图解码 + PackedScene + Mesh 状态 + 天空盒校验）/ scene（含 Node3D 变换） | 是，名称为 `orca-tests` |
 | `orca-platform-window-test` | 创建窗口并初始化 OpenGL 设备，手动运行 | 否 |
 | `orca-application-test` | 演示程序（加载资源、渲染场景），手动运行 | 否 |
 
 > `tests/resource/test_obj_loader.cpp` 已重写并加入 `orca-tests`，覆盖四边形、负索引、缺失/混合法线、空面过滤、UV/兜底切线方向，以及 `ResourceLoader` 的 URL 缓存。修改 OBJ/资源加载时请同步更新这些用例。
-> 另有 `tests/core/io/test_file_access_and_path.cpp`（二进制读取、`decode_uri`）、`tests/resource/test_image_texture_loader.cpp`（内存解码 PNG、sampler setter）、`tests/resource/test_mesh.cpp`（RID dirty 状态）、`tests/resource/test_scene.cpp`（`PackedScene` 的 `add_node/add_root/duplicate/validate`）、`tests/resource/test_gltf_loader.cpp`（.gltf/.glb、节点层级、多 primitive、外部 bin、内嵌/data URI 图片、材质与 MR 拆分）、`tests/scene/test_node3d_transform.cpp`（`set_transform`/负缩放/父子变换），修改对应实现时同步维护。
+> 另有 `tests/core/io/test_file_access_and_path.cpp`（二进制读取、`decode_uri`）、`tests/resource/test_image_texture_loader.cpp`（内存解码 PNG、sampler setter）、`tests/resource/test_mesh.cpp`（RID dirty 状态）、`tests/resource/test_scene.cpp`（`PackedScene` 的 `add_node/add_root/duplicate/validate`）、`tests/resource/test_gltf_loader.cpp`（.gltf/.glb、节点层级、多 primitive、外部 bin、内嵌/data URI 图片、材质与 MR 拆分）、`tests/resource/test_skybox.cpp`（六面齐全/尺寸/通道/正方形/像素长度校验、GL 面顺序、逐面行序翻转）、`tests/scene/test_node3d_transform.cpp`（`set_transform`/负缩放/父子变换），修改对应实现时同步维护。
 > `test_gltf_loader.cpp` 在测试运行时自行生成 glTF/GLB 与 PNG 字节（base64、PNG、GLB 构造都在用例内），不依赖 `build/resources/` 中的样例资源。
 
 ### 3.5 测试编写规范
@@ -211,6 +211,7 @@ orca-engine/
 │  ├─ rendering_server.h/.cpp      # 高层 API：scene/camera/light/mesh/material/texture
 │  ├─ rendering_storage.h/.cpp     # 各资源的 CPU 端描述 + RIDStorage 实例
 │  ├─ shader_loader.h/.cpp         # 从 res://shaders 或源码目录读取 GLSL
+│  ├─ skybox_cube.h/.cpp           # 天空盒用的 8 顶点立方体几何（仅位置 + 索引）
 │  ├─ opengl/
 │  │  ├─ gl_rendering_device.h/.cpp# 可用的 OpenGL 实现（VAO/VBO、shader、纹理）
 │  ├─ vulkan/
@@ -218,6 +219,7 @@ orca-engine/
 │  └─ shaders/
 │     ├─ builtin/vert.glsl         # 内置顶点着色器
 │     ├─ builtin/frag.glsl         # GGX/Smith/Schlick、法线贴图、视差贴图
+│     ├─ builtin-skybox/            # 天空盒：用顶点方向直接采样 samplerCube，pos.xyww 贴远平面
 │     └─ dummy/                    # 占位 shader
 ├─ platform/                       # 窗口与输入抽象
 │  ├─ window.h/.cpp                # Window 抽象 + create() 工厂
@@ -237,7 +239,9 @@ orca-engine/
 │  ├─ material/material.h/.cpp     # StandardMaterial、6 个纹理槽、标量参数
 │  ├─ material/material_library.*  # .mtl 中多材质的容器
 │  ├─ texture/image_texture.h      # CPU 像素 + RID + srgb/mipmap/filter 标志
-│  └─ environment/environment_3d.* # 环境资源壳
+│  └─ environment/
+│     ├─ environment_3d.*          # 环境资源壳（环境光 + 天空盒）
+│     └─ skybox.h/.cpp             # CubeMapSkybox：六面 ImageTexture、校验与立方体贴图拼装
 ├─ scene/                          # 场景树（消费资源，调用渲染服务器）
 │  ├─ node.h/.cpp                  # 父子关系、生命周期、process/physics_process
 │  ├─ scene_tree.h/.cpp            # 固定 60Hz 物理步长 + 可变渲染帧
@@ -286,6 +290,7 @@ orca-engine/
 | 渲染 API 与绘制流程 | `servers/rendering/rendering_server.cpp` |
 | OpenGL 具体实现 | `servers/rendering/opengl/gl_rendering_device.cpp` |
 | 着色算法 | `servers/rendering/shaders/builtin/{vert,frag}.glsl` |
+| 天空盒 | `resource/environment/skybox.cpp`、`scene/3d/world_3d.cpp`、`servers/rendering/shaders/builtin-skybox/` |
 | 窗口创建与原生句柄 | `platform/glfw/glfw_window.cpp`、`platform/window.h` |
 | 路径与 `res://` 规则 | `core/io/path.cpp` |
 
@@ -303,6 +308,7 @@ Application::run()
                  -> 遍历 instances，构造 DrawItem
                  -> 绑定 builtin shader、相机/环境/灯光 uniform
                  -> 绑定 6 张纹理并提交 draw_call
+                 -> 最后画天空盒（pos.xyww 贴远平面，默认深度函数为 GL_LEQUAL）
   -> Window::swap_buffers()
 ```
 
@@ -326,8 +332,10 @@ Application::run()
 - MTL 解析：`newmtl`、`Kd/Ka/Ks/Ke`、`Ns/Pr/Pm/d/Tr`、`map_Kd/map_Ka/map_Ns/map_Pm/norm/bump`、`-s`/`-bm`。
 - `Mesh`（CPU 数据 + dirty RID）、`StandardMaterial`（albedo/metal/roughness/6 纹理槽/uv_scale/parallax）。
 - `RenderingServer` + `RenderingStorage`：scene/environment/camera/light/mesh/instance/material/texture 的创建与更新。
-- OpenGL 3.3 后端：VAO/VBO/EBO、shader 编译与 uniform、2D 纹理创建/绑定、清屏、绘制。
+- OpenGL 3.3 后端：VAO/VBO/EBO、shader 编译与 uniform、2D/立方体纹理创建与绑定、清屏、绘制。
+- 天空盒：`CubeMapSkybox` 六面 `ImageTexture` 在 `World3D` 进树时校验并拼成 cubemap 上传，`builtin-skybox` shader 用顶点方向直接采样、`pos.xyww` 贴远平面，在实例之后绘制。
 - PBR：GGX 法线分布、Smith 几何项、Schlick 菲涅尔、金属/非金属 F0、环境光；法线贴图 TBN；32 步视差贴图。
+- 颜色管线：sRGB 贴图由 `GL_SRGB8*` 硬件解码、颜色类 uniform 由 `Color::linear()` 转线性 → 光照在线性空间计算 → fragment shader 用 `linear_to_srgb()` 编码输出到默认帧缓冲（`builtin/frag.glsl` 与 `builtin-skybox/frag.glsl`）。
 - 场景树：父子关系、enter/exit tree、process/physics_process 传播、固定物理步长与插值系数。
 - 平台抽象：GLFW（默认）与 SDL3 两套窗口实现，OpenGL/Vulkan 驱动选择。
 
@@ -342,9 +350,10 @@ Application::run()
 | 资源释放 | 资源析构为空；`ImageTexture`/`Material` 的 GPU RID 生命周期未与资源生命周期绑定 |
 | 多光源 | 只取 `scene_data->lights[0]`；只有方向光，无阴影、无点光/聚光、无 IBL |
 | 材质 | `StandardMaterial::duplicate()` 返回空 Ref；`get_roughenss()` 是历史拼写；emission/specular 未接入 shader |
+| 天空盒 | 只有 cubemap 天空盒（无 HDR/等距柱状图、无 IBL/环境反射）；六面必须齐全、正方形、同尺寸同通道，否则 `World3D::ensure_skybox` 打印错误并整块跳过；天空盒不参与光照 |
 | 纹理 | `ImageTextureLoader` 直接使用 stb 解码后的通道数；`srgb` 默认 false，由材质/MTL 加载器按槽位覆盖，直接 `load()` 得到的纹理需要调用方自己标记 sRGB |
 | glTF / 场景资源 | `PackedScene` 与 `GLTFLoader` 已完成解析与材质/贴图；**尚未实现** `instantiate_scene()`（阶段 3），加载结果还不能直接变成 `Node3D` 树。不支持动画/skin/morph/透明/emissive 贴图/多 UV；`KHR_texture_transform` 的贴图会被跳过；多 scene 只加载默认 scene；glTF 图片直接解码，不复用 `ResourceLoader` 的纹理缓存 |
-| 测试 | `orca-tests` 已包含 OBJ/glTF loader、PackedScene、贴图内存解码、Mesh RID 状态、二进制 IO、Node3D 变换用例；无 CI、无格式化/静态检查配置 |
+| 测试 | `orca-tests` 已包含 OBJ/glTF loader、PackedScene、贴图内存解码、Mesh RID 状态、二进制 IO、Node3D 变换、天空盒校验与拼装用例；无 CI、无格式化/静态检查配置 |
 | 场景功能 | `SceneTree::find_node()` 返回 nullptr；`SceneTree::destroy()` 为空；`Viewport::find_world_3d()` 返回 nullptr；`SceneTree` 不支持切换场景的完整清理 |
 | 序列化/编辑器 | 完全没有 |
 
@@ -360,7 +369,7 @@ Application::run()
 8. **`Vector3::is_normalized()` 使用近似比较。** 浮点误差下 `(1,1,1)/sqrt(3)` 这类单位向量的 `length_squared()` 不精确等于 1；改成精确比较会让 `Basis::set_axis_angle` 静默忽略合法轴。
 9. **`RenderingServer::draw()` 对 `scene_data->env`、`scene_data->main_camera` 直接解引用。** 没有场景/相机时可能崩溃；新增测试或最小场景时要先创建 `World3D` 和 `Camera3D`。
 10. **`StandardMaterial` 的默认值不是中性值**（`metallic = 1.0`、`roughness = 1.0`；`Color` 默认白色）。通过 `memnew(StandardMaterial)` 后仍应显式设置所有参数，避免依赖默认值。
-11. **shader 只在启动时编译一次。** 修改 GLSL 后必须重启进程；`ShaderLoader` 的源码树回退只解决文件定位，不是热重载。
+11. **shader 只在启动时编译一次。** 修改 GLSL 后必须重启进程；`ShaderLoader` 的源码树回退只解决文件定位，不是热重载。`ShaderLoader::read_text_file()` 会剥掉 UTF-8 BOM，否则 GL 编译器会报 `illegal non-ASCII character`。
 12. **`thirdparty/` 是预编译二进制。** 不要随意替换或升级 GLFW/SDL3/glad，除非同步验证 `Window` 与 `RenderingWindowInfo` 的原生句柄约定。
 13. **glTF UV 方向由 loader 统一翻转。** 导入 glTF 时做 `v = 1 - v`，配合 `ImageTextureLoader` 固定的垂直翻转；不要再额外改其中任何一处，否则贴图会上下颠倒、法线 Y 反向。
 14. **glTF 的因子颜色是线性值。** `baseColorFactor` / `emissiveFactor` 写入 `Color` 前必须做 linear → sRGB 编码（`GltfImporter::to_srgb_byte`）；直接存字节会让颜色偏暗。贴图侧靠 `srgb` 标志区分颜色图与数据图。
@@ -368,6 +377,8 @@ Application::run()
 16. **glTF 图片解码不经过 `ResourceLoader`。** `GLTFLoader` 直接读字节调用 `ImageTextureLoader::load_from_memory`，按 `(texture index, srgb)` 在单次加载内缓存，避免共享纹理实例被 sampler/sRGB 改写；代价是不同 glTF 文件之间不共享纹理实例。
 17. **`CGLTF_IMPLEMENTATION` 只在 `gltf_loader.cpp` 定义一次。** 其它翻译单元只 include `cgltf.h`，重复定义会产生符号错误。
 18. **`PackedScene::duplicate()` 是“节点数组深拷贝 + Mesh/Material/Texture 按 `Ref` 共享”。** 修改副本的节点列表不会影响原场景，但两者指向同一批 CPU 网格数据；需要独立网格时要显式复制 `Mesh`。
+19. **cubemap 面的行序与 2D 纹理相反，拼接时必须翻回来。** `ImageTextureLoader` 对所有图片做垂直翻转（2D 约定：行 0 是图片底部），而 GL 的 cubemap 面以左上角为原点（行 0 是面顶部）。`CubeMapSkybox::build_cubemap_pixels()` 负责逐面恢复行序，`World3D::ensure_skybox()` 只调用它；不要在 shader 里用 `v_uv.y = -v_uv.y` 糊（会把 +Y/-Y 面互换）。同时 `validate_faces()` 会校验六面齐全、正方形、尺寸/通道/像素长度一致，失败时整块天空盒跳过并打印错误。
+20. **颜色空间是端到端契约，新增 shader 必须自己编码输出。** 现状：sRGB 贴图由 `GL_SRGB8*` 解码、`u_albedo/u_ambient_color/u_light_color` 上传前已用 `Color::linear()` 转线性，所以 shader 里的光照全在线性空间；默认帧缓冲**不是** sRGB 格式，fragment shader 最后必须调用 `linear_to_srgb()`（`builtin/frag.glsl`、`builtin-skybox/frag.glsl` 各自有一份）再写输出，漏掉就会整幅偏暗。不要改成打开 `GL_FRAMEBUFFER_SRGB`（当前窗口帧缓冲不带 sRGB 属性，开在别处会双重编码）；`glClearColor` 的数值不经过 shader，按显示值给即可。
 
 ---
 

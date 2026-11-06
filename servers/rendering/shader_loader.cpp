@@ -38,7 +38,17 @@ std::string ShaderLoader::read_text_file(const std::string &path)
     if (!FileAccess::file_exists(path))
         return std::string();
 
-    return FileAccess::get_file_as_text(path);
+    std::string text = FileAccess::get_file_as_text(path);
+    // Windows 编辑器可能给 GLSL 加上 UTF-8 BOM，GL 编译器会把它当成非法字符
+    // 报 "illegal non-ASCII character"；这里统一剥掉。
+    if (text.size() >= 3 &&
+        static_cast<unsigned char>(text[0]) == 0xEF &&
+        static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF)
+    {
+        text.erase(0, 3);
+    }
+    return text;
 }
 
 std::string ShaderLoader::resolve_and_read(const std::string &shader_name, const std::string &file_name)

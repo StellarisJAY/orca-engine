@@ -63,6 +63,7 @@ bool GLRenderingDevice::init_swapchain()
     if (width > 0 && height > 0)
         glViewport(0, 0, width, height);
     glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
     glClearColor(0.10f, 0.11f, 0.13f, 1.0f);
     return true;
 }
@@ -506,7 +507,8 @@ uint32_t GLRenderingDevice::create_cube_map_texture(const TextureDesc &desc, con
     for (uint64_t i = 0; i < 6; i++)
     {
         uint64_t offset = i * desc.width * desc.height * desc.channels;
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, internal_format, desc.width, desc.height, 0, image_format, GL_UNSIGNED_BYTE, pixels + offset);
+        void *ptr = reinterpret_cast<void*>(reinterpret_cast<uint64_t>(pixels) + offset);
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, internal_format, desc.width, desc.height, 0, image_format, GL_UNSIGNED_BYTE, ptr);
     }
 
     // 设置立方体贴图的属性
