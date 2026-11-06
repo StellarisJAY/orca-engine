@@ -816,7 +816,6 @@ void RenderingServer::bind_textures(MaterialData *material, uint64_t program)
 void RenderingServer::render_pass_scene(SceneData *scene_data, EnvironmentData *env_data, CameraData *camera_data)
 {
     auto rendering_device = RenderingDevice::get_singleton();
-
     real_t camera_transform[16];
     camera_data->transform.affine_inverse().get_mat4(camera_transform);
     const real_t *projection = camera_data->projection.data;
@@ -855,6 +854,14 @@ void RenderingServer::render_pass_scene(SceneData *scene_data, EnvironmentData *
             rendering_device->set_uniform_int(program, "u_light_type", light_data->type);
             rendering_device->set_uniform_vec3(program, "u_light_direction", light_data->direction.coords);
             light_intensity = std::max(light_data->intensity, 0.0f);
+
+            // 光源空间变换
+            real_t light_space_mat[16];
+            light_data->light_space_transform.get_mat4(light_space_mat);
+            rendering_device->set_uniform_mat4(program, "u_light_space_matrix", light_space_mat);
+            // 光源深度贴图
+            rendering_device->bind_texture_2d(8, light_data->depth_map);
+            rendering_device->set_uniform_int(program, "u_light_depth_map", 8);
         }
     }
 
@@ -900,13 +907,17 @@ void RenderingServer::render_pass_depth_map(const LightData &light)
 
     // 切换到深度贴图shader
     ShaderData *depth_map_shader = storage.shaders.get_data(buildtin_depth_map_shader_program);
-    rendering_device->bind_shader_program(depth_map_shader->shader_program);
+    uint64_t program = depth_map_shader->shader_program;
+    rendering_device->bind_shader_program(program);
 
     // 灯光的视角变换
     real_t light_space_transform[16];
-    light.transform.get_mat4(light_space_transform);
-    rendering_device->set_uniform_mat4(depth_map_shader->shader_program, "u_light_space_matrix", light_space_transform);
+    light.light_space_transform.get_mat4(light_space_transform);
+    rendering_device->set_uniform_mat4(program, "u_light_space_matrix", light_space_transform);
 
+    // TODO 正交参数
+    const auto projection = Projection::create_orthogonal(-200, 200, -200, 200, -200, 200);
+    rendering_device->set_uniform_mat4(program, "u_projection", projection.data);
     rendering_device->set_viewport(1024, 1024);
     rendering_device->clear();
 

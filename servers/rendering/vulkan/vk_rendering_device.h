@@ -113,6 +113,7 @@ public:
     uint32_t create_depth_map(uint32_t width, uint32_t height) override { return 0; }
     void destroy_depth_map(uint32_t depth_map) override {}
     void set_viewport(uint32_t width, uint32_t height) override {}
+    void reset_viewport() override {}
     uint32_t create_framebuffer() override { return 0; }
     void bind_framebuffer_depth_map(uint32_t framebuffer, uint32_t depth_map) override {}
     void bind_framebuffer(uint32_t framebuffer) override {}

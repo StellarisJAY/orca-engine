@@ -560,6 +560,11 @@ void GLRenderingDevice::set_viewport(uint32_t width, uint32_t height)
     }
 }
 
+void GLRenderingDevice::reset_viewport()
+{
+    glViewport(0, 0, window_info.width, window_info.height);
+}
+
 uint32_t GLRenderingDevice::create_framebuffer()
 {
     uint32_t framebuffer = 0;

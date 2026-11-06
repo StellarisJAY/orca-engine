@@ -182,6 +182,7 @@ public:
     virtual void destroy_depth_map(uint32_t depth_map) = 0;
 
     virtual void set_viewport(uint32_t width, uint32_t height) = 0;
+    virtual void reset_viewport() = 0;
 
     // 帧缓冲
 
