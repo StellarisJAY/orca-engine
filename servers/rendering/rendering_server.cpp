@@ -66,6 +66,17 @@ bool RenderingServer::create_builtin_skybox_cube()
     return true;
 }
 
+void RenderingServer::create_depth_map_pass()
+{
+    auto rendering_device = RenderingDevice::get_singleton();
+    depth_map_framebuffer = rendering_device->create_framebuffer();
+
+    const ShaderSource shader_source = ShaderLoader::load("builtin-depth");
+
+    const uint64_t program = rendering_device->create_shader_program(shader_source.vertex, shader_source.fragment);
+    buildtin_depth_map_shader_program = storage.shaders.create(ShaderData{program});
+}
+
 bool RenderingServer::init()
 {
     // 从 glsl 文件加载 builtin shader
@@ -103,6 +114,9 @@ bool RenderingServer::init()
     // 天空盒默认立方体，所有天空盒共享
     if (!create_builtin_skybox_cube())
         return false;
+
+    // 创建阴影深度贴图渲染的资源
+    create_depth_map_pass();
 
     // 默认贴图，材质没有贴图时使用
     create_default_textures();
@@ -165,7 +179,7 @@ void RenderingServer::set_environment_ambient_light(RID env, const Color &color,
 
 void RenderingServer::set_environment_skybox(RID env, RID skybox)
 {
-    if(auto env_data = storage.environments.get_data(env))
+    if (auto env_data = storage.environments.get_data(env))
     {
         env_data->skybox = skybox;
     }
@@ -539,9 +553,19 @@ void RenderingServer::set_light_scene(RID light, RID scene)
 
 void RenderingServer::set_light_cast_shadow(RID light, bool shadow)
 {
+    auto rendering_deivce = RenderingDevice::get_singleton();
     if (auto light_data = storage.lights.get_data(light))
     {
         light_data->cast_shadow = shadow;
+        if (shadow)
+        {
+            // 删除可能残留的旧depth_map
+            if (light_data->depth_map != 0)
+                rendering_deivce->destroy_depth_map(light_data->depth_map);
+            // 创建光源绑定的新深度贴图
+            light_data->depth_map = rendering_deivce->create_depth_map(1024, 1024);
+            // TODO 点光源的cube depth map
+        }
     }
 }
 
@@ -560,6 +584,7 @@ void RenderingServer::set_light_direction(RID light, const Vector3 &direction)
     if (auto light_data = storage.lights.get_data(light))
     {
         light_data->direction = direction;
+        light_data->light_space_transform = Transform3D::look_at(light_data->transform.origin, direction, Vector3::UP);
     }
 }
 
@@ -641,6 +666,12 @@ void RenderingServer::free(RID rid)
         {
             auto it = std::remove(scene->lights.begin(), scene->lights.end(), rid);
             scene->lights.erase(it, scene->lights.end());
+            // 清理灯光的阴影深度贴图
+            auto light_data = storage.lights.get_data(rid);
+            if (light_data && light_data->depth_map != 0)
+            {
+                RenderingDevice::get_singleton()->destroy_depth_map(light_data->depth_map);
+            }
         }
         storage.lights.free(rid);
         break;
@@ -683,7 +714,7 @@ void RenderingServer::draw()
     // 相机变换
     real_t camera_transform[16];
     camera_data->transform.affine_inverse().get_mat4(camera_transform);
-    const real_t *projection = camera_data->projection.data;
+    real_t *projection = camera_data->projection.data;
 
     draw_items.clear();
 
@@ -722,97 +753,25 @@ void RenderingServer::draw()
         }
     }
 
-    // pass1 instances ------------------------------------------------------------------------
-
-    ShaderData *shader_data = storage.shaders.get_data(default_shader_program);
-    if (shader_data == nullptr || shader_data->shader_program == 0)
-        return;
-    // shader程序切换，现在只有builtin shader
-    const uint64_t program = shader_data->shader_program;
-    rendering_device->bind_shader_program(program);
-
-    rendering_device->set_uniform_vec3(program, "u_camera_position", camera_data->transform.origin.coords);
-    rendering_device->set_uniform_mat4(program, "u_view", camera_transform);
-    rendering_device->set_uniform_mat4(program, "u_projection", projection);
-
-    // 环境；没有环境资源时使用全黑环境光，避免上一帧的 uniform 残留。
-    real_t ambient_color[4] = {0.0, 0.0, 0.0, 1.0};
-    float ambient_strength = 0.0f;
-    if (env_data != nullptr)
-    {
-        env_data->ambient_color.linear(ambient_color);
-        ambient_strength = env_data->ambient_strength;
-    }
-    rendering_device->set_uniform_vec4(program, "u_ambient_color", ambient_color);
-    rendering_device->set_uniform_float(program, "u_ambient_strength", ambient_strength);
-
-    // 灯光
+    // pass0 depth map ------------------------------------------------------------------------
+    
+    // 灯光阴影深度贴图
     float light_intensity = 0.0f;
     if (scene_data->lights.size() > 0)
     {
         // 暂时只做一个灯光
         // TODO 多光源
         LightData *light_data = storage.lights.get_data(scene_data->lights[0]);
-        if (light_data != nullptr && light_data->visible)
+        if (light_data != nullptr && light_data->cast_shadow)
         {
-            real_t light_color[3];
-            light_data->final_color.linear(light_color);
-            rendering_device->set_uniform_vec3(program, "u_light_color", light_color);
-            rendering_device->set_uniform_int(program, "u_light_type", light_data->type);
-            rendering_device->set_uniform_vec3(program, "u_light_direction", light_data->direction.coords);
-            light_intensity = std::max(light_data->intensity, 0.0f);
+            render_pass_depth_map(*light_data);
         }
     }
-    // 每帧都写，删灯或灯不可见时不能残留上一帧的强度。
-    rendering_device->set_uniform_float(program, "u_light_intensity", light_intensity);
 
-    // 渲染实例
-    for (const DrawItem &item : draw_items)
-    {
-        // instance transform
-        real_t transform[16];
-        item.transform.get_mat4(transform);
-        rendering_device->set_uniform_mat4(program, "u_model", transform);
-
-        // instance material
-        MaterialData *material = item.material;
-        if (material == nullptr)
-            continue;
-        real_t vec4[4];
-        material->albedo.linear(vec4);
-        rendering_device->set_uniform_vec4(program, "u_albedo", vec4);
-        rendering_device->set_uniform_float(program, "u_metallic", material->metallic);
-        rendering_device->set_uniform_float(program, "u_roughness", material->roughness);
-        rendering_device->set_uniform_vec2(program, "u_uv_scale", material->uv_scale.coords);
-        rendering_device->set_uniform_float(program, "u_parallax_scale", material->parallax_scale);
-        rendering_device->set_uniform_bool(program, "u_parallax_flip", material->parallax_flip);
-        rendering_device->set_uniform_int(program, "u_texture_mask", static_cast<int>(material->texture_mask));
-        rendering_device->set_uniform_float(program, "u_normal_scale", material->normal_scale);
-        rendering_device->set_uniform_float(program, "u_ao_strength", material->ao_strength);
-        // 绑定纹理贴图
-        bind_textures(material, program);
-
-        rendering_device->draw_call(item);
-    }
-
+    // pass1 instances -----------------------------------------------------------------
+    render_pass_scene(scene_data, env_data, camera_data);
     // pass2 skybox -------------------------------------------------------------------
-
-    if (skybox_data != nullptr && skybox_data->cube_map_texture != 0)
-    {
-        auto skybox_shader_data = storage.shaders.get_data(builtin_skybox_shader_program);
-        rendering_device->bind_shader_program(skybox_shader_data->shader_program);
-        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_view", camera_transform);
-        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_projection", projection);
-        // 绑定天空盒纹理
-        rendering_device->bind_cube_map_texture(1, skybox_data->cube_map_texture);
-        rendering_device->set_uniform_int(skybox_shader_data->shader_program, "u_skybox_texture", 1);
-        
-        // 绘制天空盒
-        DrawItem draw_skybox{
-            .surface = builtin_skybox_cube_surface,
-            .index_count = builtin_skybox_cube_index_count};
-        rendering_device->draw_call(draw_skybox);
-    }
+    render_pass_skybox(skybox_data, camera_transform, projection);
 }
 
 void RenderingServer::bind_textures(MaterialData *material, uint64_t program)
@@ -852,4 +811,134 @@ void RenderingServer::bind_textures(MaterialData *material, uint64_t program)
     // 高度贴图
     bind_slot(5, material->texture_height, default_texture_height);
     rendering_device->set_uniform_int(program, "u_height_texture", 5);
+}
+
+void RenderingServer::render_pass_scene(SceneData *scene_data, EnvironmentData *env_data, CameraData *camera_data)
+{
+    auto rendering_device = RenderingDevice::get_singleton();
+
+    real_t camera_transform[16];
+    camera_data->transform.affine_inverse().get_mat4(camera_transform);
+    const real_t *projection = camera_data->projection.data;
+
+    ShaderData *shader_data = storage.shaders.get_data(default_shader_program);
+    if (shader_data == nullptr || shader_data->shader_program == 0)
+        return;
+    // shader程序切换，现在只有builtin shader
+    const uint64_t program = shader_data->shader_program;
+    rendering_device->bind_shader_program(program);
+
+    rendering_device->set_uniform_vec3(program, "u_camera_position", camera_data->transform.origin.coords);
+    rendering_device->set_uniform_mat4(program, "u_view", camera_transform);
+    rendering_device->set_uniform_mat4(program, "u_projection", projection);
+
+    // 环境；没有环境资源时使用全黑环境光，避免上一帧的 uniform 残留。
+    real_t ambient_color[4] = {0.0, 0.0, 0.0, 1.0};
+    float ambient_strength = 0.0f;
+    if (env_data != nullptr)
+    {
+        env_data->ambient_color.linear(ambient_color);
+        ambient_strength = env_data->ambient_strength;
+    }
+    rendering_device->set_uniform_vec4(program, "u_ambient_color", ambient_color);
+    rendering_device->set_uniform_float(program, "u_ambient_strength", ambient_strength);
+
+    float light_intensity = 1.0;
+    if (scene_data->lights.size() > 0)
+    {
+        LightData *light_data = storage.lights.get_data(scene_data->lights[0]);
+        if (light_data != nullptr && light_data->visible)
+        {
+            real_t light_color[3];
+            light_data->final_color.linear(light_color);
+            rendering_device->set_uniform_vec3(program, "u_light_color", light_color);
+            rendering_device->set_uniform_int(program, "u_light_type", light_data->type);
+            rendering_device->set_uniform_vec3(program, "u_light_direction", light_data->direction.coords);
+            light_intensity = std::max(light_data->intensity, 0.0f);
+        }
+    }
+
+    // 每帧都写，删灯或灯不可见时不能残留上一帧的强度。
+    rendering_device->set_uniform_float(program, "u_light_intensity", light_intensity);
+
+    // 渲染实例
+    for (const DrawItem &item : draw_items)
+    {
+        // instance transform
+        real_t transform[16];
+        item.transform.get_mat4(transform);
+        rendering_device->set_uniform_mat4(program, "u_model", transform);
+
+        // instance material
+        MaterialData *material = item.material;
+        if (material == nullptr)
+            continue;
+        real_t vec4[4];
+        material->albedo.linear(vec4);
+        rendering_device->set_uniform_vec4(program, "u_albedo", vec4);
+        rendering_device->set_uniform_float(program, "u_metallic", material->metallic);
+        rendering_device->set_uniform_float(program, "u_roughness", material->roughness);
+        rendering_device->set_uniform_vec2(program, "u_uv_scale", material->uv_scale.coords);
+        rendering_device->set_uniform_float(program, "u_parallax_scale", material->parallax_scale);
+        rendering_device->set_uniform_bool(program, "u_parallax_flip", material->parallax_flip);
+        rendering_device->set_uniform_int(program, "u_texture_mask", static_cast<int>(material->texture_mask));
+        rendering_device->set_uniform_float(program, "u_normal_scale", material->normal_scale);
+        rendering_device->set_uniform_float(program, "u_ao_strength", material->ao_strength);
+        // 绑定纹理贴图
+        bind_textures(material, program);
+
+        rendering_device->draw_call(item);
+    }
+}
+
+void RenderingServer::render_pass_depth_map(const LightData &light)
+{
+    auto rendering_device = RenderingDevice::get_singleton();
+    // 绑定灯光的深度贴图
+    rendering_device->bind_framebuffer_depth_map(depth_map_framebuffer, light.depth_map);
+    rendering_device->bind_framebuffer(depth_map_framebuffer);
+
+    // 切换到深度贴图shader
+    ShaderData *depth_map_shader = storage.shaders.get_data(buildtin_depth_map_shader_program);
+    rendering_device->bind_shader_program(depth_map_shader->shader_program);
+
+    // 灯光的视角变换
+    real_t light_space_transform[16];
+    light.transform.get_mat4(light_space_transform);
+    rendering_device->set_uniform_mat4(depth_map_shader->shader_program, "u_light_space_matrix", light_space_transform);
+
+    rendering_device->set_viewport(1024, 1024);
+    rendering_device->clear();
+
+    // 渲染场景深度贴图
+    for (const DrawItem &item : draw_items)
+    {
+        real_t model_mat4[16];
+        item.transform.get_mat4(model_mat4);
+        rendering_device->set_uniform_mat4(depth_map_shader->shader_program, "u_model", model_mat4);
+        rendering_device->draw_call(item);
+    }
+    // 切换回默认framebuffer
+    rendering_device->bind_framebuffer(0);
+}
+
+void RenderingServer::render_pass_skybox(SkyboxData *skybox_data, real_t *camera_transform, real_t *projection)
+{
+    auto rendering_device = RenderingDevice::get_singleton();
+    if (skybox_data != nullptr && skybox_data->cube_map_texture != 0)
+    {
+        auto skybox_shader_data = storage.shaders.get_data(builtin_skybox_shader_program);
+        rendering_device->bind_shader_program(skybox_shader_data->shader_program);
+        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_view", camera_transform);
+        rendering_device->set_uniform_mat4(skybox_shader_data->shader_program, "u_projection", projection);
+        // 绑定天空盒纹理
+        rendering_device->bind_cube_map_texture(1, skybox_data->cube_map_texture);
+        rendering_device->set_uniform_int(skybox_shader_data->shader_program, "u_skybox_texture", 1);
+
+        // 绘制天空盒
+        DrawItem draw_skybox{
+            .surface = builtin_skybox_cube_surface,
+            .index_count = builtin_skybox_cube_index_count};
+        rendering_device->draw_call(draw_skybox);
+    }
 }

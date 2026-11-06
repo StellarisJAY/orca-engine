@@ -92,8 +92,10 @@ int main()
 
     Light3D *sun = memnew(Light3D);
     sun->set_color({255,255,255});
+    sun->set_position({200, 200, 200});
     sun->set_direction({-1, -1, -1});
     sun->set_intensity(5.0);
+    sun->set_shadow(true);
     world->add_child(sun);
 
     ControlledCamera *main_camera = memnew(ControlledCamera);

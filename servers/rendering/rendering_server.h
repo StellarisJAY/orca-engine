@@ -24,10 +24,14 @@ private:
     static RenderingServer *singleton;
     RenderingStorage storage;
     std::vector<DrawItem> draw_items;
-
+    /// @brief 默认的PBR材质shader
     RID default_shader_program = 0;
-
+    /// @brief 默认天空盒纹理渲染shader
     RID builtin_skybox_shader_program = 0;
+    /// @brief 默认深度贴图shader
+    RID buildtin_depth_map_shader_program = 0;
+    /// @brief 深度贴图渲染framebuffer
+    uint32_t depth_map_framebuffer = 0;
 
     // 天空盒默认立方体：只含 position 的 device surface，所有天空盒共享。
     uint32_t builtin_skybox_cube_surface = 0;
@@ -242,6 +246,11 @@ private:
     /// @brief 创建天空盒使用的默认立方体（只有 vertices 与 indices）
     /// @return 创建成功返回 true
     bool create_builtin_skybox_cube();
+
+    void create_depth_map_pass();
+    void render_pass_scene(SceneData *scene_data, EnvironmentData *env_data, CameraData *camera_data);
+    void render_pass_depth_map(const LightData &light);
+    void render_pass_skybox(SkyboxData *skybox_data, real_t *camera_transform, real_t *projection);
 };
 
 inline RenderingServer *RenderingServer::singleton;

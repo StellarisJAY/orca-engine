@@ -15,6 +15,24 @@ Transform3D::Transform3D(const Vector3 &axis, real_t angle, const Vector3 &scale
     basis.set_axis_angle_and_scale(axis, angle, scale);
 }
 
+Transform3D Transform3D::look_at(const Vector3 &eye, const Vector3 &direction, const Vector3 &up)
+{
+    Vector3 F = direction.normalized();
+    Vector3 worldUp = up;
+    if (Math::is_equal_approx(up.dot(F), 1.0))
+        worldUp = Vector3::BACKWARD;
+
+    Vector3 R = F.cross(worldUp).normalized();
+    Vector3 U = R.cross(F);
+
+    Transform3D V;
+    V.basis.columns[0] = Vector3(R.x, U.x, -F.x);
+    V.basis.columns[1] = Vector3(R.y, U.y, -F.y);
+    V.basis.columns[2] = Vector3(R.z, U.z, -F.z);
+    V.origin = Vector3(-R.dot(eye), -U.dot(eye), F.dot(eye));
+    return V;
+}
+
 void Transform3D::get_mat4(real_t *out) const
 {
     const Basis &b = basis;

@@ -76,5 +76,13 @@ public:
     uint32_t create_cube_map_texture(const TextureDesc &desc, const void *pixels) override;
     void bind_cube_map_texture(uint32_t unit, uint32_t texture) override;
     void destroy_cube_map_texture(uint32_t texture) override;
+
+    uint32_t create_depth_map(uint32_t width, uint32_t height) override;
+    void destroy_depth_map(uint32_t depth_map) override ;
+    void set_viewport(uint32_t width, uint32_t height) override ;
+    uint32_t create_framebuffer() override;
+    void bind_framebuffer_depth_map(uint32_t framebuffer, uint32_t depth_map) override ;
+    void bind_framebuffer(uint32_t framebuffer) override ;
+    void destroy_framebuffer(uint32_t framebuffer) override ;
 };
 

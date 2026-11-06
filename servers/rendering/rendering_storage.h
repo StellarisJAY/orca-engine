@@ -101,6 +101,7 @@ struct LightData
 {
     Transform3D transform;
     Vector3 direction = Vector3::ZERO;
+    Transform3D light_space_transform;
     Color final_color;
     int type;
     Color base_color;
@@ -108,6 +109,8 @@ struct LightData
     float intensity = 1.0f;
     bool cast_shadow = false;
     bool visible = true;
+
+    uint32_t depth_map = 0;
 };
 
 struct ShaderData
