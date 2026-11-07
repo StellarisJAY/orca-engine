@@ -563,8 +563,17 @@ void RenderingServer::set_light_cast_shadow(RID light, bool shadow)
             if (light_data->depth_map != 0)
                 rendering_deivce->destroy_depth_map(light_data->depth_map);
             // 创建光源绑定的新深度贴图
-            light_data->depth_map = rendering_deivce->create_depth_map(1024, 1024);
+            light_data->depth_map = rendering_deivce->create_depth_map(light_data->shadow_size, light_data->shadow_size);
+            real_t range = light_data->shadow_range;
+            real_t distance = light_data->shadow_distance;
+            light_data->light_space_projection = Projection::create_orthogonal(-range, range, -range, range, distance - range, distance + range);
             // TODO 点光源的cube depth map
+        }
+        else
+        {
+            // 删除可能残留的旧depth_map
+            if (light_data->depth_map != 0)
+                rendering_deivce->destroy_depth_map(light_data->depth_map);
         }
     }
 }
@@ -584,7 +593,7 @@ void RenderingServer::set_light_direction(RID light, const Vector3 &direction)
     if (auto light_data = storage.lights.get_data(light))
     {
         light_data->direction = direction;
-        light_data->light_space_transform = Transform3D::look_at(light_data->transform.origin, direction, Vector3::UP);
+        light_data->light_space_transform = Transform3D::look_at(direction * light_data->shadow_distance * -1, direction, Vector3::UP);
     }
 }
 
@@ -754,7 +763,7 @@ void RenderingServer::draw()
     }
 
     // pass0 depth map ------------------------------------------------------------------------
-    
+
     // 灯光阴影深度贴图
     float light_intensity = 0.0f;
     if (scene_data->lights.size() > 0)
@@ -859,15 +868,20 @@ void RenderingServer::render_pass_scene(SceneData *scene_data, EnvironmentData *
             real_t light_space_mat[16];
             light_data->light_space_transform.get_mat4(light_space_mat);
             rendering_device->set_uniform_mat4(program, "u_light_space_matrix", light_space_mat);
+            rendering_device->set_uniform_mat4(program, "u_light_space_projection", light_data->light_space_projection.data);
             // 光源深度贴图
-            rendering_device->bind_texture_2d(8, light_data->depth_map);
-            rendering_device->set_uniform_int(program, "u_light_depth_map", 8);
+            if (light_data->cast_shadow && light_data->depth_map != 0)
+            {
+                rendering_device->bind_texture_2d(8, light_data->depth_map);
+                rendering_device->set_uniform_int(program, "u_light_depth_map", 8);
+            }
+            rendering_device->set_uniform_bool(program, "u_light_cast_shadow", light_data->cast_shadow);
         }
     }
 
     // 每帧都写，删灯或灯不可见时不能残留上一帧的强度。
     rendering_device->set_uniform_float(program, "u_light_intensity", light_intensity);
-
+    rendering_device->reset_viewport();
     // 渲染实例
     for (const DrawItem &item : draw_items)
     {
@@ -916,9 +930,8 @@ void RenderingServer::render_pass_depth_map(const LightData &light)
     rendering_device->set_uniform_mat4(program, "u_light_space_matrix", light_space_transform);
 
     // TODO 正交参数
-    const auto projection = Projection::create_orthogonal(-200, 200, -200, 200, -200, 200);
-    rendering_device->set_uniform_mat4(program, "u_projection", projection.data);
-    rendering_device->set_viewport(1024, 1024);
+    rendering_device->set_uniform_mat4(program, "u_projection", light.light_space_projection.data);
+    rendering_device->set_viewport(light.shadow_size, light.shadow_size);
     rendering_device->clear();
 
     // 渲染场景深度贴图

@@ -102,6 +102,8 @@ struct LightData
     Transform3D transform;
     Vector3 direction = Vector3::ZERO;
     Transform3D light_space_transform;
+    Projection light_space_projection;
+
     Color final_color;
     int type;
     Color base_color;
@@ -111,6 +113,9 @@ struct LightData
     bool visible = true;
 
     uint32_t depth_map = 0;
+    uint32_t shadow_size = 1024;
+    real_t shadow_range = 20.0f;
+    real_t shadow_distance = 100.0f;
 };
 
 struct ShaderData

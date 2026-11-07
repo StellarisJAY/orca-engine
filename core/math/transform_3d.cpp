@@ -19,8 +19,8 @@ Transform3D Transform3D::look_at(const Vector3 &eye, const Vector3 &direction, c
 {
     Vector3 F = direction.normalized();
     Vector3 worldUp = up;
-    if (Math::is_equal_approx(up.dot(F), 1.0))
-        worldUp = Vector3::BACKWARD;
+    if (Math::abs(worldUp.dot(F)) > 0.999)
+        worldUp = Math::abs(F.x) < 0.9 ? Vector3::RIGHT : Vector3::BACKWARD;
 
     Vector3 R = F.cross(worldUp).normalized();
     Vector3 U = R.cross(F);
