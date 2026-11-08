@@ -92,14 +92,16 @@ int main()
 
     Light3D *sun = memnew(Light3D);
     sun->set_color({255,255,255});
+    sun->set_position({50, 50, 50});
     sun->set_direction({-1, -1, -1});
     sun->set_intensity(5.0);
+    sun->set_shadow(true);
     world->add_child(sun);
 
     ControlledCamera *main_camera = memnew(ControlledCamera);
     world->add_child(main_camera);
     main_camera->set_perspective(60.0, (float)desc.screen_w / (float)desc.screen_h, 0.1, 1000);
-    main_camera->set_position({0, 0, 4});
+    main_camera->set_position({0, 2, 0});
     main_camera->set_main_camera();
 
     auto input_map = InputMap::get_singleton();

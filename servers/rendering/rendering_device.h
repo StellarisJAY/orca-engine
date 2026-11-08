@@ -171,6 +171,25 @@ public:
     virtual uint32_t create_cube_map_texture(const TextureDesc &desc, const void *pixels) = 0;
     virtual void bind_cube_map_texture(uint32_t unit, uint32_t texture) = 0;
     virtual void destroy_cube_map_texture(uint32_t texture) = 0;
+
+    // 深度贴图
+    
+    /// @brief 创建深度贴图
+    /// @param width 宽
+    /// @param height 高
+    /// @return rendering侧深度贴图handle
+    virtual uint32_t create_depth_map(uint32_t width, uint32_t height) = 0;
+    virtual void destroy_depth_map(uint32_t depth_map) = 0;
+
+    virtual void set_viewport(uint32_t width, uint32_t height) = 0;
+    virtual void reset_viewport() = 0;
+
+    // 帧缓冲
+
+    virtual uint32_t create_framebuffer() = 0;
+    virtual void bind_framebuffer_depth_map(uint32_t framebuffer, uint32_t depth_map) = 0;
+    virtual void bind_framebuffer(uint32_t framebuffer) = 0;
+    virtual void destroy_framebuffer(uint32_t framebuffer) = 0;
 };
 
 inline std::shared_ptr<RenderingDevice> RenderingDevice::singleton;

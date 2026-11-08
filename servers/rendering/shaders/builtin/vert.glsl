@@ -11,16 +11,21 @@ out vec3 v_normal;
 out vec3 v_world_position;
 // 切线空间 -> 世界空间，frag 中直接左乘切线空间法线。
 out mat3 v_TBN;
+out vec4 v_frag_light_space_pos;
 
 uniform mat4 u_model;
 uniform mat4 u_view;
 uniform mat4 u_projection;
+
+uniform mat4 u_light_space_matrix;
+uniform mat4 u_light_space_projection;
 
 void main() {
     // mvp 顶点变换
     vec4 surface_world_position = u_model * vec4(a_position, 1.0);
     v_world_position = vec3(surface_world_position);
     gl_Position = u_projection * u_view * surface_world_position;
+    v_frag_light_space_pos = u_light_space_projection * u_light_space_matrix * surface_world_position;
     v_uv = a_uv;
 
     // 法线必须用逆转置矩阵变换；mat3(u_model) 在非均匀缩放下会拉歪法线。

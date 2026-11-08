@@ -59,15 +59,44 @@ uniform vec3 u_light_direction;
 uniform int u_light_type;
 uniform vec3 u_light_color;
 uniform float u_light_intensity;
+uniform bool u_light_cast_shadow;
 
 uniform vec3 u_camera_position;
+
+uniform sampler2D u_light_depth_map;
 
 in vec2 v_uv;
 in vec3 v_normal;
 in vec3 v_world_position;
 in mat3 v_TBN;
+in vec4 v_frag_light_space_pos;
 
 out vec4 fragColor;
+
+float calculate_shadow(float NdotL)
+{
+    if(!u_light_cast_shadow) return 0.0;
+    vec3 pos = v_frag_light_space_pos.xyz / v_frag_light_space_pos.w;
+    // 从[-1,1]转到[0,1]
+    pos = pos * 0.5 + 0.5;
+    float depth = pos.z;
+    float texture_depth = texture(u_light_depth_map, pos.xy).r;
+    float bias = max(0.05 * (1.0 - NdotL), 0.005);
+
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(u_light_depth_map, 0);
+    for(int x = -1; x <= 1; ++x)
+    {
+        for(int y = -1; y <= 1; ++y)
+        {
+            float pcfDepth = texture(u_light_depth_map, pos.xy + vec2(x, y) * texelSize).r; 
+            shadow += depth - bias > pcfDepth ? 1.0 : 0.0;        
+        }    
+    }
+    shadow /= 9.0;
+
+    return shadow;
+}
 
 // 法线分布函数，微表面模型，表面越光滑，法线越接近半程向量，高光越集中
 float GGX(float NdotH, float roughness)
@@ -272,6 +301,8 @@ void main() {
     // 灯光强度由 Light 参数提供，不再写死乘 4。
     vec3 radiance = u_light_color * max(u_light_intensity, 0.0);
     vec3 Lo = (Kd * f_diffuse * ao + f_specular) * radiance * NdotL;
+
+    float shadow = calculate_shadow(NdotL);
     // 线性光照结果编码成 sRGB 后输出画面。
-    fragColor = vec4(linear_to_srgb(Lo + ambient), 1.0);
+    fragColor = vec4(linear_to_srgb(Lo * (1.0 - shadow) + ambient), 1.0);
 }

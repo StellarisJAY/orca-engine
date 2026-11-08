@@ -42,23 +42,23 @@ private:
     std::vector<VkImage> swapchain_images;
     std::vector<VkImageView> swapchain_image_views;
 
-    VkResult create_instance(VkInstanceCreateFlags flags = 0);
+    VkResult create_instance(VkInstanceCreateFlags flags override);
     VkResult create_surface();
     VkResult create_debug_messenger();
     void destroy_debug_messenger();
     VkResult get_physical_devices();
     // 判定一个物理设备是否满足需求
     VkResult get_queue_family_indices(VkPhysicalDevice physicalDevice);
-    VkResult determine_physical_device(uint32_t deviceIndex = 0);
+    VkResult determine_physical_device(uint32_t deviceIndex override);
 
-    VkResult create_device(VkDeviceCreateFlags flags = 0);
+    VkResult create_device(VkDeviceCreateFlags flags override);
 
     VkResult get_surface_formats();
     VkResult set_surface_format(VkSurfaceFormatKHR format);
     VkResult choose_surface_format();
     VkResult get_present_modes();
     VkResult choose_present_mode();
-    VkResult create_swapchain(VkSwapchainCreateFlagsKHR flags = 0, VkSwapchainKHR oldSwapchain = VK_NULL_HANDLE);
+    VkResult create_swapchain(VkSwapchainCreateFlagsKHR flags override, VkSwapchainKHR oldSwapchain = VK_NULL_HANDLE);
     VkResult recreate_swapchain();
     void cleanup_swapchain();
 
@@ -109,4 +109,13 @@ public:
     uint32_t create_cube_map_texture(const TextureDesc &desc, const void *pixels) override { return 0;}
     void bind_cube_map_texture(uint32_t unit, uint32_t texture) override {}
     void destroy_cube_map_texture(uint32_t texture) override {}
+
+    uint32_t create_depth_map(uint32_t width, uint32_t height) override { return 0; }
+    void destroy_depth_map(uint32_t depth_map) override {}
+    void set_viewport(uint32_t width, uint32_t height) override {}
+    void reset_viewport() override {}
+    uint32_t create_framebuffer() override { return 0; }
+    void bind_framebuffer_depth_map(uint32_t framebuffer, uint32_t depth_map) override {}
+    void bind_framebuffer(uint32_t framebuffer) override {}
+    void destroy_framebuffer(uint32_t framebuffer) override {}
 };

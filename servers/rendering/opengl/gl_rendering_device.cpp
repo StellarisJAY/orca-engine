@@ -193,7 +193,6 @@ uint32_t GLRenderingDevice::create_mesh_surface(
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     mesh_surfaces.emplace(vao, GLMeshSurface{vbo, ebo});
-    std::printf("[DEBUG] created mesh surface in OpenGL\n");
     return vao;
 }
 
@@ -507,7 +506,7 @@ uint32_t GLRenderingDevice::create_cube_map_texture(const TextureDesc &desc, con
     for (uint64_t i = 0; i < 6; i++)
     {
         uint64_t offset = i * desc.width * desc.height * desc.channels;
-        void *ptr = reinterpret_cast<void*>(reinterpret_cast<uint64_t>(pixels) + offset);
+        void *ptr = reinterpret_cast<void *>(reinterpret_cast<uint64_t>(pixels) + offset);
         glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, internal_format, desc.width, desc.height, 0, image_format, GL_UNSIGNED_BYTE, ptr);
     }
 
@@ -531,6 +530,67 @@ void GLRenderingDevice::destroy_cube_map_texture(uint32_t texture)
 {
     const GLuint texture_handle = texture;
     glDeleteTextures(1, &texture_handle);
+}
+
+uint32_t GLRenderingDevice::create_depth_map(uint32_t width, uint32_t height)
+{
+    uint32_t depth_map = 0;
+    glGenTextures(1, &depth_map);
+    glBindTexture(GL_TEXTURE_2D, depth_map);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
+                 width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    float borderColor[] = {1.0, 1.0, 1.0, 1.0};
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+    return depth_map;
+}
+
+void GLRenderingDevice::destroy_depth_map(uint32_t depth_map)
+{
+    const GLuint texture_handle = depth_map;
+    glDeleteTextures(1, &depth_map);
+}
+
+void GLRenderingDevice::set_viewport(uint32_t width, uint32_t height)
+{
+    if (width > 0 && height > 0)
+    {
+        glViewport(0, 0, width, height);
+    }
+}
+
+void GLRenderingDevice::reset_viewport()
+{
+    glViewport(0, 0, window_info.width, window_info.height);
+}
+
+uint32_t GLRenderingDevice::create_framebuffer()
+{
+    uint32_t framebuffer = 0;
+    glGenFramebuffers(1, &framebuffer);
+    return framebuffer;
+}
+
+void GLRenderingDevice::bind_framebuffer_depth_map(uint32_t framebuffer, uint32_t depth_map)
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_map, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void GLRenderingDevice::bind_framebuffer(uint32_t framebuffer)
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+}
+
+void GLRenderingDevice::destroy_framebuffer(uint32_t framebuffer)
+{
+    glDeleteFramebuffers(1, &framebuffer);
 }
 
 int64_t GLProgram::get_uniform_location(const std::string &name)
