@@ -4,6 +4,38 @@
 #include <string>
 #include <functional>
 
+// ---------------------- Handles ----------------------------------
+
+struct ShaderHandle
+{
+};
+
+struct RenderPipelineHandle
+{
+};
+
+struct BindGroupLayoutHandle
+{
+};
+
+struct CommandEncoderHandle
+{
+};
+
+struct RenderPassHandle
+{
+};
+
+struct CommandBufferHandle
+{
+};
+
+struct GPUBufferHandle
+{
+};
+
+// ---------------------- End Handles ----------------------------------
+
 // 平台层向图形后端传递的原生窗口/上下文信息
 struct RenderingWindowInfo
 {
@@ -28,14 +60,6 @@ struct ShaderModuleDesc
     std::string name;
     std::string vertex_source;
     std::string fragment_source;
-};
-
-struct ShaderHandle
-{
-};
-
-struct RenderPipelineHandle
-{
 };
 
 /// @brief 渲染目标画面
@@ -79,6 +103,19 @@ struct Primitive
     FrontFace front_face = FrontFace::CCW;      // 默认逆时针为正面
 };
 
+struct BufferLayout
+{
+    struct Attribute
+    {
+        uint32_t shader_location = 0;
+        uint32_t offset = 0;
+        // TODO format enum
+    };
+    
+    uint32_t array_stride = 0;
+    std::vector<Attribute> attributes;
+};
+
 /// @brief 顶点着色阶段
 struct VertexStage
 {
@@ -86,6 +123,8 @@ struct VertexStage
     ShaderHandle module;
     /// @brief 顶点着色器入口函数名
     std::string entry_point;
+    /// @brief 缓冲区layout,渲染通道传递的buffer用该layout解析 
+    std::vector<BufferLayout> buffers;
 };
 
 /// @brief 片段着色阶段
@@ -109,21 +148,33 @@ struct RenderPipelineDesc
     Primitive primitive;
 };
 
-struct BindGroupLayoutHandle
+/// @brief GPU缓冲区用途，暂时只做顶点缓冲、索引缓冲和uniform缓冲
+class GPUBufferUsage
 {
+public:
+    constexpr static uint8_t VERTEX = 1<<0;
+    constexpr static uint8_t INDEX = 1<<1;
+    constexpr static uint8_t UNIFORM = 1<<2;
 };
 
-struct CommandEncoderHandle
+/// @brief 创建GPU缓冲区信息
+struct GPUBufferDesc
 {
+    /// @brief 缓冲区标签名
+    std::string label;
+    /// @brief 缓冲区大小
+    uint64_t size = 0;
+    /// @brief 缓冲区用途
+    uint8_t usage;
 };
 
-struct RenderPassHandle
+struct RenderPassDesc
 {
+    std::string label;
+    std::vector<ColorAttachmentDesc> color_attachments;
+    std::vector<DepthAttachmentDesc> depth_attachments;
 };
 
-struct CommandBufferHandle
-{
-};
 
 /// @brief 现代图形API风格渲染后端接口
 /// @brief 模仿WebGPU的API风格，屏蔽底层API(Vulkan,DirectX,Metal,OpenGL)的差异
@@ -158,6 +209,19 @@ public:
     /// @param handle
     virtual void destroy_shader_module(ShaderHandle handle) = 0;
 
+    // ------------------------- 缓冲 -----------------------------------------
+
+    /// @brief 创建GPU缓冲区
+    /// @param desc 缓冲区描述
+    /// @return handle
+    virtual GPUBufferHandle create_buffer(const GPUBufferDesc &desc) = 0;
+
+    /// @brief 写入GPU缓冲区
+    /// @param handle 缓冲区handle
+    /// @param offset 偏移
+    /// @param data 数据
+    virtual void queue_write_buffer(GPUBufferHandle handle, uint64_t offset, float *data) = 0;
+
     // ------------------------- 绑定组 ------------------------------------
 
     /// @brief 创建绑定组
@@ -184,8 +248,9 @@ public:
     /// @brief 一个渲染流程 = 多个渲染通道的指令录制
     /// @brief eg: 深度贴图pass->PBR pass->后处理pass
     /// @param encoder 编码器handle
+    /// @param desc 渲染通道描述
     /// @return render pass句柄
-    virtual RenderPassHandle encoder_begin_render_pass(CommandEncoderHandle encoder);
+    virtual RenderPassHandle encoder_begin_render_pass(CommandEncoderHandle encoder, const RenderPassDesc &desc);
 
     /// @brief 设置渲染通道的渲染管线
     /// @param pass 通道handle
@@ -194,15 +259,27 @@ public:
 
     virtual void pass_set_bind_group(RenderPassHandle pass);
 
-    virtual void pass_set_vertex_buffer(RenderPassHandle pass);
+    /// @brief 设置槽位的缓冲区
+    /// @param pass 渲染通道handle
+    /// @param slot layout槽位
+    /// @param buffer 缓冲区handle
+    virtual void pass_set_vertex_buffer(RenderPassHandle pass, uint8_t slot, GPUBufferHandle buffer);
 
-    virtual void pass_set_index_buffer(RenderPassHandle pass);
+    /// @brief 设置索引缓冲区
+    /// @param pass 渲染通道handle
+    /// @param buffer 缓冲区handle
+    virtual void pass_set_index_buffer(RenderPassHandle pass, GPUBufferHandle buffer);
 
-    virtual void pass_set_viewport(RenderPassHandle pass);
+    /// @brief 设置viewport
+    /// @param pass 渲染通道handle
+    virtual void pass_set_viewport(RenderPassHandle pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t min_depth, uint32_t max_depth);
+    
+    /// @brief 渲染通道绘制 draw call
+    /// @param pass 渲染通道handle
+    /// @param indices_length 索引数量
+    virtual void pass_draw_indexed(RenderPassHandle pass, uint64_t indices_length);
 
-    virtual void pass_draw_indexed(RenderPassHandle pass);
-
-    /// @brief 渲染通道结束
+    /// @brief 一个渲染通道结束，之后可能结束指令录制也可能开始另一个渲染通道
     /// @param pass 渲染通道handle
     virtual void pass_end(RenderPassHandle pass);
 
