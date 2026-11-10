@@ -1,20 +1,10 @@
 #include "vk_rendering_device.h"
-#include <optional>
-
-struct QueueFamilyIndices
-{
-    std::optional<uint32_t> graphicsFamily;
-
-    bool isComplete() const
-    {
-        return graphicsFamily.has_value();
-    }
-};
+#include <set>
 
 /// @brief 查询物理设备队列族
 /// @param physicalDevice 物理设备
 /// @return 队列族
-QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice &physicalDevice)
+QueueFamilyIndices VkRenderingDevice::findQueueFamilies(const vk::raii::PhysicalDevice &physicalDevice) const
 {
     QueueFamilyIndices indices;
     // std::vector<vk::QueueFamilyProperties>
@@ -27,6 +17,13 @@ QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice &physicalDev
         {
             indices.graphicsFamily = i;
         }
+
+        // 呈现队列族，检查物理设备是否支持该队列族
+        if (physical_device.getSurfaceSupportKHR(i, surface))
+        {
+            indices.presentFamily = i;
+        }
+
         if (indices.isComplete())
             break;
 
@@ -69,6 +66,7 @@ bool VkRenderingDevice::create_surface()
     }
     // 64 位平台上 VkSurfaceKHR 是非分派句柄（指针），这里在同一指针宽度内转换。
     surface = vk::raii::SurfaceKHR(instance, reinterpret_cast<VkSurfaceKHR>(raw_surface));
+    std::printf("[INFO] created window surface\n");
     return true;
 }
 
@@ -104,14 +102,21 @@ bool VkRenderingDevice::select_physical_device()
 
 bool VkRenderingDevice::create_logical_device()
 {
-    // 逻辑设备创建队列
+    // 逻辑设备创建队列族队列
+    std::vector<vk::DeviceQueueCreateInfo> queue_create_infos;
     vk::DeviceQueueCreateInfo queue_create_info;
-    const auto indices = findQueueFamilies(physical_device);
-    // 只创建图形队列族
-    queue_create_info.queueFamilyIndex = indices.graphicsFamily.value();
+    // 图形队列族和呈现队列族
+    const auto [graphics, present] = findQueueFamilies(physical_device);
+    std::set<uint32_t> unique_queue_families = {graphics.value(), present.value()};
 
     constexpr float queue_priority = 1.0f;
-    queue_create_info.setQueuePriorities(queue_priority);
+    for (uint32_t queue_family : unique_queue_families)
+    {
+        vk::DeviceQueueCreateInfo queue_create_info;
+        queue_create_info.queueFamilyIndex = queue_family;
+        queue_create_info.setQueuePriorities(queue_priority);
+        queue_create_infos.emplace_back(queue_create_info);
+    }
 
     // 创建逻辑设备
     vk::DeviceCreateInfo create_info;
@@ -120,7 +125,8 @@ bool VkRenderingDevice::create_logical_device()
     device = physical_device.createDevice(create_info);
 
     // 获取图形队列
-    graphics_queue = device.getQueue(indices.graphicsFamily.value(), 0);
+    graphics_queue = device.getQueue(graphics.value(), 0);
+    present_queue = device.getQueue(present.value(), 0);
     std::printf("[INFO] Created Vulkan Logical Device\n");
     return true;
 }
@@ -130,7 +136,8 @@ bool VkRenderingDevice::init(const RenderingWindowInfo &info)
     window_info = info;
     create_instance();
     create_debug_messenger();
-    if(!create_surface()) return false;
+    if (!create_surface())
+        return false;
     return true;
 }
 

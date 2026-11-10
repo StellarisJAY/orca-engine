@@ -3,6 +3,18 @@
 #include "rendering_device_refactor.h"
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
+#include <optional>
+
+struct QueueFamilyIndices
+{
+    std::optional<uint32_t> graphicsFamily;
+    std::optional<uint32_t> presentFamily;
+
+    bool isComplete() const
+    {
+        return graphicsFamily.has_value() && presentFamily.has_value();
+    }
+};
 
 /// @brief Vulkan 后端（骨架）。
 /// 目前只保留接口签名，具体实现待 Vulkan 路径真正落地时补齐。
@@ -17,12 +29,14 @@ private:
     vk::PhysicalDeviceFeatures device_features;
     vk::raii::Device device { nullptr };
     vk::raii::Queue graphics_queue { nullptr };
+    vk::raii::Queue present_queue { nullptr };
     vk::raii::SurfaceKHR surface { nullptr };
 private:
     void create_instance();
     void create_debug_messenger();
     bool create_surface();
     bool select_physical_device();
+    QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice &physicalDevice) const;
     bool create_logical_device();
     bool is_physical_device_suitable(const vk::raii::PhysicalDevice &device);
 public:
