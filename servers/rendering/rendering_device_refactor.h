@@ -7,7 +7,15 @@
 
 // ---------------------- Handles ----------------------------------
 
-struct ShaderHandle
+struct BaseHandle
+{
+    uint64_t handle = 0;
+    void *data = nullptr;
+    bool is_valid() const { return handle; }
+};
+
+
+struct ShaderHandle: public BaseHandle
 {
 };
 
@@ -31,7 +39,7 @@ struct CommandBufferHandle
 {
 };
 
-struct GPUBufferHandle
+struct GPUBufferHandle: public BaseHandle
 {
 };
 

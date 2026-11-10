@@ -4,6 +4,9 @@
 
 class GLRenderingDeviceRefactor: public RenderingDeviceRefactor
 {
+private:
+    RenderingWindowInfo window_info;
+    void *context = nullptr;
 public:
     GLRenderingDeviceRefactor() = default;
     ~GLRenderingDeviceRefactor() = default;
