@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "rendering_device.h"
 
 // =============================================================================
 // 约定（所有后端必须遵守）
@@ -196,7 +197,7 @@ public:
     constexpr static uint8_t COPY_SRC = 1 << 3;
 };
 
-struct TextureDesc
+struct TextureDescRefactor
 {
     std::string label;
     TextureDimension dim = TextureDimension::Texture2D;
@@ -543,36 +544,6 @@ struct RenderPassDesc
 // 窗口 / 驱动 / Shader
 // =============================================================================
 
-enum class RenderingDriverType
-{
-    Vulkan,
-    OpenGL,
-};
-
-/// @brief 平台层向图形后端传递的原生窗口/上下文信息。
-///
-/// 所有字段都是后端无关的（void* / uint32_t / 回调），具体含义由平台层与后端约定：
-///   Win32: window = HWND, instance = HINSTANCE, context = HGLRC
-///   X11:   window = xid,  display  = Display*
-/// 平台层因此不需要包含任何 Vulkan/OpenGL 头文件。
-struct RenderingWindowInfo
-{
-    void *window = nullptr;   // 原生窗口句柄
-    void *display = nullptr;  // 原生显示/连接
-    void *instance = nullptr; // 原生实例/模块句柄
-    void *context = nullptr;  // 已创建的图形上下文（OpenGL: HGLRC/GLXContext；Vulkan 为空）
-    uint32_t width = 0;
-    uint32_t height = 0;
-
-    // 按名称加载后端入口点。OpenGL 后端依赖它动态加载 GL 函数；Vulkan 后端可忽略。
-    std::function<void *(const char *)> get_proc_address;
-    // 为 Vulkan 创建呈现表面。参数为后端原生 instance（VkInstance），
-    // 输出为 VkSurfaceKHR（以 uint64_t 传输，避免在公共头里暴露 Vulkan 类型）。
-    std::function<bool(void *native_instance, uint64_t &out_surface)> create_vulkan_surface;
-    // 平台声明的 Vulkan 实例扩展名（例如 GLFW 的 glfwGetRequiredInstanceExtensions）。
-    std::vector<const char *> vulkan_instance_extensions;
-};
-
 struct ShaderModuleDesc
 {
     std::string name;
@@ -644,7 +615,7 @@ public:
 
     // ------------------------- 纹理 / sampler --------------------------------
 
-    virtual TextureHandle create_texture(const TextureDesc &desc) = 0;
+    virtual TextureHandle create_texture(const TextureDescRefactor &desc) = 0;
     virtual TextureViewHandle create_texture_view(TextureHandle texture, const TextureViewDesc &desc) = 0;
     virtual SamplerHandle create_sampler(const SamplerDesc &desc) = 0;
     virtual void queue_write_texture(TextureHandle texture, const TextureWriteDesc &desc) = 0;
@@ -711,6 +682,9 @@ public:
 
     /// @brief 结束指令录制，返回可提交的 command buffer
     virtual CommandBufferHandle encoder_finish(CommandEncoderHandle encoder) = 0;
+
+    /// @brief 销毁 command buffer（提交完成后由调用方释放）
+    virtual void destroy_command_buffer(CommandBufferHandle cmd) = 0;
 
     // ------------------------- 设备指令队列 ----------------------------------
 

@@ -155,8 +155,9 @@ cd build
 
 | 目标 | 内容 | 是否注册到 CTest |
 |---|---|---|
-| `orca-tests` | doctest 单元测试：math / object / os / io / resource（OBJ + glTF + 贴图解码 + PackedScene + Mesh 状态 + 天空盒校验）/ scene（含 Node3D 变换） | 是，名称为 `orca-tests` |
+| `orca-tests` | doctest 单元测试：math / object / os / io / resource（OBJ + glTF + 贴图解码 + PackedScene + Mesh 状态 + 天空盒校验）/ scene（含 Node3D 变换）/ servers（天空盒立方体、GL 命令录制、GL 资源对象） | 是，名称为 `orca-tests` |
 | `orca-platform-window-test` | 创建窗口并初始化 OpenGL 设备，手动运行 | 否 |
+| `orca-gl-resources-test` | 用隐藏 GLFW 窗口建 GL 上下文，验证 `RenderingDeviceRefactor` 的资源对象（纹理/视图/采样器/绑定组/管线）在真实驱动上创建、使用、销毁且无 GL 错误；退出码 0 表示通过 | 否 |
 | `orca-application-test` | 演示程序（加载资源、渲染场景），手动运行 | 否 |
 
 > `tests/resource/test_obj_loader.cpp` 已重写并加入 `orca-tests`，覆盖四边形、负索引、缺失/混合法线、空面过滤、UV/兜底切线方向，以及 `ResourceLoader` 的 URL 缓存。修改 OBJ/资源加载时请同步更新这些用例。
@@ -214,6 +215,12 @@ orca-engine/
 │  ├─ skybox_cube.h/.cpp           # 天空盒用的 8 顶点立方体几何（仅位置 + 索引）
 │  ├─ opengl/
 │  │  ├─ gl_rendering_device.h/.cpp# 可用的 OpenGL 实现（VAO/VBO、shader、纹理）
+│  │  ├─ gl_loader.cpp             # glad 实现（GLAD_GL_IMPLEMENTATION）的唯一翻译单元
+│  │  ├─ gl_rendering_device_refactor.h/.cpp # WebGPU 风格新接口的 GL 适配器（初始化/shader/buffer）
+│  │  ├─ gl_internal.h             # 新适配器的内部数据结构：命令、资源对象、格式映射、校验函数
+│  │  ├─ gl_resources.cpp          # M2：纹理/视图/采样器/绑定组布局/绑定组/管线布局/渲染管线
+│  │  ├─ gl_command.cpp            # M1：命令录制（不产生 GL 调用）
+│  │  └─ gl_executor.h/.cpp        # 回放器（M3 起填充）
 │  ├─ vulkan/
 │  │  ├─ vk_rendering_device.h/.cpp# instance/device/swapchain 骨架；绘制接口为空
 │  └─ shaders/
@@ -258,7 +265,7 @@ orca-engine/
 │  └─ CMakeLists.txt
 ├─ tests/
 │  ├─ main.cpp                     # DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
-│  ├─ CMakeLists.txt               # 三个测试可执行目标
+│  ├─ CMakeLists.txt               # 测试可执行目标（orca-tests / window / gl-resources / application）
 │  ├─ core/math/…                  # 数学单元测试
 │  ├─ core/object/…                # RefCounted、RID 测试
 │  ├─ core/os/…                    # Memory、Time 测试
@@ -269,7 +276,11 @@ orca-engine/
 │  ├─ resource/test_scene.cpp      # PackedScene add_node/duplicate/validate
 │  ├─ resource/test_gltf_loader.cpp # glTF/GLB 解析、材质、MR 拆分、节点层级
 │  ├─ scene/test_node3d_transform.cpp # Node3D TRS/负缩放/父子变换
+│  ├─ servers/test_skybox_cube.cpp # 天空盒立方体几何
+│  ├─ servers/test_gl_command_recording.cpp # 新 RHI 的命令录制层（无 GL 上下文）
+│  ├─ servers/test_gl_resources.cpp # 新 RHI 的格式映射/描述校验/绑定组（无 GL 上下文）
 │  ├─ platform/test_window.cpp     # 窗口+设备初始化集成测试
+│  ├─ platform/test_gl_resources_gpu.cpp # 新 RHI 资源对象的真实 GL 集成测试（手动）
 │  └─ application/test_application.cpp # 可交互演示程序
 ├─ docs/
 │  ├─ resource_module_roadmap.md   # 资源模块设计/路线图（部分已完成）
@@ -344,6 +355,7 @@ Application::run()
 | 项目 | 现状 |
 |---|---|
 | Vulkan 后端 | `init/init_device/init_swapchain` 有较完整骨架；`create_mesh_surface`、`draw_call`、shader、纹理接口全部返回 0/空实现，不能渲染 |
+| `RenderingDeviceRefactor`（新 RHI） | WebGPU 风格接口的 GL 适配器分步落地中：M0 基础设施、M1 命令录制、M2 资源对象（纹理/视图/采样器/绑定组/管线）已完成，有单测（`test_gl_command_recording.cpp`、`test_gl_resources.cpp`）与手动 GPU 测试（`orca-gl-resources-test`）；回放 M3、管线状态/VAO M4、绑定组应用 M5 尚未实现，`RenderingServer` 仍走旧 `RenderingDevice` |
 | 资源缓存 | `ResourceLoader::load()` 已接入 `ResourceCache`（弱引用、URL 键、析构自动摘除）；同一 URL 的 Mesh/MTL/纹理返回同一实例。纹理 sRGB 不一致时 MTL 加载器会复制一份，避免共享实例被改写 |
 | `RenderingServer::sync()` | 空实现；资源上传发生在节点进树时 |
 | `RenderingServer::free()` | 只处理 `Camera/Mesh/Instance`；Material/Texture/Scene/Environment/Light 的 GPU 释放未实现 |

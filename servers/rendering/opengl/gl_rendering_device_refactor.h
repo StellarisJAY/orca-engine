@@ -1,6 +1,10 @@
 #pragma once
 
+#include "gl_executor.h"
+#include "gl_internal.h"
 #include "rendering_device_refactor.h"
+
+#include <vector>
 
 class GLRenderingDeviceRefactor : public RenderingDeviceRefactor
 {
@@ -9,6 +13,14 @@ private:
     void *context = nullptr;
     /// @brief 已提交帧数，submit_frame() 返回它的自增结果
     uint64_t frame_index = 0;
+    /// @brief 非 GL 名字对象（encoder / pass / command buffer）的句柄计数器
+    uint64_t next_handle_id = 1;
+    /// @brief 延迟销毁队列（M7）
+    std::vector<GLDestroyOp> pending_destroys;
+    /// @brief 命令回放器
+    GLExecutor executor;
+
+    uint64_t alloc_handle_id() { return next_handle_id++; }
 
 public:
     GLRenderingDeviceRefactor() = default;
@@ -39,7 +51,7 @@ public:
 
     // ------------------------- 纹理 / sampler --------------------------------
 
-    TextureHandle create_texture(const TextureDesc &desc) override;
+    TextureHandle create_texture(const TextureDescRefactor &desc) override;
     TextureViewHandle create_texture_view(TextureHandle texture, const TextureViewDesc &desc) override;
     SamplerHandle create_sampler(const SamplerDesc &desc) override;
     void queue_write_texture(TextureHandle texture, const TextureWriteDesc &desc) override;
@@ -68,16 +80,19 @@ public:
     RenderPassHandle encoder_begin_render_pass(CommandEncoderHandle encoder, const RenderPassDesc &desc) override;
     void pass_set_pipeline(RenderPassHandle pass, RenderPipelineHandle pipeline) override;
     void pass_set_bind_group(RenderPassHandle pass, uint32_t group_index, BindGroupHandle bind_group,
-                             const uint32_t *dynamic_offsets, uint32_t dynamic_offset_count) override;
-    void pass_set_vertex_buffer(RenderPassHandle pass, uint32_t slot, GPUBufferHandle buffer, uint64_t offset) override;
-    void pass_set_index_buffer(RenderPassHandle pass, GPUBufferHandle buffer, uint64_t offset, IndexFormat format) override;
+                             const uint32_t *dynamic_offsets = nullptr, uint32_t dynamic_offset_count = 0) override;
+    void pass_set_vertex_buffer(RenderPassHandle pass, uint32_t slot, GPUBufferHandle buffer, uint64_t offset = 0) override;
+    void pass_set_index_buffer(RenderPassHandle pass, GPUBufferHandle buffer, uint64_t offset = 0,
+                               IndexFormat format = IndexFormat::Uint32) override;
     void pass_set_viewport(RenderPassHandle pass, float x, float y, float width, float height,
-                           float min_depth, float max_depth) override;
-    void pass_draw_indexed(RenderPassHandle pass, uint32_t index_count, uint32_t instance_count,
-                           uint32_t first_index, int32_t base_vertex) override;
-    void pass_draw(RenderPassHandle pass, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex) override;
+                           float min_depth = 0.0f, float max_depth = 1.0f) override;
+    void pass_draw_indexed(RenderPassHandle pass, uint32_t index_count, uint32_t instance_count = 1,
+                           uint32_t first_index = 0, int32_t base_vertex = 0) override;
+    void pass_draw(RenderPassHandle pass, uint32_t vertex_count, uint32_t instance_count = 1,
+                   uint32_t first_vertex = 0) override;
     void pass_end(RenderPassHandle pass) override;
     CommandBufferHandle encoder_finish(CommandEncoderHandle encoder) override;
+    void destroy_command_buffer(CommandBufferHandle cmd) override;
 
     // ------------------------- 设备指令队列 ----------------------------------
 
