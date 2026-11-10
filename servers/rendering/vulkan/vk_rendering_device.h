@@ -1,121 +1,104 @@
 #pragma once
-#include "rendering_device.h"
-#include <vector>
-#include <vulkan/vulkan_core.h>
 
-class VkRenderingDevice : public RenderingDevice
+#include "rendering_device_refactor.h"
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
+
+/// @brief Vulkan 后端（骨架）。
+/// 目前只保留接口签名，具体实现待 Vulkan 路径真正落地时补齐。
+class VkRenderingDevice : public RenderingDeviceRefactor
 {
-    static constexpr VkExtent2D defaultWindowSize = {1280, 720};
-
 private:
     RenderingWindowInfo window_info;
-    uint32_t api_version = VK_API_VERSION_1_0;
-    VkInstance instance = VK_NULL_HANDLE;
-    VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
-    VkSurfaceKHR surface = VK_NULL_HANDLE;
-    std::vector<const char *> layer_names = {};
-    std::vector<const char *> extension_names = {};
-
-    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
-    VkPhysicalDeviceProperties physical_device_properties;
-    VkPhysicalDeviceMemoryProperties physical_device_memory_properties;
-    std::vector<VkPhysicalDevice> available_physical_devices;
-    // 与 available_physical_devices 一一对应，缓存已查询过的队列族索引
-    std::vector<uint32_t> queue_family_cache = {};
-
-    VkDevice device = VK_NULL_HANDLE;
-    uint32_t queueFamilyIndex_graphics = VK_QUEUE_FAMILY_IGNORED;
-    uint32_t queueFamilyIndex_presentation = VK_QUEUE_FAMILY_IGNORED;
-    uint32_t queueFamilyIndex_compute = VK_QUEUE_FAMILY_IGNORED;
-    VkQueue queue_graphics = VK_NULL_HANDLE;
-    VkQueue queue_presentation = VK_NULL_HANDLE;
-    VkQueue queue_compute = VK_NULL_HANDLE;
-
-    std::vector<const char *> device_extensions = {};
-
-    std::vector<VkSurfaceFormatKHR> available_surface_formats = {};
-    VkSurfaceFormatKHR chosen_surface_format = {VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
-    std::vector<VkPresentModeKHR> available_present_modes = {};
-    VkPresentModeKHR chosen_present_mode = VK_PRESENT_MODE_FIFO_KHR;
-    VkExtent2D swapchain_extent = defaultWindowSize;
-    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
-    std::vector<VkImage> swapchain_images;
-    std::vector<VkImageView> swapchain_image_views;
-
-    VkResult create_instance(VkInstanceCreateFlags flags override);
-    VkResult create_surface();
-    VkResult create_debug_messenger();
-    void destroy_debug_messenger();
-    VkResult get_physical_devices();
-    // 判定一个物理设备是否满足需求
-    VkResult get_queue_family_indices(VkPhysicalDevice physicalDevice);
-    VkResult determine_physical_device(uint32_t deviceIndex override);
-
-    VkResult create_device(VkDeviceCreateFlags flags override);
-
-    VkResult get_surface_formats();
-    VkResult set_surface_format(VkSurfaceFormatKHR format);
-    VkResult choose_surface_format();
-    VkResult get_present_modes();
-    VkResult choose_present_mode();
-    VkResult create_swapchain(VkSwapchainCreateFlagsKHR flags override, VkSwapchainKHR oldSwapchain = VK_NULL_HANDLE);
-    VkResult recreate_swapchain();
-    void cleanup_swapchain();
-
-    void add_instance_layer(const char *layer_name);
-    void add_instance_extension(const char *extension_name);
-    void add_device_extension(const char *extension_name);
-
-    VkResult check_instance_layers(std::vector<const char *> &layers_to_check) const;
-    VkResult check_instance_extensions(std::vector<const char *> &extensions_to_check,
-                                       const std::vector<const char *> &layer_names) const;
-
+    uint64_t frame_index = 0;
+    vk::raii::Context context;
+    vk::raii::Instance instance { nullptr };
+    vk::raii::PhysicalDevice physical_device { nullptr };
+    vk::PhysicalDeviceFeatures device_features;
+    vk::raii::Device device { nullptr };
+    vk::raii::Queue graphics_queue { nullptr };
+    vk::raii::SurfaceKHR surface { nullptr };
+private:
+    void create_instance();
+    void create_debug_messenger();
+    bool create_surface();
+    bool select_physical_device();
+    bool create_logical_device();
+    bool is_physical_device_suitable(const vk::raii::PhysicalDevice &device);
 public:
-    RenderingDriverType get_driver_type() const override { return RenderingDriverType::Vulkan; }
+    VkRenderingDevice() = default;
+    ~VkRenderingDevice() override = default;
 
-    bool init(const RenderingWindowInfo &window) override;
+    // ------------------------ 初始化流程 -------------------------------------
+
+    bool init(const RenderingWindowInfo &info) override;
     bool init_device() override;
     bool init_swapchain() override;
+    void resize_swapchain(uint32_t width, uint32_t height) override;
+    Format get_swapchain_format() const override;
+    void get_swapchain_size(uint32_t &width, uint32_t &height) const override;
+    void present() override;
     void shutdown() override;
 
-    void *get_handle() const override { return instance; }
-    void *get_device_handle() const override { return device; }
+    // ------------------------- Shader ---------------------------------------
 
-    // Vulkan 尚未实现
-    uint32_t create_mesh_surface(
-        const std::vector<Vector3> &,
-        const std::vector<Vector3> &,
-        const std::vector<Vector2> &,
-        const std::vector<Vector3> &,
-        const std::vector<Vector3> &,
-        const std::vector<uint32_t> &) override { return 0; }
-    void destroy_mesh_surface(uint32_t) override {}
-    void draw_call(const DrawItem &item) override {}
-    void clear() override {}
+    ShaderHandle create_shader_module(const ShaderModuleDesc &desc) override;
+    void destroy_shader_module(ShaderHandle handle) override;
 
-    uint64_t create_shader_program(const std::string &vertex_src, const std::string &frag_src) override { return 0; }
-    void destroy_shader_program(uint64_t program) override {}
-    void bind_shader_program(uint64_t program) override {}
-    void set_uniform_mat4(uint64_t program, const char *uniform, const real_t *data) override {}
-    void set_uniform_vec4(uint64_t program, const char *uniform, const real_t *data) override {}
-    void set_uniform_float(uint64_t program, const char *uniform, float data) override {}
-    void set_uniform_vec3(uint64_t program, const char *uniform, const real_t *data) override {}
-    void set_uniform_int(uint64_t program, const char *uniform, int data) override {}
-    void set_uniform_vec2(uint64_t program, const char *uniform, const real_t *data) override {}
-    void set_uniform_bool(uint64_t program, const char *uniform, bool data) override {}
-    uint32_t create_texture_2d(const TextureDesc &desc, const void *pixels) override { return 0; }
-    void bind_texture_2d(uint32_t unit, uint32_t texture) {}
-    void destroy_texture_2d(uint32_t texture) {}
-    uint32_t create_cube_map_texture(const TextureDesc &desc, const void *pixels) override { return 0;}
-    void bind_cube_map_texture(uint32_t unit, uint32_t texture) override {}
-    void destroy_cube_map_texture(uint32_t texture) override {}
+    // ------------------------- 缓冲区 ---------------------------------------
 
-    uint32_t create_depth_map(uint32_t width, uint32_t height) override { return 0; }
-    void destroy_depth_map(uint32_t depth_map) override {}
-    void set_viewport(uint32_t width, uint32_t height) override {}
-    void reset_viewport() override {}
-    uint32_t create_framebuffer() override { return 0; }
-    void bind_framebuffer_depth_map(uint32_t framebuffer, uint32_t depth_map) override {}
-    void bind_framebuffer(uint32_t framebuffer) override {}
-    void destroy_framebuffer(uint32_t framebuffer) override {}
+    GPUBufferHandle create_buffer(const GPUBufferDesc &desc) override;
+    void queue_write_buffer(GPUBufferHandle handle, uint64_t offset, const void *data, uint64_t size) override;
+    void destroy_buffer(GPUBufferHandle handle) override;
+
+    // ------------------------- 纹理 / sampler --------------------------------
+
+    TextureHandle create_texture(const TextureDescRefactor &desc) override;
+    TextureViewHandle create_texture_view(TextureHandle texture, const TextureViewDesc &desc) override;
+    SamplerHandle create_sampler(const SamplerDesc &desc) override;
+    void queue_write_texture(TextureHandle texture, const TextureWriteDesc &desc) override;
+    void generate_mip_map(TextureHandle texture) override;
+    void destroy_texture(TextureHandle texture) override;
+    void destroy_texture_view(TextureViewHandle view) override;
+    void destroy_sampler(SamplerHandle sampler) override;
+
+    // ------------------------- 绑定组 / 管线布局 ------------------------------
+
+    BindGroupLayoutHandle create_bind_group_layout(const BindGroupLayoutDesc &desc) override;
+    BindGroupHandle create_bind_group(const BindGroupDesc &desc) override;
+    PipelineLayoutHandle create_pipeline_layout(const PipelineLayoutDesc &desc) override;
+    void destroy_bind_group(BindGroupHandle bind_group) override;
+    void destroy_bind_group_layout(BindGroupLayoutHandle layout) override;
+    void destroy_pipeline_layout(PipelineLayoutHandle layout) override;
+
+    // ------------------------- 渲染管线 -------------------------------------
+
+    RenderPipelineHandle create_render_pipeline(const RenderPipelineDesc &desc) override;
+    void destroy_render_pipeline(RenderPipelineHandle pipeline) override;
+
+    // ------------------------- command & render pass -------------------------
+
+    CommandEncoderHandle create_command_encoder() override;
+    RenderPassHandle encoder_begin_render_pass(CommandEncoderHandle encoder, const RenderPassDesc &desc) override;
+    void pass_set_pipeline(RenderPassHandle pass, RenderPipelineHandle pipeline) override;
+    void pass_set_bind_group(RenderPassHandle pass, uint32_t group_index, BindGroupHandle bind_group,
+                             const uint32_t *dynamic_offsets = nullptr, uint32_t dynamic_offset_count = 0) override;
+    void pass_set_vertex_buffer(RenderPassHandle pass, uint32_t slot, GPUBufferHandle buffer, uint64_t offset = 0) override;
+    void pass_set_index_buffer(RenderPassHandle pass, GPUBufferHandle buffer, uint64_t offset = 0,
+                               IndexFormat format = IndexFormat::Uint32) override;
+    void pass_set_viewport(RenderPassHandle pass, float x, float y, float width, float height,
+                           float min_depth = 0.0f, float max_depth = 1.0f) override;
+    void pass_draw_indexed(RenderPassHandle pass, uint32_t index_count, uint32_t instance_count = 1,
+                           uint32_t first_index = 0, int32_t base_vertex = 0) override;
+    void pass_draw(RenderPassHandle pass, uint32_t vertex_count, uint32_t instance_count = 1,
+                   uint32_t first_vertex = 0) override;
+    void pass_end(RenderPassHandle pass) override;
+    CommandBufferHandle encoder_finish(CommandEncoderHandle encoder) override;
+    void destroy_command_buffer(CommandBufferHandle cmd) override;
+
+    // ------------------------- 设备指令队列 ----------------------------------
+
+    void queue_submit(CommandBufferHandle cmd) override;
+    void queue_wait_idle() override;
+    uint64_t submit_frame() override;
 };

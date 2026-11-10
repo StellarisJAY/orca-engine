@@ -1,6 +1,6 @@
 #include "rendering_device_refactor.h"
 #if defined(ORCA_RENDERER_VULKAN)
-#include "vulkan/vk_rendering_device_refactor.h"
+#include "vulkan/vk_rendering_device.h"
 #endif
 #if defined(ORCA_RENDERER_OPENGL)
 #include "opengl/gl_rendering_device_refactor.h"
@@ -17,7 +17,7 @@ void RenderingDeviceRefactor::create_singleton(RenderingDriverType driver)
     {
     case RenderingDriverType::Vulkan:
 #if defined(ORCA_RENDERER_VULKAN)
-        singleton = std::make_shared<VkRenderingDeviceRefactor>();
+        singleton = std::make_shared<VkRenderingDevice>();
         return;
 #else
         break;
