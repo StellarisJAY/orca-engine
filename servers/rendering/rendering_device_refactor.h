@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <functional>
+#include <memory>
 
 // ---------------------- Handles ----------------------------------
 
@@ -31,6 +32,18 @@ struct CommandBufferHandle
 };
 
 struct GPUBufferHandle
+{
+};
+
+struct TextureHandle
+{
+};
+
+struct TextureViewHandle
+{
+};
+
+struct SamplerHandle
 {
 };
 
@@ -111,7 +124,7 @@ struct BufferLayout
         uint32_t offset = 0;
         // TODO format enum
     };
-    
+
     uint32_t array_stride = 0;
     std::vector<Attribute> attributes;
 };
@@ -123,7 +136,7 @@ struct VertexStage
     ShaderHandle module;
     /// @brief 顶点着色器入口函数名
     std::string entry_point;
-    /// @brief 缓冲区layout,渲染通道传递的buffer用该layout解析 
+    /// @brief 缓冲区layout,渲染通道传递的buffer用该layout解析
     std::vector<BufferLayout> buffers;
 };
 
@@ -152,9 +165,9 @@ struct RenderPipelineDesc
 class GPUBufferUsage
 {
 public:
-    constexpr static uint8_t VERTEX = 1<<0;
-    constexpr static uint8_t INDEX = 1<<1;
-    constexpr static uint8_t UNIFORM = 1<<2;
+    constexpr static uint8_t VERTEX = 1 << 0;
+    constexpr static uint8_t INDEX = 1 << 1;
+    constexpr static uint8_t UNIFORM = 1 << 2;
 };
 
 /// @brief 创建GPU缓冲区信息
@@ -175,6 +188,61 @@ struct RenderPassDesc
     std::vector<DepthAttachmentDesc> depth_attachments;
 };
 
+enum class TextureDimension
+{
+    Texture2D,
+    Cube,
+};
+
+enum class TextureViewDimension
+{
+    Texture2D,
+    Cube,
+};
+
+class TextureUsage
+{
+public:
+    constexpr static uint8_t TEXTURE_BINDING = 1 << 0;
+    constexpr static uint8_t RENDER_ATTACHMENT = 1 << 1;
+};
+
+struct TextureDesc
+{
+    TextureDimension dim;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t mip_levels = 1;
+    uint32_t samples_count = 1;
+    uint8_t texture_usage = TextureUsage::TEXTURE_BINDING;
+};
+
+enum class TextureAspect
+{
+    Color,
+    DepthOnly,
+};
+
+struct TextureViewDesc
+{
+    TextureViewDimension dim;
+    uint32_t base_mip, mip_count, base_layer, layer_count;
+    TextureAspect aspect;
+};
+
+struct SamplerDesc
+{
+};
+
+struct TextureWriteDesc
+{
+};
+
+enum class RenderingDriverType
+{
+    Vulkan,
+    OpenGL,
+};
 
 /// @brief 现代图形API风格渲染后端接口
 /// @brief 模仿WebGPU的API风格，屏蔽底层API(Vulkan,DirectX,Metal,OpenGL)的差异
@@ -187,17 +255,17 @@ public:
     /// @brief 初始化渲染后端
     /// @param info 窗口信息
     /// @return 成功?
-    bool init(const RenderingWindowInfo &info);
+    virtual bool init(const RenderingWindowInfo &info) = 0;
 
     /// @brief 初始化逻辑设备(物理设备集合->唯一逻辑设备)
     /// @return 成功?
-    bool init_device();
+    virtual bool init_device() = 0;
 
     /// @brief 初始化交换链
     /// @return 成功?
-    bool init_swapchain();
+    virtual bool init_swapchain() = 0;
 
-    void shutdown();
+    virtual void shutdown() = 0;
 
     // ------------------------- Shader ---------------------------------------
 
@@ -228,7 +296,20 @@ public:
     /// @return
     virtual BindGroupLayoutHandle create_bind_group_layout() = 0;
 
-    // ------------------------- 渲染目标 ----------------------------------------
+    // ------------------------- 纹理、sampler ----------------------------------------
+
+    /// @brief 创建纹理
+    /// @param desc 纹理描述
+    /// @return 纹理hanle
+    virtual TextureHandle create_texture(const TextureDesc &desc) = 0;
+    /// @brief 创建纹理view
+    /// @param texture 纹理handle
+    /// @param desc 视图描述
+    /// @return 视图handle
+    virtual TextureViewHandle create_texture_view(TextureHandle texture, const TextureViewDesc &desc) = 0;
+    virtual SamplerHandle create_sampler(const SamplerDesc &desc) = 0;
+    virtual void queue_write_texture(TextureHandle texture, const TextureWriteDesc &desc) = 0;
+    virtual void generate_mip_map(TextureHandle texture) = 0;
 
     // ------------------------- 渲染管线 ----------------------------------------
 
@@ -242,7 +323,7 @@ public:
 
     /// @brief 创建指令编码器
     /// @return 句柄
-    virtual CommandEncoderHandle create_command_encoder();
+    virtual CommandEncoderHandle create_command_encoder() = 0;
 
     /// @brief 开启渲染通道指令录制
     /// @brief 一个渲染流程 = 多个渲染通道的指令录制
@@ -250,50 +331,62 @@ public:
     /// @param encoder 编码器handle
     /// @param desc 渲染通道描述
     /// @return render pass句柄
-    virtual RenderPassHandle encoder_begin_render_pass(CommandEncoderHandle encoder, const RenderPassDesc &desc);
+    virtual RenderPassHandle encoder_begin_render_pass(CommandEncoderHandle encoder, const RenderPassDesc &desc) = 0;
 
     /// @brief 设置渲染通道的渲染管线
     /// @param pass 通道handle
     /// @param pipeline 管线handle
-    virtual void pass_set_pipeline(RenderPassHandle pass, RenderPipelineHandle pipeline);
+    virtual void pass_set_pipeline(RenderPassHandle pass, RenderPipelineHandle pipeline) = 0;
 
-    virtual void pass_set_bind_group(RenderPassHandle pass);
+    virtual void pass_set_bind_group(RenderPassHandle pass) = 0;
 
     /// @brief 设置槽位的缓冲区
     /// @param pass 渲染通道handle
     /// @param slot layout槽位
     /// @param buffer 缓冲区handle
-    virtual void pass_set_vertex_buffer(RenderPassHandle pass, uint8_t slot, GPUBufferHandle buffer);
+    virtual void pass_set_vertex_buffer(RenderPassHandle pass, uint8_t slot, GPUBufferHandle buffer) = 0;
 
     /// @brief 设置索引缓冲区
     /// @param pass 渲染通道handle
     /// @param buffer 缓冲区handle
-    virtual void pass_set_index_buffer(RenderPassHandle pass, GPUBufferHandle buffer);
+    virtual void pass_set_index_buffer(RenderPassHandle pass, GPUBufferHandle buffer) = 0;
 
     /// @brief 设置viewport
     /// @param pass 渲染通道handle
-    virtual void pass_set_viewport(RenderPassHandle pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t min_depth, uint32_t max_depth);
-    
+    virtual void pass_set_viewport(RenderPassHandle pass, uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t min_depth, uint32_t max_depth) = 0;
+
     /// @brief 渲染通道绘制 draw call
     /// @param pass 渲染通道handle
     /// @param indices_length 索引数量
-    virtual void pass_draw_indexed(RenderPassHandle pass, uint64_t indices_length);
+    virtual void pass_draw_indexed(RenderPassHandle pass, uint64_t indices_length) = 0;
 
     /// @brief 一个渲染通道结束，之后可能结束指令录制也可能开始另一个渲染通道
     /// @param pass 渲染通道handle
-    virtual void pass_end(RenderPassHandle pass);
+    virtual void pass_end(RenderPassHandle pass) = 0;
 
     /// @brief 结束指令录制拿到编码后的command buffer
     /// @param encoder 指令编码器
     /// @return CommandBuffer句柄
-    virtual CommandBufferHandle encoder_finish(CommandEncoderHandle encoder);
+    virtual CommandBufferHandle encoder_finish(CommandEncoderHandle encoder) = 0;
 
     // ------------------------- 设备指令队列 --------------------------------------------
 
     /// @brief 提交录制的指令buffer
     /// @param cmd CommandBuffer handle
-    virtual void queue_submit(CommandBufferHandle cmd);
-    virtual void queue_wait_idle();
-    virtual uint64_t submit_frame();
-    virtual void defer_destroy();
+    virtual void queue_submit(CommandBufferHandle cmd) = 0;
+    virtual void queue_wait_idle() = 0;
+    virtual uint64_t submit_frame() = 0;
+    virtual void defer_destroy() = 0;
+
+private:
+    static std::shared_ptr<RenderingDeviceRefactor> singleton;
+
+public:
+    static std::shared_ptr<RenderingDeviceRefactor> get_singleton() { return singleton; }
+    static void create_singleton();
+    static void create_singleton(RenderingDriverType driver);
+    static void destroy_singleton();
+    static RenderingDriverType get_default_driver();
 };
+
+inline std::shared_ptr<RenderingDeviceRefactor> RenderingDeviceRefactor::singleton;
