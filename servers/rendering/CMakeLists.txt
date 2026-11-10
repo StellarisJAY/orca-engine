@@ -49,7 +49,12 @@ if(ORCA_RENDERER_VULKAN)
 endif()
 
 if(ORCA_RENDERER_OPENGL)
-    target_sources(orca-rendering PRIVATE opengl/gl_rendering_device.cpp opengl/gl_rendering_device_refactor.cpp)
+    # gl_loader.cpp 是 glad 实现（GLAD_GL_IMPLEMENTATION）的唯一翻译单元，
+    # 其它 OpenGL 源文件只 include 头文件获取声明，避免符号重复定义。
+    target_sources(orca-rendering PRIVATE
+        opengl/gl_loader.cpp
+        opengl/gl_rendering_device.cpp
+        opengl/gl_rendering_device_refactor.cpp)
     target_include_directories(orca-rendering PRIVATE ${PROJECT_SOURCE_DIR}/thirdparty/glad/include)
     # 静态库的 PRIVATE 依赖会以 LINK_ONLY 形式传递给最终可执行文件，因此消费方无需显式链接 GL。
     target_link_libraries(orca-rendering PRIVATE OpenGL::GL)

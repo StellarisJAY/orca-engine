@@ -4,7 +4,8 @@
 #include <cstdio>
 #include <iostream>
 
-#define GLAD_GL_IMPLEMENTATION
+// glad 的实现（GLAD_GL_IMPLEMENTATION）只在 gl_loader.cpp 中定义一次，
+// 这里只取函数声明与 GL 类型。
 #include <glad/gl.h>
 
 namespace
