@@ -16,6 +16,13 @@ struct QueueFamilyIndices
     }
 };
 
+/// @brief 交换链支持情况 
+struct SwapChainSupportDetails {
+    vk::SurfaceCapabilitiesKHR capabilities;
+    std::vector<vk::SurfaceFormatKHR>  formats;
+    std::vector<vk::PresentModeKHR> presentModes;
+};
+
 /// @brief Vulkan 后端（骨架）。
 /// 目前只保留接口签名，具体实现待 Vulkan 路径真正落地时补齐。
 class VkRenderingDevice : public RenderingDeviceRefactor
@@ -25,6 +32,7 @@ private:
     uint64_t frame_index = 0;
     vk::raii::Context context;
     vk::raii::Instance instance { nullptr };
+    vk::raii::DebugUtilsMessengerEXT debug_messenger { nullptr };
     vk::raii::PhysicalDevice physical_device { nullptr };
     vk::PhysicalDeviceFeatures device_features;
     vk::raii::Device device { nullptr };
@@ -39,6 +47,9 @@ private:
     QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice &physicalDevice) const;
     bool create_logical_device();
     bool is_physical_device_suitable(const vk::raii::PhysicalDevice &device);
+    bool check_validation_layer_support() const;
+    SwapChainSupportDetails query_swapchain_support(const vk::raii::PhysicalDevice& physicalDevice) const;
+    vk::Extent2D choose_swap_extent(const vk::SurfaceCapabilitiesKHR &capabilities) const;
 public:
     VkRenderingDevice() = default;
     ~VkRenderingDevice() override = default;
