@@ -546,11 +546,17 @@ struct RenderPassDesc
 // 窗口 / 驱动 / Shader
 // =============================================================================
 
+enum class ShaderType
+{
+    VERTEX,
+    FRAGMENT,
+};
+
 struct ShaderModuleDesc
 {
     std::string name;
-    std::string vertex_source;
-    std::string fragment_source;
+    std::string source;
+    ShaderType type = ShaderType::VERTEX;
 };
 
 // =============================================================================

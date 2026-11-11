@@ -158,9 +158,8 @@ struct GLFormatInfo
 
 struct GLShaderModule
 {
-    uint32_t program = 0;
-    uint32_t vertex_shader = 0;
-    uint32_t fragment_shader = 0;
+    uint32_t shader = 0;
+    ShaderType type;
 };
 
 struct GLBuffer

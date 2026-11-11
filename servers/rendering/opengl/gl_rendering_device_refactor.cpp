@@ -151,45 +151,30 @@ ShaderHandle GLRenderingDeviceRefactor::create_shader_module(const ShaderModuleD
 
     GLuint program = glCreateProgram();
     // 创建、编译顶点着色器
-    if (!desc.vertex_source.empty())
+    if (!desc.source.empty())
     {
-        const GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-        const char *vert_shader_source = desc.vertex_source.c_str();
-        glShaderSource(vertex_shader, 1, &vert_shader_source, nullptr);
-        glCompileShader(vertex_shader);
-        if (!get_shader_compile_status("vertex", vertex_shader))
+        GLenum shader_type;
+        switch(desc.type)
+        {
+        case ShaderType::VERTEX:
+            shader_type = GL_VERTEX_SHADER;
+            break;
+        case ShaderType::FRAGMENT:
+            shader_type = GL_FRAGMENT_SHADER;
+            break;
+        }
+        const GLuint gl_shader = glCreateShader(shader_type);
+        const char *vert_shader_source = desc.source.c_str();
+        glShaderSource(gl_shader, 1, &vert_shader_source, nullptr);
+        glCompileShader(gl_shader);
+        if (!get_shader_compile_status("vertex", gl_shader))
         {
             memdelete(module);
             return shader;
         }
-        module->vertex_shader = vertex_shader;
-        glAttachShader(program, vertex_shader);
+        module->type = desc.type;
+        module->shader = gl_shader;
     }
-    // 创建、编译片段着色器
-    if (!desc.fragment_source.empty())
-    {
-        const GLuint fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-        const char *frag_shader_source = desc.fragment_source.c_str();
-        glShaderSource(fragment_shader, 1, &frag_shader_source, nullptr);
-        glCompileShader(fragment_shader);
-        if (!get_shader_compile_status("fragment", fragment_shader))
-        {
-            memdelete(module);
-            return shader;
-        }
-        module->fragment_shader = fragment_shader;
-        glAttachShader(program, fragment_shader);
-    }
-
-    // 链接着色器程序
-    glLinkProgram(program);
-    if (!get_program_link_status(program))
-    {
-        memdelete(module);
-        return shader;
-    }
-
-    module->program = program;
     shader.handle = program;
     shader.data = module;
     return shader;
@@ -201,12 +186,8 @@ void GLRenderingDeviceRefactor::destroy_shader_module(ShaderHandle handle)
         return;
 
     GLShaderModule *module = static_cast<GLShaderModule *>(handle.data);
-    if (module->program != 0)
-        glDeleteProgram(module->program);
-    if (module->vertex_shader != 0)
-        glDeleteShader(module->vertex_shader);
-    if (module->fragment_shader != 0)
-        glDeleteShader(module->fragment_shader);
+    if (module->shader != 0)
+        glDeleteShader(module->shader);
     memdelete(module);
 }
 

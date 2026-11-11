@@ -1,25 +1,6 @@
 #include "vk_rendering_device.h"
+#include "vk_internal.h"
 #include "os/memory.h"
-
-struct VkShaderModule
-{
-    std::vector<vk::PipelineShaderStageCreateInfo> stages;
-};
-
-struct VkTextureHandleData
-{
-    vk::raii::Image image{nullptr};
-};
-
-struct VkTextureViewHandleData
-{
-    vk::raii::ImageView image_view{nullptr};
-};
-
-struct VkSamplerHandleData
-{
-    vk::raii::Sampler sampler{nullptr};
-};
 
 /// @brief 创建shader
 /// @param desc shader描述及源码
@@ -27,40 +8,21 @@ struct VkSamplerHandleData
 ShaderHandle VkRenderingDevice::create_shader_module(const ShaderModuleDesc &desc)
 {
     ShaderHandle handle;
-    if (desc.vertex_source.empty() || desc.fragment_source.empty())
+    if (desc.source.empty())
     {
         std::printf("[WARN] Vulkan create shader module failed: empty shader source\n");
         return handle;
     }
 
     // 创建shader模块
+    auto shader_module_data = memnew(VkShaderModuleData);
+    vk::ShaderModuleCreateInfo create_info;
 
-    auto shader_module_data = memnew(VkShaderModule);
-    vk::ShaderModuleCreateInfo create_info_vert;
-    vk::ShaderModuleCreateInfo create_info_frag;
-
-    create_info_vert.codeSize = desc.vertex_source.size();
-    create_info_vert.pCode = reinterpret_cast<const uint32_t *>(desc.vertex_source.data());
-
-    create_info_frag.codeSize = desc.fragment_source.size();
-    create_info_frag.pCode = reinterpret_cast<const uint32_t *>(desc.fragment_source.data());
-
-    const vk::raii::ShaderModule vert_module = device.createShaderModule(create_info_vert);
-    const vk::raii::ShaderModule frag_module = device.createShaderModule(create_info_frag);
-
-    // 创建渲染管线stage
-
-    vk::PipelineShaderStageCreateInfo vert_stage_create_info;
-    vert_stage_create_info.stage = vk::ShaderStageFlagBits::eVertex;
-    vert_stage_create_info.module = vert_module;
-    vert_stage_create_info.pName = desc.name.c_str();
-
-    vk::PipelineShaderStageCreateInfo frag_stage_create_info;
-    frag_stage_create_info.stage = vk::ShaderStageFlagBits::eFragment;
-    frag_stage_create_info.module = frag_module;
-    frag_stage_create_info.pName = desc.name.c_str();
-
-    shader_module_data->stages = {vert_stage_create_info, frag_stage_create_info};
+    create_info.codeSize = desc.source.size();
+    create_info.pCode = reinterpret_cast<const uint32_t *>(desc.source.data());
+    shader_module_data->module = device.createShaderModule(create_info);
+    shader_module_data->type = desc.type;
+    
     handle.data = shader_module_data;
     handle.handle = 1;
     return handle;
@@ -99,6 +61,8 @@ vk::Format get_vk_format(Format orca_format)
         return vk::Format::eR16G16B16A16Sfloat;
     case Format::Depth32Float:
         return vk::Format::eD32Sfloat;
+    default:
+        return vk::Format::eR8G8B8A8Srgb;
     }
 }
 
@@ -204,6 +168,8 @@ vk::SamplerAddressMode get_vk_sampler_address_mode(AddressMode orca_mode)
         return vk::SamplerAddressMode::eClampToEdge;
     case AddressMode::MirrorRepeat:
         return vk::SamplerAddressMode::eMirroredRepeat;
+    default:
+        return vk::SamplerAddressMode::eRepeat;
     }
 }
 
@@ -215,6 +181,8 @@ vk::Filter get_vk_filter(FilterMode orca_filter)
         return vk::Filter::eLinear;
     case FilterMode::Nearest:
         return vk::Filter::eNearest;
+    default:
+        return vk::Filter::eLinear;
     }
 }
 
