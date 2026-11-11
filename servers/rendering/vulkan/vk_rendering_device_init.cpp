@@ -348,12 +348,8 @@ vk::Extent2D VkRenderingDevice::choose_swap_extent(const vk::SurfaceCapabilities
     {
         return capabilities.currentExtent;
     }
-    int width, height;
-    // TODO framebuffer size
-    // glfwGetFramebufferSize(m_window, &width, &height);
-    vk::Extent2D actualExtent(
-        static_cast<uint32_t>(width),
-        static_cast<uint32_t>(height));
+    // framebuffer size
+    vk::Extent2D actualExtent(window_info.width, window_info.height);
 
     actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
     actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
@@ -374,13 +370,37 @@ bool VkRenderingDevice::init_swapchain()
         image_count = capabilities.maxImageCount;
     }
 
-    vk::SwapchainCreateInfoKHR createInfo;
-    createInfo.surface = surface;
-    createInfo.minImageCount = image_count;                 // 交换链图像数量
-    createInfo.imageFormat = surface_format.format;         // 图像格式
-    createInfo.imageColorSpace = surface_format.colorSpace; // 图像色彩空间
-    createInfo.imageExtent = extent;                        // 图像分辨率
-    createInfo.imageArrayLayers = 1;
-    createInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
-    return false;
+    vk::SwapchainCreateInfoKHR create_info;
+    create_info.surface = surface;
+    create_info.minImageCount = image_count;                 // 交换链图像数量
+    create_info.imageFormat = surface_format.format;         // 图像格式
+    create_info.imageColorSpace = surface_format.colorSpace; // 图像色彩空间
+    create_info.imageExtent = extent;                        // 图像分辨率
+    create_info.imageArrayLayers = 1;
+    create_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
+    create_info.preTransform = capabilities.currentTransform; // 图像变换，使用设备默认
+    create_info.clipped = true; // 裁剪遮挡像素
+    create_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque; // 暂时忽略透明像素
+    create_info.oldSwapchain = nullptr; // 屏幕大小变化需要切换swapchain，但此时初始化不需要
+    // 设置图像共享模式
+    // 如果物理设备的图形和呈现是两个队列族，需要设置eConcurrent模式
+    const auto [graphics_family, present_family] = findQueueFamilies(physical_device);
+    std::vector<uint32_t> queue_family_indices{graphics_family.value(), present_family.value()};
+    if (graphics_family != present_family)
+    {
+        create_info.imageSharingMode = vk::SharingMode::eConcurrent;
+        create_info.setQueueFamilyIndices(queue_family_indices);
+    }
+    else
+    {
+        create_info.imageSharingMode = vk::SharingMode::eExclusive;
+    }
+    
+    swapchain = device.createSwapchainKHR(create_info);
+
+    swapchain_images = swapchain.getImages();
+    swapchain_image_format = surface_format.format;
+    swapchain_image_extent = extent;
+    std::printf("[INFO] Vulkan created swapchain\n");
+    return true;
 }

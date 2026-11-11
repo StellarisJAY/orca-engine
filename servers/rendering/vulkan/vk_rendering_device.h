@@ -39,6 +39,11 @@ private:
     vk::raii::Queue graphics_queue { nullptr };
     vk::raii::Queue present_queue { nullptr };
     vk::raii::SurfaceKHR surface { nullptr };
+    vk::raii::SwapchainKHR swapchain { nullptr };
+
+    vk::Format swapchain_image_format{};
+    vk::Extent2D swapchain_image_extent{};
+    std::vector<vk::Image> swapchain_images;
 private:
     void create_instance();
     void create_debug_messenger();

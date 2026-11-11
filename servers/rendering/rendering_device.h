@@ -29,8 +29,8 @@ struct RenderingWindowInfo
     void *display = nullptr;  // 原生显示/连接
     void *instance = nullptr; // 原生实例/模块句柄
     void *context = nullptr;  // 已创建的图形上下文（OpenGL: HGLRC/GLXContext；Vulkan 为空）
-    uint32_t width = 0;
-    uint32_t height = 0;
+    uint32_t width = 0;       // framebuffer 宽
+    uint32_t height = 0;      // framebuffer 高
 
     // 按名称加载后端入口点。OpenGL 后端依赖它动态加载 GL 函数；Vulkan 后端可忽略。
     std::function<void *(const char *)> get_proc_address;
@@ -40,7 +40,6 @@ struct RenderingWindowInfo
     // 平台声明的 Vulkan 实例扩展名（例如 GLFW 的 glfwGetRequiredInstanceExtensions）。
     std::vector<const char *> vulkan_instance_extensions;
 };
-
 
 /// @brief 绘制的instance数据
 struct DrawItem
@@ -141,13 +140,13 @@ public:
     /// @brief 绘制instance
     /// @param item  instance数据
     virtual void draw_call(const DrawItem &item) = 0;
-    
+
     virtual void clear() = 0;
     // shader program
     virtual uint64_t create_shader_program(const std::string &vertex_src, const std::string &frag_src) = 0;
     virtual void destroy_shader_program(uint64_t program) = 0;
     virtual void bind_shader_program(uint64_t program) = 0;
-    
+
     virtual void set_uniform_mat4(uint64_t program, const char *uniform, const real_t *data) = 0;
     virtual void set_uniform_vec4(uint64_t program, const char *uniform, const real_t *data) = 0;
     virtual void set_uniform_float(uint64_t program, const char *uniform, float data) = 0;
@@ -163,7 +162,7 @@ public:
     virtual void destroy_texture_2d(uint32_t texture) = 0;
 
     // 立方体纹理
-    
+
     /// @brief 创建立方体贴图，要求必须6张纹理图片，每张图片宽高相同且都为正方形
     /// @param desc 纹理描述，每张图片必须具有相同的描述
     /// @param pixels 6张图片打包的像素数据，按+x,-x,+y,-y,+z,-z顺序打包
@@ -173,7 +172,7 @@ public:
     virtual void destroy_cube_map_texture(uint32_t texture) = 0;
 
     // 深度贴图
-    
+
     /// @brief 创建深度贴图
     /// @param width 宽
     /// @param height 高

@@ -29,17 +29,6 @@ void VkRenderingDevice::shutdown()
 {
 }
 
-ShaderHandle VkRenderingDevice::create_shader_module(const ShaderModuleDesc &desc)
-{
-    (void)desc;
-    return {};
-}
-
-void VkRenderingDevice::destroy_shader_module(ShaderHandle handle)
-{
-    (void)handle;
-}
-
 GPUBufferHandle VkRenderingDevice::create_buffer(const GPUBufferDesc &desc)
 {
     (void)desc;
@@ -59,49 +48,10 @@ void VkRenderingDevice::destroy_buffer(GPUBufferHandle handle)
     (void)handle;
 }
 
-TextureHandle VkRenderingDevice::create_texture(const TextureDescRefactor &desc)
-{
-    (void)desc;
-    return {};
-}
-
-TextureViewHandle VkRenderingDevice::create_texture_view(TextureHandle texture, const TextureViewDesc &desc)
-{
-    (void)texture;
-    (void)desc;
-    return {};
-}
-
-SamplerHandle VkRenderingDevice::create_sampler(const SamplerDesc &desc)
-{
-    (void)desc;
-    return {};
-}
-
 void VkRenderingDevice::queue_write_texture(TextureHandle texture, const TextureWriteDesc &desc)
 {
     (void)texture;
     (void)desc;
-}
-
-void VkRenderingDevice::generate_mip_map(TextureHandle texture)
-{
-    (void)texture;
-}
-
-void VkRenderingDevice::destroy_texture(TextureHandle texture)
-{
-    (void)texture;
-}
-
-void VkRenderingDevice::destroy_texture_view(TextureViewHandle view)
-{
-    (void)view;
-}
-
-void VkRenderingDevice::destroy_sampler(SamplerHandle sampler)
-{
-    (void)sampler;
 }
 
 BindGroupLayoutHandle VkRenderingDevice::create_bind_group_layout(const BindGroupLayoutDesc &desc)
@@ -135,17 +85,6 @@ void VkRenderingDevice::destroy_bind_group_layout(BindGroupLayoutHandle layout)
 void VkRenderingDevice::destroy_pipeline_layout(PipelineLayoutHandle layout)
 {
     (void)layout;
-}
-
-RenderPipelineHandle VkRenderingDevice::create_render_pipeline(const RenderPipelineDesc &desc)
-{
-    (void)desc;
-    return {};
-}
-
-void VkRenderingDevice::destroy_render_pipeline(RenderPipelineHandle pipeline)
-{
-    (void)pipeline;
 }
 
 CommandEncoderHandle VkRenderingDevice::create_command_encoder()

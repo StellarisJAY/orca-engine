@@ -171,6 +171,7 @@ struct GPUBufferDesc
 
 enum class TextureDimension
 {
+    Texture1D,
     Texture2D,
     Cube,
 };
@@ -191,10 +192,11 @@ enum class TextureAspect
 class TextureUsage
 {
 public:
-    constexpr static uint8_t TEXTURE_BINDING = 1 << 0;
-    constexpr static uint8_t RENDER_ATTACHMENT = 1 << 1;
+    constexpr static uint8_t TEXTURE_BINDING = 1 << 0; // 纹理绑定
+    constexpr static uint8_t RENDER_ATTACHMENT = 1 << 1; // 渲染framebuffer
     constexpr static uint8_t COPY_DST = 1 << 2;
     constexpr static uint8_t COPY_SRC = 1 << 3;
+    constexpr static uint8_t STORAGE = 1 << 4; // shader写入
 };
 
 struct TextureDescRefactor

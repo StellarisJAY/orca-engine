@@ -45,7 +45,10 @@ if(ORCA_RENDERER_VULKAN)
     # Vulkan 仅作为实现细节，头文件不对外暴露，使用 PRIVATE 链接。
     target_sources(orca-rendering PRIVATE 
         vulkan/vk_rendering_device.cpp 
-        vulkan/vk_rendering_device_init.cpp)
+        vulkan/vk_rendering_device_init.cpp
+        vulkan/vk_resource.cpp
+        vulkan/vk_pipeline.cpp
+    )
     target_link_libraries(orca-rendering PRIVATE Vulkan::Vulkan)
     target_compile_definitions(orca-rendering PUBLIC ORCA_RENDERER_VULKAN)
 endif()

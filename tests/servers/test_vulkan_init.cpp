@@ -33,6 +33,11 @@ int main()
         window->shutdown();
         return 0;
     }
+    if(!device->init_swapchain())
+    {
+        window->shutdown();
+        return 0;
+    }
 
     while (!window->get_should_close())
     {
