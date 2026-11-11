@@ -26,4 +26,5 @@ struct VkSamplerHandleData
 struct VkGraphicsPipelineHandleData
 {
     vk::raii::Pipeline pipeline { nullptr };
+    vk::raii::PipelineLayout pipeline_layout { nullptr };
 };

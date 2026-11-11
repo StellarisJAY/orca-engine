@@ -376,6 +376,7 @@ bool VkRenderingDevice::init_swapchain()
     create_info.imageFormat = surface_format.format;         // 图像格式
     create_info.imageColorSpace = surface_format.colorSpace; // 图像色彩空间
     create_info.imageExtent = extent;                        // 图像分辨率
+    create_info.presentMode = present_mode;                  // 呈现模式
     create_info.imageArrayLayers = 1;
     create_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
     create_info.preTransform = capabilities.currentTransform; // 图像变换，使用设备默认
