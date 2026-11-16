@@ -3,39 +3,6 @@
 
 #include <cstdio>
 
-// 生命周期查询、呈现、缓冲区/绑定组桩实现。
-// Vulkan instance/device/swapchain 的初始化在 vk_rendering_device_init.cpp；
-// 资源创建在 vk_resource.cpp；管线在 vk_pipeline.cpp；命令录制在 vk_command.cpp。
-
-void VkRenderingDevice::resize_swapchain(uint32_t width, uint32_t height)
-{
-    window_info.width = width;
-    window_info.height = height;
-}
-
-Format VkRenderingDevice::get_swapchain_format() const
-{
-    Format format = Format::Undefined;
-    if (!vk_format_from_vulkan(swapchain_image_format, format))
-    {
-        std::printf("[WARN] Vulkan swapchain format is not representable by interface Format\n");
-        return Format::Undefined;
-    }
-    return format;
-}
-
-void VkRenderingDevice::get_swapchain_size(uint32_t &width, uint32_t &height) const
-{
-    if (swapchain_image_extent.width != 0 && swapchain_image_extent.height != 0)
-    {
-        width = swapchain_image_extent.width;
-        height = swapchain_image_extent.height;
-        return;
-    }
-    width = window_info.width;
-    height = window_info.height;
-}
-
 void VkRenderingDevice::present()
 {
     // TODO(V3)：acquire/present 与 semaphore 链。

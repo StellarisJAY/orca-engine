@@ -51,6 +51,7 @@ if(ORCA_RENDERER_VULKAN)
         vulkan/vk_format.cpp
         vulkan/vk_pipeline.cpp
         vulkan/vk_command.cpp
+        vulkan/vk_swapchain.cpp
     )
     target_link_libraries(orca-rendering PRIVATE Vulkan::Vulkan)
     target_compile_definitions(orca-rendering PUBLIC ORCA_RENDERER_VULKAN)
