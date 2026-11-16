@@ -37,7 +37,7 @@
 | 构建系统 | CMake >= 3.16 | 当前构建目录使用 `MinGW Makefiles` 生成器 |
 | 编译器（现有环境） | MinGW-w64 g++ | `build/CMakeCache.txt` 中为 `E:/tools/mingw64/bin/g++.exe` |
 | 图形 API | OpenGL 3.3 Core（默认、可用） | 通过 `thirdparty/glad` 加载现代入口点；GLSL `#version 330 core` |
-| 图形 API（可选） | Vulkan | 只完成了 instance / 物理设备 / 逻辑设备 / surface / swapchain 骨架，绘制与资源接口仍是空实现 |
+| 图形 API（可选） | Vulkan | V0/V1 已完成：构建、唯一句柄、异常处理、`Format ↔ vk::Format` 映射与 GL/VK 共用描述校验；instance/device/swapchain 初始化可跑通。资源显存、绑定组、完整管线、draw/submit/present 仍未实现 |
 | 窗口/输入 | GLFW（默认）或 SDL3 | 二选一，预编译库只提供 Windows/MinGW-w64 版本 |
 | 图像解码 | `stb_image`（单头文件） | 由 `ImageTextureLoader` 使用 |
 | glTF 解析 | `cgltf`（单头文件） | `.gltf/.glb` 的 JSON/GLB、bufferView/accessor；`#define CGLTF_IMPLEMENTATION` 在 `gltf_loader.cpp` 中定义 |
@@ -110,7 +110,7 @@ ORCA_RENDERER_DEFAULT = opengl
 ```powershell
 # SDL3 窗口后端（需要同时关闭 GLFW）
 cmake -S . -B build -DORCA_PLATFORM_GLFW=OFF -DORCA_PLATFORM_SDL3=ON
-# Vulkan 后端（当前只能验证窗口/设备初始化，不能正常绘制）
+# Vulkan 后端（V0/V1 可构建、可初始化；尚不能绘制，详见 docs/vulkan_rhi_checklist.md）
 cmake -S . -B build -DORCA_RENDERER_OPENGL=OFF -DORCA_RENDERER_VULKAN=ON -DORCA_RENDERER_DEFAULT=vulkan
 ```
 
@@ -155,14 +155,16 @@ cd build
 
 | 目标 | 内容 | 是否注册到 CTest |
 |---|---|---|
-| `orca-tests` | doctest 单元测试：math / object / os / io / resource（OBJ + glTF + 贴图解码 + PackedScene + Mesh 状态 + 天空盒校验）/ scene（含 Node3D 变换）/ servers（天空盒立方体、GL 命令录制、GL 资源对象） | 是，名称为 `orca-tests` |
+| `orca-tests` | doctest 单元测试：math / object / os / io / resource（OBJ + glTF + 贴图解码 + PackedScene + Mesh 状态 + 天空盒校验）/ scene（含 Node3D 变换）/ servers（天空盒立方体、RHI 描述校验；Vulkan 构建时另含 Format/Usage 映射） | 是，名称为 `orca-tests` |
 | `orca-platform-window-test` | 创建窗口并初始化 OpenGL 设备，手动运行 | 否 |
-| `orca-gl-resources-test` | 用隐藏 GLFW 窗口建 GL 上下文，验证 `RenderingDeviceRefactor` 的资源对象（纹理/视图/采样器/绑定组/管线）在真实驱动上创建、使用、销毁且无 GL 错误；退出码 0 表示通过 | 否 |
+| `orca-vulkan-init-test` | Vulkan `init → init_device → init_swapchain` 冒烟；设置 `ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT=1` 可只初始化后退出 | 否 |
 | `orca-application-test` | 演示程序（加载资源、渲染场景），手动运行 | 否 |
+| `orca-app-test-sponza` | Sponza glTF 场景演示 | 否 |
 
 > `tests/resource/test_obj_loader.cpp` 已重写并加入 `orca-tests`，覆盖四边形、负索引、缺失/混合法线、空面过滤、UV/兜底切线方向，以及 `ResourceLoader` 的 URL 缓存。修改 OBJ/资源加载时请同步更新这些用例。
 > 另有 `tests/core/io/test_file_access_and_path.cpp`（二进制读取、`decode_uri`）、`tests/resource/test_image_texture_loader.cpp`（内存解码 PNG、sampler setter）、`tests/resource/test_mesh.cpp`（RID dirty 状态）、`tests/resource/test_scene.cpp`（`PackedScene` 的 `add_node/add_root/duplicate/validate`）、`tests/resource/test_gltf_loader.cpp`（.gltf/.glb、节点层级、多 primitive、外部 bin、内嵌/data URI 图片、材质与 MR 拆分）、`tests/resource/test_skybox.cpp`（六面齐全/尺寸/通道/正方形/像素长度校验、GL 面顺序、逐面行序翻转）、`tests/scene/test_node3d_transform.cpp`（`set_transform`/负缩放/父子变换），修改对应实现时同步维护。
 > `test_gltf_loader.cpp` 在测试运行时自行生成 glTF/GLB 与 PNG 字节（base64、PNG、GLB 构造都在用例内），不依赖 `build/resources/` 中的样例资源。
+> 新增 `tests/servers/test_rhi_validation.cpp`（GL/Vulkan 共用的纹理/视图/采样器/管线描述校验）与 `tests/servers/test_vk_format.cpp`（仅 Vulkan 构建：Format↔vk::Format 双向映射、ImageUsage 位映射）。修改 `rhi_validation.*` 或 `vk_format.*` 时同步维护。
 
 ### 3.5 测试编写规范
 
@@ -211,6 +213,7 @@ orca-engine/
 │  ├─ rendering_device.h/.cpp      # 后端抽象接口 + 工厂（按编译宏选 GL/VK）
 │  ├─ rendering_server.h/.cpp      # 高层 API：scene/camera/light/mesh/material/texture
 │  ├─ rendering_storage.h/.cpp     # 各资源的 CPU 端描述 + RIDStorage 实例
+│  ├─ rhi_validation.h/.cpp        # 后端无关的 RHI 描述校验（GL/Vulkan 共用）
 │  ├─ shader_loader.h/.cpp         # 从 res://shaders 或源码目录读取 GLSL
 │  ├─ skybox_cube.h/.cpp           # 天空盒用的 8 顶点立方体几何（仅位置 + 索引）
 │  ├─ opengl/
@@ -222,7 +225,13 @@ orca-engine/
 │  │  ├─ gl_command.cpp            # M1：命令录制（不产生 GL 调用）
 │  │  └─ gl_executor.h/.cpp        # 回放器（M3 起填充）
 │  ├─ vulkan/
-│  │  ├─ vk_rendering_device.h/.cpp# instance/device/swapchain 骨架；绘制接口为空
+│  │  ├─ vk_rendering_device.h/.cpp# Vulkan 私有对象、生命周期/队列桩（V0/V1 已修构建与句柄）
+│  │  ├─ vk_rendering_device_init.cpp # instance/surface/物理设备/逻辑设备/swapchain
+│  │  ├─ vk_internal.h             # Vulkan 资源对象数据结构（buffer/bind group 仍缺）
+│  │  ├─ vk_format.h/.cpp          # Format ↔ vk::Format 双向映射 + ImageUsage 映射
+│  │  ├─ vk_resource.cpp           # shader/image/view/sampler 创建与销毁
+│  │  ├─ vk_pipeline.cpp           # graphics pipeline（V5 待补全）
+│  │  └─ vk_command.cpp            # 命令池/录制/render pass/draw（V6 待补全）
 │  └─ shaders/
 │     ├─ builtin/vert.glsl         # 内置顶点着色器
 │     ├─ builtin/frag.glsl         # GGX/Smith/Schlick、法线贴图、视差贴图
@@ -265,7 +274,7 @@ orca-engine/
 │  └─ CMakeLists.txt
 ├─ tests/
 │  ├─ main.cpp                     # DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
-│  ├─ CMakeLists.txt               # 测试可执行目标（orca-tests / window / gl-resources / application）
+│  ├─ CMakeLists.txt               # 测试可执行目标（orca-tests / window / vulkan-init / application）
 │  ├─ core/math/…                  # 数学单元测试
 │  ├─ core/object/…                # RefCounted、RID 测试
 │  ├─ core/os/…                    # Memory、Time 测试
@@ -277,14 +286,17 @@ orca-engine/
 │  ├─ resource/test_gltf_loader.cpp # glTF/GLB 解析、材质、MR 拆分、节点层级
 │  ├─ scene/test_node3d_transform.cpp # Node3D TRS/负缩放/父子变换
 │  ├─ servers/test_skybox_cube.cpp # 天空盒立方体几何
-│  ├─ servers/test_gl_command_recording.cpp # 新 RHI 的命令录制层（无 GL 上下文）
-│  ├─ servers/test_gl_resources.cpp # 新 RHI 的格式映射/描述校验/绑定组（无 GL 上下文）
+│  ├─ servers/test_rhi_validation.cpp # 后端无关的 RHI 描述校验（无窗口/GPU）
+│  ├─ servers/test_vk_format.cpp   # Vulkan Format/Usage 映射纯逻辑（仅 Vulkan 构建）
+│  ├─ servers/test_vulkan_init.cpp # Vulkan instance/device/swapchain 初始化冒烟（手动）
 │  ├─ platform/test_window.cpp     # 窗口+设备初始化集成测试
-│  ├─ platform/test_gl_resources_gpu.cpp # 新 RHI 资源对象的真实 GL 集成测试（手动）
-│  └─ application/test_application.cpp # 可交互演示程序
+│  ├─ application/test_application.cpp # 可交互演示程序
+│  └─ application/test_scene_sponza.cpp # Sponza glTF 场景演示
 ├─ docs/
 │  ├─ resource_module_roadmap.md   # 资源模块设计/路线图（部分已完成）
-│  └─ material_texture_plan.md     # 材质纹理方案（部分已完成）
+│  ├─ material_texture_plan.md     # 材质纹理方案（部分已完成）
+│  ├─ vulkan_rhi_checklist.md      # Vulkan 适配层审计清单 + V0/V1 实施进度
+│  └─ rhi_*.md                     # RHI/GL 适配方案与里程碑
 └─ build/                          # CMake 生成目录，已忽略；运行资源也在这里
 ```
 
@@ -299,6 +311,7 @@ orca-engine/
 | 材质参数/纹理槽 | `resource/material/material.h`、`servers/rendering/rendering_storage.h` |
 | 场景对象上传到渲染端 | `scene/3d/mesh_instance_3d.cpp`、`scene/3d/light_3d.h`、`scene/3d/world_3d.h` |
 | 渲染 API 与绘制流程 | `servers/rendering/rendering_server.cpp` |
+| Vulkan 后端 / 新 RHI 校验 | `servers/rendering/vulkan/*`、`servers/rendering/rhi_validation.*` |
 | OpenGL 具体实现 | `servers/rendering/opengl/gl_rendering_device.cpp` |
 | 着色算法 | `servers/rendering/shaders/builtin/{vert,frag}.glsl` |
 | 天空盒 | `resource/environment/skybox.cpp`、`scene/3d/world_3d.cpp`、`servers/rendering/shaders/builtin-skybox/` |
@@ -354,8 +367,8 @@ Application::run()
 
 | 项目 | 现状 |
 |---|---|
-| Vulkan 后端 | `init/init_device/init_swapchain` 有较完整骨架；`create_mesh_surface`、`draw_call`、shader、纹理接口全部返回 0/空实现，不能渲染 |
-| `RenderingDeviceRefactor`（新 RHI） | WebGPU 风格接口的 GL 适配器分步落地中：M0 基础设施、M1 命令录制、M2 资源对象（纹理/视图/采样器/绑定组/管线）已完成，有单测（`test_gl_command_recording.cpp`、`test_gl_resources.cpp`）与手动 GPU 测试（`orca-gl-resources-test`）；回放 M3、管线状态/VAO M4、绑定组应用 M5 尚未实现，`RenderingServer` 仍走旧 `RenderingDevice` |
+| Vulkan 后端 | V0/V1 已完成：`vk_command.cpp` 进入构建、唯一句柄、异常处理、Format↔vk::Format 与 ImageUsage 映射、GL/VK 共用描述校验；`init/init_device/init_swapchain` 可跑通（实测交换链 800x600、BGRA8UnormSrgb、validation 无 error）。buffer/bind group/pipeline layout、纹理显存/上传、draw、submit、present 仍未实现，不能渲染 |
+| `RenderingDeviceRefactor`（新 RHI） | GL 适配器：M0/M1 与资源对象（纹理/视图/采样器/绑定组/布局）已实现；`create_render_pipeline` 仍是空桩，`gl_executor` 回放仍为空，`RenderingServer` 仍走旧 `RenderingDevice`。Vulkan 适配器：V0/V1 完成构建与格式/校验，资源对象创建可走到 driver 边界，但显存/绑定/管线/命令提交未完成。GL/VK 共用 `rhi_validation.*` |
 | 资源缓存 | `ResourceLoader::load()` 已接入 `ResourceCache`（弱引用、URL 键、析构自动摘除）；同一 URL 的 Mesh/MTL/纹理返回同一实例。纹理 sRGB 不一致时 MTL 加载器会复制一份，避免共享实例被改写 |
 | `RenderingServer::sync()` | 空实现；资源上传发生在节点进树时 |
 | `RenderingServer::free()` | 只处理 `Camera/Mesh/Instance`；Material/Texture/Scene/Environment/Light 的 GPU 释放未实现 |
@@ -365,7 +378,7 @@ Application::run()
 | 天空盒 | 只有 cubemap 天空盒（无 HDR/等距柱状图、无 IBL/环境反射）；六面必须齐全、正方形、同尺寸同通道，否则 `World3D::ensure_skybox` 打印错误并整块跳过；天空盒不参与光照 |
 | 纹理 | `ImageTextureLoader` 直接使用 stb 解码后的通道数；`srgb` 默认 false，由材质/MTL 加载器按槽位覆盖，直接 `load()` 得到的纹理需要调用方自己标记 sRGB |
 | glTF / 场景资源 | `PackedScene` 与 `GLTFLoader` 已完成解析与材质/贴图；**尚未实现** `instantiate_scene()`（阶段 3），加载结果还不能直接变成 `Node3D` 树。不支持动画/skin/morph/透明/emissive 贴图/多 UV；`KHR_texture_transform` 的贴图会被跳过；多 scene 只加载默认 scene；glTF 图片直接解码，不复用 `ResourceLoader` 的纹理缓存 |
-| 测试 | `orca-tests` 已包含 OBJ/glTF loader、PackedScene、贴图内存解码、Mesh RID 状态、二进制 IO、Node3D 变换、天空盒校验与拼装用例；无 CI、无格式化/静态检查配置 |
+| 测试 | `orca-tests` 已包含 OBJ/glTF loader、PackedScene、贴图内存解码、Mesh RID 状态、二进制 IO、Node3D 变换、天空盒校验与拼装、RHI 描述校验用例；Vulkan 构建另含 Format/Usage 映射用例；无 CI、无格式化/静态检查配置 |
 | 场景功能 | `SceneTree::find_node()` 返回 nullptr；`SceneTree::destroy()` 为空；`Viewport::find_world_3d()` 返回 nullptr；`SceneTree` 不支持切换场景的完整清理 |
 | 序列化/编辑器 | 完全没有 |
 
@@ -391,6 +404,8 @@ Application::run()
 18. **`PackedScene::duplicate()` 是“节点数组深拷贝 + Mesh/Material/Texture 按 `Ref` 共享”。** 修改副本的节点列表不会影响原场景，但两者指向同一批 CPU 网格数据；需要独立网格时要显式复制 `Mesh`。
 19. **cubemap 面的行序与 2D 纹理相反，拼接时必须翻回来。** `ImageTextureLoader` 对所有图片做垂直翻转（2D 约定：行 0 是图片底部），而 GL 的 cubemap 面以左上角为原点（行 0 是面顶部）。`CubeMapSkybox::build_cubemap_pixels()` 负责逐面恢复行序，`World3D::ensure_skybox()` 只调用它；不要在 shader 里用 `v_uv.y = -v_uv.y` 糊（会把 +Y/-Y 面互换）。同时 `validate_faces()` 会校验六面齐全、正方形、尺寸/通道/像素长度一致，失败时整块天空盒跳过并打印错误。
 20. **颜色空间是端到端契约，新增 shader 必须自己编码输出。** 现状：sRGB 贴图由 `GL_SRGB8*` 解码、`u_albedo/u_ambient_color/u_light_color` 上传前已用 `Color::linear()` 转线性，所以 shader 里的光照全在线性空间；默认帧缓冲**不是** sRGB 格式，fragment shader 最后必须调用 `linear_to_srgb()`（`builtin/frag.glsl`、`builtin-skybox/frag.glsl` 各自有一份）再写输出，漏掉就会整幅偏暗。不要改成打开 `GL_FRAMEBUFFER_SRGB`（当前窗口帧缓冲不带 sRGB 属性，开在别处会双重编码）；`glClearColor` 的数值不经过 shader，按显示值给即可。
+21. **Vulkan 交换链实际格式可能是 BGRA8UnormSrgb（`Format::BGRA8UnormSrgb`）。** `get_swapchain_format()` 返回实际格式，不再硬编码；新增格式必须同步：`Format` 枚举、`vulkan/vk_format.h` 双向映射、`gl_resources.cpp` 的 `gl_format_info`。另外 Vulkan 使用 sRGB 交换链时硬件会做 sRGB 编码，shader 不应再手工 `linear_to_srgb()`（与 GL 的非 sRGB 默认帧缓冲约定相反）；该颜色空间策略（G-03）在接入绘制前必须统一。
+22. **RHI 描述校验统一在 `servers/rendering/rhi_validation.*`。** 新增资源类型或格式约束时，先改共享校验，再让 GL 的 `gl_validate_*` 与 Vulkan 的 `create_*` 都走同一条路径；不要在某个后端里单独加一套分叉规则。
 
 ---
 

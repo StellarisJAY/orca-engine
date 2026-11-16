@@ -1,5 +1,6 @@
 #include "gl_internal.h"
 #include "gl_rendering_device_refactor.h"
+#include "rhi_validation.h"
 #include "os/memory.h"
 
 #include <glad/gl.h>
@@ -28,19 +29,6 @@ namespace
     {
         error = message;
         return false;
-    }
-
-    /// @brief 尺寸允许的最大 mip 层数（含第 0 层）。
-    uint32_t max_mip_levels(uint32_t width, uint32_t height)
-    {
-        uint32_t size = width > height ? width : height;
-        uint32_t levels = 1;
-        while (size > 1)
-        {
-            size >>= 1;
-            ++levels;
-        }
-        return levels;
     }
 
     GLenum address_mode(AddressMode mode)
@@ -77,20 +65,6 @@ namespace
     GLenum cube_face_target(uint32_t layer)
     {
         return static_cast<GLenum>(GL_TEXTURE_CUBE_MAP_POSITIVE_X + layer);
-    }
-
-    uint32_t vertex_format_size(VertexFormat format)
-    {
-        switch (format)
-        {
-        case VertexFormat::Float32: return 4;
-        case VertexFormat::Float32x2: return 8;
-        case VertexFormat::Float32x3: return 12;
-        case VertexFormat::Float32x4: return 16;
-        case VertexFormat::Uint32: return 4;
-        case VertexFormat::Uint8x4Normalized: return 4;
-        }
-        return 0;
     }
 
     /// @brief 校验一个布局项里的名字与类型约束。
@@ -235,6 +209,12 @@ bool gl_format_info(Format format, GLFormatInfo &out)
     case Format::RGBA8UnormSrgb:
         info = GLFormatInfo{GL_SRGB8_ALPHA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, false};
         break;
+    case Format::BGRA8Unorm:
+        info = GLFormatInfo{GL_RGBA8, GL_BGRA, GL_UNSIGNED_BYTE, 4, false};
+        break;
+    case Format::BGRA8UnormSrgb:
+        info = GLFormatInfo{GL_SRGB8_ALPHA8, GL_BGRA, GL_UNSIGNED_BYTE, 4, false};
+        break;
     case Format::R16Float:
         info = GLFormatInfo{GL_R16F, GL_RED, GL_FLOAT, 2, false};
         break;
@@ -258,147 +238,56 @@ bool gl_format_info(Format format, GLFormatInfo &out)
 
 bool gl_validate_texture_desc(const TextureDescRefactor &desc, std::string &error)
 {
+    // 先做 GL 能力检查（格式必须有对应三元组），再做后端无关的通用校验。
     GLFormatInfo info;
     if (!gl_format_info(desc.format, info))
         return fail(error, "format is Undefined or unsupported by the OpenGL backend");
-    if (desc.width == 0 || desc.height == 0)
-        return fail(error, "width and height must be greater than 0");
-    if (desc.samples_count != 1)
-        return fail(error, "only samples_count == 1 is supported (no MSAA yet)");
-    if (desc.mip_levels == 0)
-        return fail(error, "mip_levels must be at least 1");
-    if (desc.dim == TextureDimension::Cube && desc.width != desc.height)
-        return fail(error, "cubemap textures must be square");
-    if (desc.mip_levels > max_mip_levels(desc.width, desc.height))
-        return fail(error, "mip_levels exceeds the maximum for the given size");
-    if (desc.usage == 0)
-        return fail(error, "usage must not be empty");
-    if ((desc.usage & ~(TextureUsage::TEXTURE_BINDING | TextureUsage::RENDER_ATTACHMENT | TextureUsage::COPY_DST |
-                        TextureUsage::COPY_SRC)) != 0)
-        return fail(error, "usage contains unknown bits");
-    return true;
+    return rhi_validate_texture_desc(desc, error);
 }
 
 bool gl_validate_texture_view_desc(const GLTexture &texture, const TextureViewDesc &desc, std::string &error)
 {
     if (texture.texture == 0)
         return fail(error, "the parent texture object is not a valid GL texture");
-    if (texture.mip_levels == 0)
-        return fail(error, "the parent texture has no mip level");
 
-    const bool texture_is_depth = gl_format_is_depth(texture.format);
-    if (texture_is_depth && desc.aspect != TextureAspect::DepthOnly)
-        return fail(error, "a depth texture can only be viewed with the DepthOnly aspect");
-    if (!texture_is_depth && desc.aspect != TextureAspect::Color)
-        return fail(error, "a color texture can only be viewed with the Color aspect");
-
-    if (texture.dim == TextureDimension::Cube)
-    {
-        // GL 3.3 没有 glTextureView：cubemap 无法再被视为 2D 纹理
-        if (desc.dim != TextureViewDimension::Cube)
-            return fail(error, "a cubemap texture can only be viewed as Cube (GL 3.3 has no texture views)");
-
-        if (desc.base_layer >= texture.layers)
-            return fail(error, "base_layer is out of range");
-        const uint32_t layer_count = desc.layer_count == 0 ? texture.layers - desc.base_layer : desc.layer_count;
-        if (layer_count == 0)
-            return fail(error, "layer_count resolves to 0");
-        if (desc.base_layer + layer_count > texture.layers)
-            return fail(error, "layer range exceeds the texture layers");
-    }
-    else
-    {
-        if (desc.dim != TextureViewDimension::Texture2D)
-            return fail(error, "a 2D texture can only be viewed as Texture2D");
-        if (desc.base_layer != 0 || (desc.layer_count != 0 && desc.layer_count != 1))
-            return fail(error, "a 2D texture supports only a single layer");
-    }
-
-    if (desc.base_mip >= texture.mip_levels)
-        return fail(error, "base_mip is out of range");
-    const uint32_t mip_count = desc.mip_count == 0 ? texture.mip_levels - desc.base_mip : desc.mip_count;
-    if (mip_count == 0)
-        return fail(error, "mip_count resolves to 0");
-    if (desc.base_mip + mip_count > texture.mip_levels)
-        return fail(error, "mip range exceeds the texture mip levels");
-
-    return true;
+    RhiTextureInfo texture_info;
+    texture_info.format = texture.format;
+    texture_info.dim = texture.dim;
+    texture_info.width = texture.width;
+    texture_info.height = texture.height;
+    texture_info.mip_levels = texture.mip_levels;
+    texture_info.layers = texture.layers;
+    return rhi_validate_texture_view_desc(texture_info, desc, error);
 }
 
 bool gl_validate_sampler_desc(const SamplerDesc &desc, std::string &error)
 {
-    if (desc.lod_min_clamp < 0.0f)
-        return fail(error, "lod_min_clamp must not be negative");
-    if (desc.lod_max_clamp < desc.lod_min_clamp)
-        return fail(error, "lod_max_clamp must be greater than or equal to lod_min_clamp");
-    return true;
+    return rhi_validate_sampler_desc(desc, error);
 }
 
 bool gl_validate_render_pipeline_desc(const RenderPipelineDesc &desc, std::string &error)
 {
-    if (!desc.pipeline_layout.is_valid())
-        return fail(error, "pipeline_layout handle is invalid");
-    if (!desc.vertex.module.is_valid())
-        return fail(error, "vertex shader module is missing");
-    if (!desc.fragment.targets.empty() && !desc.fragment.module.is_valid())
-        return fail(error, "fragment shader module is missing while color targets are declared");
-    // GL 后端把顶点 + 片段源码链接成一个 program，所以两个阶段必须引用同一个模块
+    // GL 后端把顶点 + 片段源码链接成一个 program，所以两个阶段必须引用同一个模块。
     if (desc.fragment.module.is_valid() && desc.fragment.module.handle != desc.vertex.module.handle)
         return fail(error, "vertex and fragment stages must reference the same shader module");
-    if (desc.samples_count != 1)
-        return fail(error, "only samples_count == 1 is supported (no MSAA yet)");
 
-    if (desc.fragment.targets.empty() && desc.depth_stencil.format == Format::Undefined)
-        return fail(error, "the pipeline declares neither a color target nor a depth format");
+    if (!rhi_validate_render_pipeline_desc(desc, error))
+        return false;
 
+    // GL 能力检查：颜色目标 / 深度格式必须能映射到 GL 三元组。
     for (size_t i = 0; i < desc.fragment.targets.size(); ++i)
     {
         GLFormatInfo info;
         if (!gl_format_info(desc.fragment.targets[i].format, info))
-            return fail(error, "color target " + std::to_string(i) + ": format is Undefined or unsupported");
-        if (info.is_depth)
-            return fail(error, "color target " + std::to_string(i) + ": format must not be a depth format");
+            return fail(error, "color target " + std::to_string(i) +
+                                   ": format is unsupported by the OpenGL backend");
     }
 
     if (desc.depth_stencil.format != Format::Undefined)
     {
         GLFormatInfo info;
         if (!gl_format_info(desc.depth_stencil.format, info))
-            return fail(error, "depth_stencil: format is unsupported");
-        if (!info.is_depth)
-            return fail(error, "depth_stencil: format must be a depth format");
-    }
-
-    // 本期只支持 slot 0 / offset 0 的顶点缓冲（见 pass_set_vertex_buffer）
-    if (desc.vertex.buffers.size() > 1)
-        return fail(error, "only one vertex buffer is supported for now");
-
-    bool used_locations[16] = {};
-    for (size_t buffer_index = 0; buffer_index < desc.vertex.buffers.size(); ++buffer_index)
-    {
-        const BufferLayout &buffer = desc.vertex.buffers[buffer_index];
-        const std::string prefix = "vertex buffer " + std::to_string(buffer_index);
-
-        if (buffer.array_stride == 0)
-            return fail(error, prefix + ": array_stride must be greater than 0");
-        if (buffer.attributes.empty())
-            return fail(error, prefix + ": at least one attribute is required");
-
-        for (const BufferLayout::Attribute &attribute : buffer.attributes)
-        {
-            const uint32_t size = vertex_format_size(attribute.format);
-            if (size == 0)
-                return fail(error, prefix + ": unknown vertex format");
-            if (attribute.shader_location >= 16)
-                return fail(error, prefix + ": shader_location must be less than 16");
-            if (used_locations[attribute.shader_location])
-                return fail(error, prefix + ": shader_location " + std::to_string(attribute.shader_location) +
-                                       " is declared more than once");
-            used_locations[attribute.shader_location] = true;
-            if (static_cast<uint64_t>(attribute.offset) + size > buffer.array_stride)
-                return fail(error, prefix + ": attribute overruns array_stride at shader_location " +
-                                       std::to_string(attribute.shader_location));
-        }
+            return fail(error, "depth_stencil: format is unsupported by the OpenGL backend");
     }
 
     return true;

@@ -16,6 +16,11 @@ bool Application::init(const ApplicationInitDesc &desc)
     // 创建rendering device
     RenderingDevice::create_singleton();
     auto device = RenderingDevice::get_singleton();
+    if (!device)
+    {
+        std::fprintf(stderr, "[ERROR] rendering device is not available in this build\n");
+        return false;
+    }
 
     WindowDesc d;
     d.fullscreen = desc.fullscreen;

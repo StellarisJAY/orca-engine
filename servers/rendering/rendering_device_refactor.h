@@ -118,6 +118,9 @@ enum class Format
     R16Float,
     RGBA16Float,
     Depth32Float,
+    /// @brief Vulkan 交换链在部分平台只提供 BGRA 通道顺序；OpenGL 后端也保留映射。
+    BGRA8Unorm,
+    BGRA8UnormSrgb,
 };
 
 /// @brief 顶点属性格式（与纹理格式分开，避免语义混淆）。

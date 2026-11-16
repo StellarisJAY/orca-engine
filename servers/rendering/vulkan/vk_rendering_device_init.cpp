@@ -1,8 +1,12 @@
 #include "vk_rendering_device.h"
+#include "vk_format.h"
+#include "rhi_validation.h"
 #include <set>
 #include <array>
+#include <exception>
+#include <stdexcept>
 
-#ifdef NODEBUG
+#ifdef NDEBUG
 constexpr bool ENABLE_VALIDATION_LAYER = false;
 #else
 constexpr bool ENABLE_VALIDATION_LAYER = true;
@@ -47,7 +51,8 @@ bool VkRenderingDevice::check_validation_layer_support() const
     return requiredLayers.empty();
 }
 
-void VkRenderingDevice::create_debug_messenger()
+/// @brief 构造 debug messenger 的创建参数（同时用于实例 pNext 与后续 messenger 创建）。
+vk::DebugUtilsMessengerCreateInfoEXT make_debug_messenger_create_info()
 {
     vk::DebugUtilsMessageSeverityFlagsEXT serverity_flags(
         vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
@@ -57,13 +62,17 @@ void VkRenderingDevice::create_debug_messenger()
         vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
         vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
         vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation);
-    vk::DebugUtilsMessengerCreateInfoEXT create_info(
+    return vk::DebugUtilsMessengerCreateInfoEXT(
         {},                 // flag
         serverity_flags,    // messageSeverity
         message_type_flags, // messageType
         &debugMessageFunc   // 最后，pfnUserCallback
     );
-    debug_messenger = instance.createDebugUtilsMessengerEXT(create_info);
+}
+
+void VkRenderingDevice::create_debug_messenger()
+{
+    debug_messenger = instance.createDebugUtilsMessengerEXT(make_debug_messenger_create_info());
 }
 
 // ===========================================================================
@@ -95,6 +104,13 @@ void VkRenderingDevice::create_instance()
     // window surface扩展和debug扩展
     std::vector<const char *> extensions = get_required_extensions(window_info);
     create_info.setPEnabledExtensionNames(extensions);
+
+    // 把 debug messenger 链进实例创建的 pNext，才能收到实例创建/销毁阶段的校验消息。
+    if constexpr (ENABLE_VALIDATION_LAYER)
+    {
+        const vk::DebugUtilsMessengerCreateInfoEXT debug_create_info = make_debug_messenger_create_info();
+        create_info.setPNext(&debug_create_info);
+    }
 
     instance = context.createInstance(create_info);
 }
@@ -275,8 +291,17 @@ bool VkRenderingDevice::create_logical_device()
 bool VkRenderingDevice::init(const RenderingWindowInfo &info)
 {
     window_info = info;
-    create_instance();
-    create_debug_messenger();
+    try
+    {
+        create_instance();
+        if constexpr (ENABLE_VALIDATION_LAYER)
+            create_debug_messenger();
+    }
+    catch (const std::exception &error)
+    {
+        std::printf("[ERROR] Vulkan init failed: %s\n", error.what());
+        return false;
+    }
     if (!create_surface())
         return false;
     return true;
@@ -284,12 +309,20 @@ bool VkRenderingDevice::init(const RenderingWindowInfo &info)
 
 bool VkRenderingDevice::init_device()
 {
-    // 选择物理设备
-    if (!select_physical_device())
+    try
+    {
+        // 选择物理设备
+        if (!select_physical_device())
+            return false;
+        // 创建逻辑设备
+        if (!create_logical_device())
+            return false;
+    }
+    catch (const std::exception &error)
+    {
+        std::printf("[ERROR] Vulkan init_device failed: %s\n", error.what());
         return false;
-    // 创建逻辑设备
-    if (!create_logical_device())
-        return false;
+    }
     return true;
 }
 
@@ -306,19 +339,39 @@ SwapChainSupportDetails VkRenderingDevice::query_swapchain_support(const vk::rai
     return details;
 }
 
-/// @brief 选择窗口输出格式
-/// @param available_formats 物理设备可用格式
-/// @return 最合适的输出格式
+/// @brief 选择窗口输出格式。
+///
+/// 优先返回"接口 Format 能表达"的 sRGB 格式（这样管线/渲染目标的格式可以
+/// 与交换链实际格式保持一致），其次返回可表达的非 sRGB 格式，最后才回退到
+/// 驱动给出的第一个格式并打印警告。
 static vk::SurfaceFormatKHR choose_swap_surface_format(const std::vector<vk::SurfaceFormatKHR> &available_formats)
 {
-    // 优先 sRGB RGBA 32位颜色
-    for (const auto &availableFormat : available_formats)
+    if (available_formats.empty())
+        return {};
+
+    vk::SurfaceFormatKHR fallback_representable = available_formats[0];
+    bool has_representable = false;
+
+    for (const auto &available_format : available_formats)
     {
-        if (availableFormat.format == vk::Format::eB8G8R8A8Srgb &&
-            availableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
-            return availableFormat;
+        Format orca_format = Format::Undefined;
+        if (!vk_format_from_vulkan(available_format.format, orca_format))
+            continue;
+        if (available_format.colorSpace != vk::ColorSpaceKHR::eSrgbNonlinear)
+            continue;
+
+        if (rhi_format_is_srgb(orca_format))
+            return available_format;
+
+        if (!has_representable)
+        {
+            fallback_representable = available_format;
+            has_representable = true;
+        }
     }
-    // 没有sRGB 32位，回退默认的第一个格式
+
+    if (has_representable)
+        return fallback_representable;
     return available_formats[0];
 }
 
@@ -358,50 +411,83 @@ vk::Extent2D VkRenderingDevice::choose_swap_extent(const vk::SurfaceCapabilities
 
 bool VkRenderingDevice::init_swapchain()
 {
-    const auto [capabilities, available_formats, present_modes] = query_swapchain_support(physical_device);
-    const auto surface_format = choose_swap_surface_format(available_formats);
-    const auto present_mode = choose_swap_surface_present_mode(present_modes);
-    const auto extent = choose_swap_extent(capabilities);
-
-    // 交换链图像数量
-    uint32_t image_count = capabilities.minImageCount + 1;
-    if (capabilities.maxImageCount > 0 && image_count > capabilities.maxImageCount)
+    if (surface == nullptr)
     {
-        image_count = capabilities.maxImageCount;
+        std::printf("[ERROR] Vulkan init_swapchain: no window surface\n");
+        return false;
     }
 
-    vk::SwapchainCreateInfoKHR create_info;
-    create_info.surface = surface;
-    create_info.minImageCount = image_count;                 // 交换链图像数量
-    create_info.imageFormat = surface_format.format;         // 图像格式
-    create_info.imageColorSpace = surface_format.colorSpace; // 图像色彩空间
-    create_info.imageExtent = extent;                        // 图像分辨率
-    create_info.presentMode = present_mode;                  // 呈现模式
-    create_info.imageArrayLayers = 1;
-    create_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
-    create_info.preTransform = capabilities.currentTransform; // 图像变换，使用设备默认
-    create_info.clipped = true; // 裁剪遮挡像素
-    create_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque; // 暂时忽略透明像素
-    create_info.oldSwapchain = nullptr; // 屏幕大小变化需要切换swapchain，但此时初始化不需要
-    // 设置图像共享模式
-    // 如果物理设备的图形和呈现是两个队列族，需要设置eConcurrent模式
-    const auto [graphics_family, present_family] = findQueueFamilies(physical_device);
-    std::vector<uint32_t> queue_family_indices{graphics_family.value(), present_family.value()};
-    if (graphics_family != present_family)
+    try
     {
-        create_info.imageSharingMode = vk::SharingMode::eConcurrent;
-        create_info.setQueueFamilyIndices(queue_family_indices);
+        const auto [capabilities, available_formats, present_modes] = query_swapchain_support(physical_device);
+        if (available_formats.empty())
+        {
+            std::printf("[ERROR] Vulkan init_swapchain: surface reports no formats\n");
+            return false;
+        }
+
+        const auto surface_format = choose_swap_surface_format(available_formats);
+        const auto present_mode = choose_swap_surface_present_mode(present_modes);
+        const auto extent = choose_swap_extent(capabilities);
+
+        // 交换链图像数量
+        uint32_t image_count = capabilities.minImageCount + 1;
+        if (capabilities.maxImageCount > 0 && image_count > capabilities.maxImageCount)
+        {
+            image_count = capabilities.maxImageCount;
+        }
+
+        vk::SwapchainCreateInfoKHR create_info;
+        create_info.surface = surface;
+        create_info.minImageCount = image_count;                 // 交换链图像数量
+        create_info.imageFormat = surface_format.format;         // 图像格式
+        create_info.imageColorSpace = surface_format.colorSpace; // 图像色彩空间
+        create_info.imageExtent = extent;                        // 图像分辨率
+        create_info.presentMode = present_mode;                  // 呈现模式
+        create_info.imageArrayLayers = 1;
+        vk::ImageUsageFlags image_usage = vk::ImageUsageFlagBits::eColorAttachment;
+        if (capabilities.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferSrc)
+            image_usage |= vk::ImageUsageFlagBits::eTransferSrc;
+        create_info.imageUsage = image_usage;
+        create_info.preTransform = capabilities.currentTransform; // 图像变换，使用设备默认
+        create_info.clipped = true; // 裁剪遮挡像素
+        create_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque; // 暂时忽略透明像素
+        create_info.oldSwapchain = nullptr; // 屏幕大小变化需要切换swapchain，但此时初始化不需要
+        // 设置图像共享模式
+        // 如果物理设备的图形和呈现是两个队列族，需要设置eConcurrent模式
+        const auto [graphics_family, present_family] = findQueueFamilies(physical_device);
+        std::vector<uint32_t> queue_family_indices{graphics_family.value(), present_family.value()};
+        if (graphics_family != present_family)
+        {
+            create_info.imageSharingMode = vk::SharingMode::eConcurrent;
+            create_info.setQueueFamilyIndices(queue_family_indices);
+        }
+        else
+        {
+            create_info.imageSharingMode = vk::SharingMode::eExclusive;
+        }
+
+        swapchain = device.createSwapchainKHR(create_info);
+        swapchain_images = swapchain.getImages();
+        swapchain_image_format = surface_format.format;
+        swapchain_image_extent = extent;
+    }
+    catch (const vk::SystemError &error)
+    {
+        std::printf("[ERROR] Vulkan init_swapchain failed: %s\n", error.what());
+        return false;
+    }
+
+    Format orca_format = Format::Undefined;
+    if (vk_format_from_vulkan(swapchain_image_format, orca_format))
+    {
+        std::printf("[INFO] Vulkan created swapchain: %ux%u, %u images, format=%d\n",
+                    swapchain_image_extent.width, swapchain_image_extent.height,
+                    static_cast<uint32_t>(swapchain_images.size()), static_cast<int>(orca_format));
     }
     else
     {
-        create_info.imageSharingMode = vk::SharingMode::eExclusive;
+        std::printf("[WARN] Vulkan swapchain format cannot be represented by interface Format\n");
     }
-    
-    swapchain = device.createSwapchainKHR(create_info);
-
-    swapchain_images = swapchain.getImages();
-    swapchain_image_format = surface_format.format;
-    swapchain_image_extent = extent;
-    std::printf("[INFO] Vulkan created swapchain\n");
     return true;
 }

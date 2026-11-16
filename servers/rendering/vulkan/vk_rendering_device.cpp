@@ -1,8 +1,11 @@
 #include "vk_rendering_device.h"
+#include "vk_format.h"
 
-// Vulkan 后端的接口骨架：只保证接口完整、可实例化，绘制与资源接口尚未实现。
-// 真正的 instance / device / swapchain 初始化在 vk_rendering_device.cpp 中，
-// 等 Vulkan 路径正式落地时再迁移到本文件。
+#include <cstdio>
+
+// 生命周期查询、呈现、缓冲区/绑定组桩实现。
+// Vulkan instance/device/swapchain 的初始化在 vk_rendering_device_init.cpp；
+// 资源创建在 vk_resource.cpp；管线在 vk_pipeline.cpp；命令录制在 vk_command.cpp。
 
 void VkRenderingDevice::resize_swapchain(uint32_t width, uint32_t height)
 {
@@ -12,21 +15,43 @@ void VkRenderingDevice::resize_swapchain(uint32_t width, uint32_t height)
 
 Format VkRenderingDevice::get_swapchain_format() const
 {
-    return Format::RGBA8UnormSrgb;
+    Format format = Format::Undefined;
+    if (!vk_format_from_vulkan(swapchain_image_format, format))
+    {
+        std::printf("[WARN] Vulkan swapchain format is not representable by interface Format\n");
+        return Format::Undefined;
+    }
+    return format;
 }
 
 void VkRenderingDevice::get_swapchain_size(uint32_t &width, uint32_t &height) const
 {
+    if (swapchain_image_extent.width != 0 && swapchain_image_extent.height != 0)
+    {
+        width = swapchain_image_extent.width;
+        height = swapchain_image_extent.height;
+        return;
+    }
     width = window_info.width;
     height = window_info.height;
 }
 
 void VkRenderingDevice::present()
 {
+    // TODO(V3)：acquire/present 与 semaphore 链。
 }
 
 void VkRenderingDevice::shutdown()
 {
+    try
+    {
+        if (device != nullptr)
+            device.waitIdle();
+    }
+    catch (const vk::SystemError &error)
+    {
+        std::printf("[WARN] Vulkan device waitIdle during shutdown failed: %s\n", error.what());
+    }
 }
 
 GPUBufferHandle VkRenderingDevice::create_buffer(const GPUBufferDesc &desc)
@@ -87,9 +112,17 @@ void VkRenderingDevice::destroy_pipeline_layout(PipelineLayoutHandle layout)
     (void)layout;
 }
 
-
 void VkRenderingDevice::queue_wait_idle()
 {
+    try
+    {
+        if (device != nullptr)
+            device.waitIdle();
+    }
+    catch (const vk::SystemError &error)
+    {
+        std::printf("[WARN] Vulkan device waitIdle failed: %s\n", error.what());
+    }
 }
 
 uint64_t VkRenderingDevice::submit_frame()

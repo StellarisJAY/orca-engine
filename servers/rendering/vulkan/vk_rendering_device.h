@@ -23,13 +23,18 @@ struct SwapChainSupportDetails {
     std::vector<vk::PresentModeKHR> presentModes;
 };
 
-/// @brief Vulkan 后端（骨架）。
-/// 目前只保留接口签名，具体实现待 Vulkan 路径真正落地时补齐。
+/// @brief Vulkan 后端。
+///
+/// 当前状态（2026-11）：V0/V1 已完成（构建、唯一句柄、异常处理、格式映射、描述校验），
+/// instance/device/swapchain 初始化可跑通；资源显存、绑定组、完整管线与命令提交仍在
+/// V2+ 实施中。进度见 docs/vulkan_rhi_checklist.md。
 class VkRenderingDevice : public RenderingDeviceRefactor
 {
 private:
     RenderingWindowInfo window_info;
     uint64_t frame_index = 0;
+    /// @brief 非原生对象（encoder / pass / command buffer）的句柄计数器
+    uint64_t next_handle_id = 1;
     vk::raii::Context context;
     vk::raii::Instance instance { nullptr };
     vk::raii::DebugUtilsMessengerEXT debug_messenger { nullptr };
@@ -55,6 +60,7 @@ private:
     bool check_validation_layer_support() const;
     SwapChainSupportDetails query_swapchain_support(const vk::raii::PhysicalDevice& physicalDevice) const;
     vk::Extent2D choose_swap_extent(const vk::SurfaceCapabilitiesKHR &capabilities) const;
+    uint64_t alloc_handle_id() { return next_handle_id++; }
 public:
     VkRenderingDevice() = default;
     ~VkRenderingDevice() override = default;

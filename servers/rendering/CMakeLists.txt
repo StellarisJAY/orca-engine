@@ -7,6 +7,7 @@ add_library(orca-rendering STATIC
     rendering_device_refactor.cpp
     rendering_server.cpp
     rendering_storage.cpp
+    rhi_validation.cpp
     shader_loader.cpp
     skybox_cube.cpp
 )
@@ -47,7 +48,9 @@ if(ORCA_RENDERER_VULKAN)
         vulkan/vk_rendering_device.cpp 
         vulkan/vk_rendering_device_init.cpp
         vulkan/vk_resource.cpp
+        vulkan/vk_format.cpp
         vulkan/vk_pipeline.cpp
+        vulkan/vk_command.cpp
     )
     target_link_libraries(orca-rendering PRIVATE Vulkan::Vulkan)
     target_compile_definitions(orca-rendering PUBLIC ORCA_RENDERER_VULKAN)

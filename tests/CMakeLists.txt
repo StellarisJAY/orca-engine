@@ -24,7 +24,15 @@ add_executable(orca-tests
     scene/test_node3d_transform.cpp
 
     servers/test_skybox_cube.cpp
+    servers/test_rhi_validation.cpp
 )
+
+# Vulkan 专属的纯逻辑测试（格式/用途映射）只在启用 Vulkan 后端时编译。
+# 头文件会引入 vulkan.hpp，因此需要 Vulkan 的 include dir 与链接目标。
+if(ORCA_RENDERER_VULKAN)
+    target_sources(orca-tests PRIVATE servers/test_vk_format.cpp)
+    target_link_libraries(orca-tests PRIVATE Vulkan::Vulkan)
+endif()
 
 # gl_internal.h 里的格式映射断言直接对比 GL 常量，因此单元测试需要 glad 头文件。
 # 只加 include 路径：实现（GLAD_GL_IMPLEMENTATION）仍然只存在于 orca-rendering 的 gl_loader.cpp。
