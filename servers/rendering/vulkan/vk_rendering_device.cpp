@@ -40,12 +40,6 @@ void VkRenderingDevice::destroy_buffer(GPUBufferHandle handle)
     (void)handle;
 }
 
-void VkRenderingDevice::queue_write_texture(TextureHandle texture, const TextureWriteDesc &desc)
-{
-    (void)texture;
-    (void)desc;
-}
-
 BindGroupLayoutHandle VkRenderingDevice::create_bind_group_layout(const BindGroupLayoutDesc &desc)
 {
     (void)desc;

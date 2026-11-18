@@ -26,6 +26,12 @@ bool rhi_format_is_srgb(Format format);
 /// @brief 顶点属性格式的字节数；未知格式返回 0。
 uint32_t rhi_vertex_format_size(VertexFormat format);
 
+/// @brief 纹理格式每像素（texel）的字节数；Undefined/未知格式返回 0。
+///
+/// 用于上传时计算紧密打包的一行字节数（bytes_per_row == 0 的默认值），
+/// GL/Vulkan 两个后端的 queue_write_texture 共用同一份换算。
+uint32_t rhi_format_texel_size(Format format);
+
 /// @brief 校验纹理描述。
 bool rhi_validate_texture_desc(const TextureDescRefactor &desc, std::string &error);
 

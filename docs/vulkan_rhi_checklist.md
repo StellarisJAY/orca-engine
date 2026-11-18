@@ -6,7 +6,8 @@
 > 审计日期：2026-11-16。
 > 审计方式：全量通读 + 三组真实构建/编译验证（见 §2）。
 > 审计基线：**骨架阶段；既不能完整构建，也不能绘制任何内容。**
-> 实施进度：V0（构建/句柄/异常）与 V1（格式映射/描述校验）已完成，见 §10；§4/§5 保留审计基线。
+> 实施进度：V0（构建/句柄/异常）、V1（格式映射/描述校验）、V2（纹理显存分配与上传/mipmap）
+> 已完成，见 §10；§4/§5 保留审计基线。
 
 ---
 
@@ -36,6 +37,7 @@
 
    > V0/V1 完成后：✅ 17 / ⚠️ 7 / ❌ 20（§10.2 列出变更项）。
    > V2 纹理显存完成后：✅ 18 / ⚠️ 6 / ❌ 20（`create_texture` 转为可用，见 §10.8）。
+   > V2 纹理上传完成后：✅ 20 / ⚠️ 6 / ❌ 18（`queue_write_texture`/`generate_mip_map` 转为可用，见 §10.9）。
 
 5. **推进顺序建议**：先修 P0-1～P0-9（构建、句柄、内存、纹理描述、默认帧缓冲、命令/提交链路），
    再做 P0-10～P0-12（管线/绑定/Shader 工具链），最后才谈“画一个三角形”和接入 `RenderingServer`。
@@ -55,7 +57,9 @@
 - [x] **V2-2** 修 `create_texture` 的合法字段（arrayLayers、extent.depth、cubemap、深度附件用法）并绑定显存（D-04/D-19）。
       字段在 V1 已合法化，本次补齐显存分配/绑定（含 dedicated allocation 查询）。
 - [ ] **V2-3** 补全 `create_texture_view` 的 viewType/format/subresourceRange（D-05）。
-- [ ] **V2-4** 实现 `queue_write_texture`（staging + layout transition）与 `generate_mip_map`（D-06）。
+- [x] **V2-4** 实现 `queue_write_texture`（staging + layout transition）与 `generate_mip_map`（D-06）。
+      已实现：临时 staging buffer + 整图 layout barrier + `vkCmdCopyBufferToImage`；mipmap 用
+      `vkCmdBlitImage` 逐级下采样，blit 能力按格式特性选择（§10.9）。
 - [ ] **V3-1** 交换链图像视图、深度缓冲、每图像 render pass/framebuffer、acquire/present 同步、resize 重建（D-16/D-25）。
 - [ ] **V4-1** 确定 Shader 工具链（离屏 `glslc` 或运行时 `glslang`），补 Vulkan 专用 GLSL 变体与 SPIR-V 入口（D-11/G-01/G-02）。
 - [ ] **V5-1** 实现 descriptor set layout/pool/set 与 `pipeline layout`，再补全 `create_render_pipeline`（D-06/D-10）。
@@ -184,14 +188,14 @@ vk_command.cpp:231 cmd_buffer_data->command_buffers = cmd_encoder_data->command_
 
 | ID | 接口 | 状态 | 证据 | 现状 |
 |---|---|---|---|---|
-| I-14 | `create_texture` | ✅ | `vk_resource.cpp:99-219` | 完整实现：描述校验 + 格式映射 + `VkImageCreateInfo` 合法字段 + `vkGetImageMemoryRequirements2` + 独占显存分配 + `vkBindImageMemory`；颜色/深度/cubemap 三种形态已实测可创建。内容上传/layout transition 仍属 I-17。 |
+| I-14 | `create_texture` | ✅ | `vk_resource.cpp:102-228` | 完整实现：描述校验 + 格式映射 + `VkImageCreateInfo` 合法字段 + `vkGetImageMemoryRequirements2` + 独占显存分配 + `vkBindImageMemory`；颜色/深度/cubemap 三种形态已实测可创建。内容上传/layout transition 见 I-17。 |
 | I-15 | `create_texture_view` | ⚠️ | `vk_resource.cpp:142-159` | 创建了 `VkImageView`，但只设置了 image：`viewType` 默认 `e1D`、`format` 默认 `Undefined`、`subresourceRange` 的 aspect/levelCount/layerCount 全为 0；desc 字段完全没使用。必被 validation 拒绝。 |
 | I-16 | `create_sampler` | ✅ | `vk_resource.cpp:192-217` | filter/address/mipmap/lod/compareEnable 的映射基本正确。小缺口见 D-26。 |
-| I-17 | `queue_write_texture` | ❌ | `vk_rendering_device.cpp:51-55` | 空实现；无 staging buffer、无 layout transition、无 `vkCmdCopyBufferToImage`。 |
-| I-18 | `generate_mip_map` | ❌ | `vk_resource.cpp:134-136` | 空实现（GL 侧有 `glGenerateMipmap`）。 |
-| I-19 | `destroy_texture` | ✅ | `vk_resource.cpp:337-343` | `memdelete` 触发 RAII 析构；成员声明顺序保证 image 先于它绑定的 DeviceMemory 释放。延迟销毁见 D-15。 |
-| I-20 | `destroy_texture_view` | ✅ | `vk_resource.cpp:231-241` | 同上。 |
-| I-21 | `destroy_sampler` | ✅ | `vk_resource.cpp:243-253` | 同上。 |
+| I-17 | `queue_write_texture` | ✅ | `vk_resource.cpp:239-405` | 已实现：usage/区域/步长校验 + 临时 staging buffer（host-visible，CPU 按行重排）+ 整图 layout barrier + `vkCmdCopyBufferToImage`，同步提交后等待 fence（见 §10.9）。 |
+| I-18 | `generate_mip_map` | ✅ | `vk_resource.cpp:408-509` | 已实现：校验 usage/格式 blit 能力后，用 `vkCmdBlitImage` 逐级下采样，每层前后做 layout barrier；同步提交（见 §10.9）。 |
+| I-19 | `destroy_texture` | ✅ | `vk_resource.cpp:621-626` | `memdelete` 触发 RAII 析构；成员声明顺序保证 image 先于它绑定的 DeviceMemory 释放。延迟销毁见 D-15。 |
+| I-20 | `destroy_texture_view` | ✅ | `vk_resource.cpp:628-633` | 同上。 |
+| I-21 | `destroy_sampler` | ✅ | `vk_resource.cpp:635-640` | 同上。 |
 
 ### 4.5 绑定组 / 管线布局（6 项）
 
@@ -517,14 +521,16 @@ g++ -std=c++17 -fsyntax-only -I servers/rendering -I core `
 | I-06 `get_swapchain_size` | ⚠️ | ✅ | 返回 swapchain extent |
 | I-08 `shutdown` | ⚠️ | ✅ | `waitIdle` 后由 RAII 释放 |
 | I-10 `destroy_shader_module` | ⚠️ | ✅ | 正确析构 `VkShaderModuleData` |
-| I-14 `create_texture` | ⚠️ | ✅ | 合法字段 + 显存分配/绑定（本次 V2-2，见 §10.8） |
+| I-14 `create_texture` | ⚠️ | ✅ | 合法字段 + 显存分配/绑定（V2-2，见 §10.8） |
+| I-17 `queue_write_texture` | ❌ | ✅ | staging 上传 + layout transition（本次 V2-4，见 §10.9） |
+| I-18 `generate_mip_map` | ❌ | ✅ | `vkCmdBlitImage` 逐级下采样（本次 V2-4，见 §10.9） |
 | I-30 `create_command_encoder` | ⚠️ | ✅ | 唯一 handle、录制前 begin、失败清理 |
 | I-40 `encoder_finish` | ⚠️ | ✅ | 编译通过，池+缓冲 move 转移 |
 | I-41 `destroy_command_buffer` | ❌ | ✅ | 释放命令池与 command buffer |
 | I-43 `queue_wait_idle` | ❌ | ✅ | 调用 `device.waitIdle()` |
 | 其余 | — | 不变 | I-03/I-09/I-15/I-28/I-31/I-36 仍为 ⚠️；缓冲区/绑定组/draw/submit/present 仍为 ❌ |
 
-最新统计：**✅ 18 / ⚠️ 6 / ❌ 20**（总 44）。
+最新统计：**✅ 20 / ⚠️ 6 / ❌ 18**（总 44）。
 
 ### 10.4 缺陷关闭情况（相对 §5）
 
@@ -537,16 +543,19 @@ g++ -std=c++17 -fsyntax-only -I servers/rendering -I core `
   - D-26：采样器 lod 校验已接入；`compare_op`（G-05）仍开放；
   - D-28：pipeline destroy 与失败清理已修；pipeline layout 仍与 `desc.pipeline_layout` 不一致；
   - D-35：`samples_count`/`usage`/`mip_levels` 校验与 label 日志已接入；其余限制未变。
-  - D-23：显存分配器（自建独占 allocation）已建立并用于纹理；staging buffer 池仍缺。
-- **仍开放（按优先级）**：D-06（buffer/bind group/pipeline layout）、D-07（默认帧缓冲 render pass）、D-08（draw/bind）、D-09（submit/present）、D-10（完整管线状态）、D-11（SPIR-V 工具链）、D-12（接入 RenderingServer）、D-16/D-25（swapchain 视图/深度/同步/resize）、D-20/D-27/D-33/D-36/D-37；D-23 的 staging 部分。
+  - D-23：显存分配器（自建独占 allocation）已建立并用于纹理；纹理上传的 staging buffer 已实现
+    （每次上传临时分配，见 §10.9）；buffer + staging **池**仍缺。
+  - D-06：纹理上传部分已实现（`queue_write_texture`/`generate_mip_map`）；buffer / bind group /
+    pipeline layout 仍为 ❌。
+- **仍开放（按优先级）**：D-06（buffer/bind group/pipeline layout）、D-07（默认帧缓冲 render pass）、D-08（draw/bind）、D-09（submit/present）、D-10（完整管线状态）、D-11（SPIR-V 工具链）、D-12（接入 RenderingServer）、D-16/D-25（swapchain 视图/深度/同步/resize）、D-20/D-27/D-33/D-36/D-37；D-23 的 buffer/staging 池部分。
 
 ### 10.5 验证结果
 
 | 配置 | 构建 | 单元测试 | init + 纹理冒烟 |
 |---|---|---|---|
-| GL-only（`ORCA_RENDERER_OPENGL=ON`） | ✅ 全部目标 | ✅ `ctest` 通过（含新增 RHI 校验用例） | ✅ Vulkan 未编入时输出 SKIP、退出码 0 |
-| Vulkan + GL | ✅ 全部目标 | ✅ `ctest` 通过（7 个新用例 / 95 断言） | ✅ 退出码 0，颜色/深度/cubemap 纹理创建通过 |
-| Vulkan-only | ✅ 全部目标 | ✅ `ctest` 通过（含 Vulkan 格式映射用例） | ✅ 退出码 0，同上 |
+| GL-only（`ORCA_RENDERER_OPENGL=ON`） | ✅ 全部目标 | ✅ `ctest` 通过（含 RHI 校验与 texel 换算用例） | ✅ Vulkan 未编入时输出 SKIP、退出码 0 |
+| Vulkan + GL | ✅ 全部目标 | ✅ `ctest` 通过（含 Vulkan 格式/布局映射用例） | ✅ 退出码 0，纹理创建 + 上传 + mipmap 通过 |
+| Vulkan-only | ✅ 全部目标 | ✅ `ctest` 通过（含 Vulkan 格式/布局映射用例） | ✅ 退出码 0，同上 |
 
 `init` 冒烟实测（Intel Graphics，Debug + validation layer）：
 
@@ -563,6 +572,16 @@ g++ -std=c++17 -fsyntax-only -I servers/rendering -I core `
 [INFO] Vulkan created texture(smoke-depth): 80x60, 1 mip(s), 1 layer(s), 40.12 KiB
 [INFO] Vulkan created texture(smoke-cube): 16x16, 5 mip(s), 6 layer(s), 24.00 KiB
 [TEST] texture create/bind/destroy OK (color + depth + cubemap).
+[INFO] Vulkan created texture(smoke-upload): 32x32, 1 mip(s), 1 layer(s), 4.00 KiB
+[ERROR] Vulkan queue_write_texture(smoke-upload): mip_level 1 is out of range (mip_levels = 1)
+[ERROR] Vulkan queue_write_texture(smoke-upload): data pointer is null
+[TEST] texture upload OK (full + padded partial region).
+[INFO] Vulkan created texture(smoke-cube-mips): 16x16, 5 mip(s), 6 layer(s), 24.00 KiB
+[INFO] Vulkan generated mip maps(smoke-cube-mips): 5 level(s)
+[TEST] cubemap face upload + mipmap generation OK.
+[INFO] Vulkan created texture(smoke-no-copy): 16x16, 1 mip(s), 1 layer(s), 24.12 KiB
+[ERROR] Vulkan queue_write_texture(smoke-no-copy): texture was not created with COPY_DST usage
+[TEST] upload usage validation handled.
 [TEST] invalid descriptions rejected.
 ```
 
@@ -584,6 +603,11 @@ g++ -std=c++17 -fsyntax-only -I servers/rendering -I core `
 新增（V2 纹理显存）：
 
 - `servers/rendering/vulkan/vk_memory.h` / `.cpp`（内存类型选择 + 独占 `vkAllocateMemory`）
+
+新增（V2 纹理上传）：
+
+- `servers/rendering/vulkan/vk_image_layout.h` / `.cpp`（布局/aspect/resting layout/barrier 映射）
+- `tests/servers/test_vk_image_layout.cpp`（布局映射纯逻辑用例）
 
 修改（V0/V1）：
 
@@ -608,13 +632,68 @@ g++ -std=c++17 -fsyntax-only -I servers/rendering -I core `
 - `servers/rendering/CMakeLists.txt`（加入 `vk_memory.cpp`）
 - `tests/servers/test_vulkan_init.cpp`（颜色/深度/cubemap 纹理冒烟）
 
+修改（V2 纹理上传）：
+
+- `servers/rendering/vulkan/vk_resource.cpp`（`queue_write_texture` + `generate_mip_map`；`create_texture` 记录 usage/resting/current layout 与 label）
+- `servers/rendering/vulkan/vk_internal.h`（`VkTextureHandleData::usage`/`resting_layout`/`current_layout`/`label`）
+- `servers/rendering/vulkan/vk_command.cpp`（`submit_immediate_commands` 一次性提交助手）
+- `servers/rendering/vulkan/vk_rendering_device.h` / `.cpp`（私有助手声明；移除 `queue_write_texture` 空桩）
+- `servers/rendering/vulkan/vk_memory.h` / `.cpp`（`allocate_device_memory` 增加 `allow_fallback`，staging 用严格模式）
+- `servers/rendering/rhi_validation.h` / `.cpp`（`rhi_format_texel_size`）
+- `servers/rendering/CMakeLists.txt`（加入 `vk_image_layout.cpp`）
+- `tests/CMakeLists.txt`（Vulkan 构建加入布局映射用例）
+- `tests/servers/test_rhi_validation.cpp`、`tests/servers/test_vulkan_init.cpp`（texel 换算断言 + 上传/mipmap 冒烟）
+
 ### 10.7 下一步（V2 剩余）
 
 1. G-06 已定：**自建、每资源独占 allocation**（`vulkan/vk_memory.*`），纹理已接入；
    不做子分配，暂不引入 VMA。
-2. 实现 `create_buffer` / `queue_write_buffer` / staging 上传池（复用 `vk_memory` + host-visible 内存）。
-3. 实现 `queue_write_texture`（staging buffer + layout transition）与 `generate_mip_map`。
+2. 实现 `create_buffer` / `queue_write_buffer` / staging 上传池（复用 `vk_memory` + host-visible 内存；
+   纹理上传目前每次调用临时分配 staging，buffer 落地后可以复用同一套 staging 池）。
+3. `queue_write_texture` 与 `generate_mip_map` 已完成（§10.9）。
 4. 之后进入 V3（swapchain image view/深度/acquire-present）。
+
+### 10.8 V2：`create_texture` 显存分配与绑定
+
+| 任务 | 内容 | 结果 |
+|---|---|---|
+| V2-2a | 新增 `vulkan/vk_memory.{h,cpp}`：`find_memory_type_index` + `allocate_device_memory`，处理 `memoryTypeBits` 与 required 属性，找不到设备本地类型时降级并告警 | 完成 |
+| V2-2b | `create_texture` 用 `vkGetImageMemoryRequirements2`（结构链同时取 `MemoryDedicatedRequirements`）；要求 `eDeviceLocal`，驱动声明 dedicated 需求时链入 `MemoryDedicatedAllocateInfo`，随后 `vkBindImageMemory` | 完成 |
+| V2-2c | `VkTextureHandleData` 增加 `memory`/`allocation_size`，`memory` 声明在 `image` 之前以保证 image 先销毁；`create_texture` 修正异常路径上 `auto data` 遮蔽外层指针导致的泄漏 | 完成 |
+| V2-2d | `init_device` 缓存 `vk::PhysicalDeviceMemoryProperties`；`create_texture` 打印实际分配大小，便于冒烟与后续显存统计 | 完成 |
+| V2-2e | 扩展 `test_vulkan_init.cpp`：RGBA8 颜色纹理（含 COLOR view）、Depth32Float 深度纹理（含 DEPTH view）、16x16 R8 cubemap（6 层 5 mip，含 CUBE view）的创建/绑定/销毁 | 完成（三配置构建 + ctest + 冒烟均通过） |
+
+已知边界：
+
+- 每张纹理独立 `vkAllocateMemory`，纹理数量大时会产生较多 allocation；后续如需优化，
+  `vk_memory` 是唯一改动点（可换成内存块子分配或 VMA）。
+- 显存分配后的内容上传/layout transition/mipmap 已由 §10.9 补上；`create_texture` 本身仍不
+  做内容上传（创建后内容未定义）。
+
+### 10.9 V2：`queue_write_texture` 与 `generate_mip_map`
+
+| 任务 | 内容 | 结果 |
+|---|---|---|
+| V2-4a | 新增 `vulkan/vk_image_layout.{h,cpp}`：`vk_image_aspect` / `vk_image_resting_layout` / `vk_image_layout_transition` / `vk_mip_extent` / `vk_cmd_image_layout_barrier`；后续 V3 render pass 必须复用同一份映射，并依据 `VkTextureHandleData::current_layout` 填 oldLayout | 完成 |
+| V2-4b | `VkTextureHandleData` 记录 `usage`/`resting_layout`/`current_layout`/`label`；`create_texture` 创建后 `current_layout = eUndefined` | 完成 |
+| V2-4c | `vk_command.cpp` 新增 `submit_immediate_commands`：临时命令池 + 一次性 command buffer + fence，record 后立即提交并 `waitForFences`；上传与之后提交的帧天然保持"先写后读"顺序 | 完成 |
+| V2-4d | `queue_write_texture`：校验 usage(COPY_DST)/mip/层/区域/`bytes_per_row`/`data_size`（与 GL 同一套约定）；临时 host-visible staging buffer，CPU 按行重排成紧密打包；整图 barrier `current → eTransferDstOptimal` → `vkCmdCopyBufferToImage`（支持部分区域与逐面上传）→ 整图 barrier 到 `resting_layout` | 完成 |
+| V2-4e | `generate_mip_map`：校验 `mip_levels > 1` 与 usage(COPY_SRC\|COPY_DST)，按 `vkGetPhysicalDeviceFormatProperties` 的 `eBlitSrc/eBlitDst` 决定是否可做、`eSampledImageFilterLinear` 决定 `eLinear/eNearest`；整图切 `eTransferDstOptimal` 后逐级 barrier+`vkCmdBlitImage`，每层结束切回 `resting_layout` | 完成 |
+| V2-4f | `vk_memory::allocate_device_memory` 增加 `allow_fallback` 参数：staging 用严格模式，避免映射非 host-visible 内存 | 完成 |
+| V2-4g | 共享层新增 `rhi_format_texel_size`（GL/VK 上传都按它算紧密行宽），补单元测试 | 完成 |
+| V2-4h | 扩展冒烟：32x32 纹理整图上传 + 带行距的部分区域上传、非法 mip/null data 拒绝、cubemap 6 面逐面上传 + 5 级 mipmap、未带 COPY_DST 的深度纹理拒绝上传 | 完成（三配置构建 + ctest + 冒烟均通过） |
+
+实现要点/边界：
+
+- 每次上传都是独立的"提交 + fence 等待"（同步语义），不复用帧命令池；上传只发生在纹理创建时，
+  当前可接受；V6 做帧 fence 时可以把这条路径并入按帧复用的上传池。
+- 布局按"整张图统一"记录：上传单个 mip/层也会对整图做 barrier，未上传的 mip/层内容仍是未定义，
+  但布局是已定义的，采样不会触发 layout 校验错误。
+- `generate_mip_map` 需要纹理在创建时带 `COPY_SRC | COPY_DST`（GL 后端没有这个用途限制）；
+  格式不支持 blit 时打印告警并跳过，不会录制非法命令。
+- `create_texture` 仍不做内容上传：调用方必须先 `queue_write_texture`（并在需要时 `generate_mip_map`）
+  才能采样到有效内容。
+
 
 ### 10.8 V2：`create_texture` 显存分配与绑定（本次）
 

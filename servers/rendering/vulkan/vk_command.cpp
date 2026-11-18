@@ -295,6 +295,65 @@ void VkRenderingDevice::destroy_command_buffer(CommandBufferHandle cmd)
     memdelete(static_cast<VkCommandBufferHandleData *>(cmd.data));
 }
 
+/// @brief 一次性提交：临时命令池 + command buffer + fence，等待 GPU 执行完再返回。
+///
+/// 用于 queue_write_texture / generate_mip_map。每次调用都新建命令池和 fence，
+/// 避免与帧录制的 encoder 共享状态；提交进同一个图形队列，因此执行顺序天然是
+/// "先提交的上传 → 后提交的帧"，满足接口"写入先于本次提交的绘制可见"的约定。
+/// 代价是每次调用有一次 submit + fence 等待，纹理上传只发生一次，当前可接受；
+/// V6 做帧 fence / 延迟销毁时可以把这条路径并入按帧复用的上传命令池。
+bool VkRenderingDevice::submit_immediate_commands(
+    const char *what, const std::function<void(const vk::raii::CommandBuffer &command_buffer)> &record)
+{
+    try
+    {
+        const auto [graphics_family, _] = findQueueFamilies(physical_device);
+        if (!graphics_family.has_value())
+        {
+            std::printf("[ERROR] Vulkan %s: no graphics queue family\n", what);
+            return false;
+        }
+
+        vk::CommandPoolCreateInfo pool_create_info;
+        pool_create_info.setQueueFamilyIndex(graphics_family.value());
+        // 一次性命令缓冲，适合用 transient 池（驱动可以按此优化内存）。
+        pool_create_info.setFlags(vk::CommandPoolCreateFlagBits::eTransient);
+        vk::raii::CommandPool command_pool(device, pool_create_info);
+
+        vk::CommandBufferAllocateInfo alloc_info;
+        alloc_info.setCommandPool(*command_pool);
+        alloc_info.setCommandBufferCount(1);
+        alloc_info.setLevel(vk::CommandBufferLevel::ePrimary);
+        auto command_buffers = device.allocateCommandBuffers(alloc_info);
+        if (command_buffers.empty())
+        {
+            std::printf("[ERROR] Vulkan %s: failed to allocate a command buffer\n", what);
+            return false;
+        }
+
+        vk::CommandBufferBeginInfo begin_info;
+        begin_info.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+        command_buffers[0].begin(begin_info);
+        record(command_buffers[0]);
+        command_buffers[0].end();
+
+        // setCommandBuffers 只接受 ArrayProxyNoTemporaries，必须传入 lvalue 句柄，
+        // 且该句柄要活到 submit 调用结束。
+        vk::CommandBuffer raw_command_buffer = *command_buffers[0];
+        vk::SubmitInfo submit_info;
+        submit_info.setCommandBuffers(raw_command_buffer);
+        vk::raii::Fence fence(device, vk::FenceCreateInfo{});
+        (*graphics_queue).submit(submit_info, *fence);
+        device.waitForFences(*fence, VK_TRUE, UINT64_MAX);
+        return true;
+    }
+    catch (const vk::SystemError &error)
+    {
+        print_vk_error(what, error);
+        return false;
+    }
+}
+
 void VkRenderingDevice::queue_submit(CommandBufferHandle cmd)
 {
     (void)cmd;

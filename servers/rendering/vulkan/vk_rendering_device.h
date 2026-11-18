@@ -3,6 +3,7 @@
 #include "rendering_device_refactor.h"
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
+#include <functional>
 #include <optional>
 
 struct QueueFamilyIndices
@@ -63,6 +64,19 @@ private:
     SwapChainSupportDetails query_swapchain_support(const vk::raii::PhysicalDevice& physicalDevice) const;
     vk::Extent2D choose_swap_extent(const vk::SurfaceCapabilitiesKHR &capabilities) const;
     uint64_t alloc_handle_id() { return next_handle_id++; }
+
+    /// @brief 记录一组命令并立即提交到图形队列，阻塞到 fence 信号。
+    ///
+    /// 供 queue_write_texture / generate_mip_map 这类"一次性上传"使用：内部创建
+    /// 临时命令池 + command buffer + fence，提交后等待完成再返回，因此调用返回时
+    /// GPU 已经执行完这些命令。它不参与帧提交（queue_submit 的 semaphore/fence 链），
+    /// 但与之前录制的命令保证先于之后提交的帧生效（Vulkan 队列按提交顺序执行）。
+    ///
+    /// @param what 出错时打印的操作名
+    /// @param record 录制回调，参数是已 begin 的 command buffer
+    /// @return 成功?
+    bool submit_immediate_commands(const char *what,
+                                   const std::function<void(const vk::raii::CommandBuffer &command_buffer)> &record);
 public:
     VkRenderingDevice() = default;
     ~VkRenderingDevice() override = default;

@@ -23,11 +23,12 @@ namespace vk_memory
                                                   const vk::PhysicalDeviceMemoryProperties &memory_properties,
                                                   const vk::MemoryRequirements &requirements,
                                                   vk::MemoryPropertyFlags required,
-                                                  const vk::MemoryDedicatedAllocateInfo *dedicated_info)
+                                                  const vk::MemoryDedicatedAllocateInfo *dedicated_info,
+                                                  bool allow_fallback)
     {
         std::optional<uint32_t> memory_type_index =
             find_memory_type_index(memory_properties, requirements.memoryTypeBits, required);
-        if (!memory_type_index)
+        if (!memory_type_index && allow_fallback)
         {
             // 常见的 required 是 eDeviceLocal；个别软件/移动实现没有完全匹配的类型，
             // 这里降级为"只要类型位兼容就分配"，避免资源创建直接失败。

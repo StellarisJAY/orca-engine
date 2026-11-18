@@ -30,7 +30,7 @@ add_executable(orca-tests
 # Vulkan 专属的纯逻辑测试（格式/用途映射）只在启用 Vulkan 后端时编译。
 # 头文件会引入 vulkan.hpp，因此需要 Vulkan 的 include dir 与链接目标。
 if(ORCA_RENDERER_VULKAN)
-    target_sources(orca-tests PRIVATE servers/test_vk_format.cpp)
+    target_sources(orca-tests PRIVATE servers/test_vk_format.cpp servers/test_vk_image_layout.cpp)
     target_link_libraries(orca-tests PRIVATE Vulkan::Vulkan)
 endif()
 

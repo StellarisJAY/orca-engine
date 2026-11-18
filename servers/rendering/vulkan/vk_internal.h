@@ -35,7 +35,17 @@ struct VkTextureHandleData
     uint32_t mip_levels = 1;
     /// @brief 数组层数：2D 为 1，Cube 为 6
     uint32_t layers = 1;
+    /// @brief 创建时的 usage 位掩码：queue_write_texture / generate_mip_map 据此校验
+    ///        image 是否真的带 TRANSFER_SRC/DST 用途（VkImage 不记录这个信息）。
+    uint8_t usage = 0;
+    /// @brief 纹理静止阶段的布局，由 vk_image_resting_layout(format, usage) 推导。
+    vk::ImageLayout resting_layout { vk::ImageLayout::eUndefined };
+    /// @brief 整张图当前所处的布局；Vulkan 的 layout 是显式状态，每次切换后更新。
+    vk::ImageLayout current_layout { vk::ImageLayout::eUndefined };
+    /// @brief 调试用标签（创建 desc.label 的副本，供上传/mipmap 日志）
+    std::string label;
 };
+
 
 struct VkTextureViewHandleData
 {

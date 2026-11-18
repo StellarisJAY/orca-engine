@@ -56,6 +56,18 @@ TEST_CASE("RHI validation: format predicates")
     CHECK(rhi_vertex_format_size(VertexFormat::Float32x4) == 16);
     CHECK(rhi_vertex_format_size(VertexFormat::Uint32) == 4);
     CHECK(rhi_vertex_format_size(VertexFormat::Uint8x4Normalized) == 4);
+
+    // 纹理 texel 字节数：上传时计算紧密打包行宽（bytes_per_row == 0 的默认值）
+    CHECK(rhi_format_texel_size(Format::R8Unorm) == 1);
+    CHECK(rhi_format_texel_size(Format::RG8Unorm) == 2);
+    CHECK(rhi_format_texel_size(Format::R16Float) == 2);
+    CHECK(rhi_format_texel_size(Format::RGBA8Unorm) == 4);
+    CHECK(rhi_format_texel_size(Format::RGBA8UnormSrgb) == 4);
+    CHECK(rhi_format_texel_size(Format::BGRA8Unorm) == 4);
+    CHECK(rhi_format_texel_size(Format::BGRA8UnormSrgb) == 4);
+    CHECK(rhi_format_texel_size(Format::Depth32Float) == 4);
+    CHECK(rhi_format_texel_size(Format::RGBA16Float) == 8);
+    CHECK(rhi_format_texel_size(Format::Undefined) == 0);
 }
 
 TEST_CASE("RHI validation: texture desc")

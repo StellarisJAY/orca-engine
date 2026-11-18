@@ -56,6 +56,24 @@ uint32_t rhi_vertex_format_size(VertexFormat format)
     return 0;
 }
 
+uint32_t rhi_format_texel_size(Format format)
+{
+    switch (format)
+    {
+    case Format::R8Unorm: return 1;
+    case Format::RG8Unorm: return 2;
+    case Format::R16Float: return 2;
+    case Format::RGBA8Unorm:
+    case Format::RGBA8UnormSrgb:
+    case Format::BGRA8Unorm:
+    case Format::BGRA8UnormSrgb:
+    case Format::Depth32Float: return 4;
+    case Format::RGBA16Float: return 8;
+    case Format::Undefined:
+    default: return 0;
+    }
+}
+
 bool rhi_validate_texture_desc(const TextureDescRefactor &desc, std::string &error)
 {
     if (desc.format == Format::Undefined)

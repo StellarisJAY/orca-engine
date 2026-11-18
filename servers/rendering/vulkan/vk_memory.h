@@ -34,8 +34,11 @@ namespace vk_memory
 
     /// @brief 为一块资源分配独占显存。
     ///
-    /// 先按 required 找内存类型；找不到时降级到任意兼容类型并打印警告，
-    /// 这样在个别没有设备本地内存的实现上创建资源不会直接失败。
+    /// 先按 required 找内存类型；找不到时：
+    ///   - allow_fallback == true（默认）：降级到任意兼容类型并打印警告，
+    ///     这样在个别没有设备本地内存的实现上创建设备资源不会直接失败；
+    ///   - allow_fallback == false：直接报错返回空句柄。staging buffer 必须用
+    ///     严格模式——映射一块非 host-visible 内存会直接失败。
     /// 注意：调用方必须保证 requirements 来自即将绑定的那个资源。
     ///
     /// @param dedicated_info 可选。驱动声明 requiresDedicatedAllocation/prefersDedicatedAllocation
@@ -45,5 +48,6 @@ namespace vk_memory
                                                   const vk::PhysicalDeviceMemoryProperties &memory_properties,
                                                   const vk::MemoryRequirements &requirements,
                                                   vk::MemoryPropertyFlags required,
-                                                  const vk::MemoryDedicatedAllocateInfo *dedicated_info = nullptr);
+                                                  const vk::MemoryDedicatedAllocateInfo *dedicated_info = nullptr,
+                                                  bool allow_fallback = true);
 } // namespace vk_memory
