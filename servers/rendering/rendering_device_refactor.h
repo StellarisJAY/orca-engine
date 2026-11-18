@@ -243,6 +243,22 @@ enum class FilterMode
     Linear,
 };
 
+/// @brief 深度比较函数：采样器 compare_op（阴影 PCF）与管线 depth_compare 共用同一套取值。
+///
+/// 命名沿用 WebGPU 的 CompareFunction：`LessEqual` 表示"新值 <= 旧值"通过比较
+/// （Vulkan 的 `VK_COMPARE_OP_LESS_OR_EQUAL`、GL 的 `GL_LEQUAL`）。
+enum class CompareFunction
+{
+    Never,
+    Less,
+    Equal,
+    LessEqual,
+    Greater,
+    NotEqual,
+    GreaterEqual,
+    Always,
+};
+
 struct SamplerDesc
 {
     AddressMode address_u = AddressMode::Repeat;
@@ -255,6 +271,9 @@ struct SamplerDesc
     float lod_max_clamp = 1000.0f;
     /// @brief 深度比较采样（阴影 PCF 预留）；GL 对应 GL_TEXTURE_COMPARE_MODE
     bool compare_enable = false;
+    /// @brief 比较函数；仅 compare_enable 为 true 时生效。默认 LessEqual 与 WebGPU 一致。
+    ///        GL 对应 GL_TEXTURE_COMPARE_FUNC，Vulkan 对应 VkSamplerCreateInfo::compareOp。
+    CompareFunction compare_op = CompareFunction::LessEqual;
 };
 
 /// @brief 纹理上传描述。
@@ -465,18 +484,6 @@ struct FragmentStage
     ShaderHandle module;
     std::string entry_point = "main";
     std::vector<ColorTargetState> targets;
-};
-
-enum class CompareFunction
-{
-    Never,
-    Less,
-    Equal,
-    LessEqual,
-    Greater,
-    NotEqual,
-    GreaterEqual,
-    Always,
 };
 
 struct DepthStencilState

@@ -32,6 +32,19 @@ uint32_t rhi_vertex_format_size(VertexFormat format);
 /// GL/Vulkan 两个后端的 queue_write_texture 共用同一份换算。
 uint32_t rhi_format_texel_size(Format format);
 
+/// @brief 校验缓冲区描述。
+///
+/// 当前约束：
+///   - size 必须大于 0；
+///   - usage 不能为空，且只能包含 GPUBufferUsage 已定义的位（STORAGE 视为未知用途，
+///     与纹理的 TEXTURE_USAGE 规则一致，本期直接拒绝）；
+///   - VERTEX / INDEX / UNIFORM / STORAGE 中最多只能有一个（GL 后端一个缓冲对象
+///     只能绑定一个目标，Vulkan 虽允许叠加，但两端要共用同一条描述约束）。
+bool rhi_validate_buffer_desc(const GPUBufferDesc &desc, std::string &error);
+
+/// @brief 校验一次缓冲区写入的区间（不校验指针与 usage）。
+bool rhi_validate_buffer_write(uint64_t buffer_size, uint64_t offset, uint64_t size, std::string &error);
+
 /// @brief 校验纹理描述。
 bool rhi_validate_texture_desc(const TextureDescRefactor &desc, std::string &error);
 
@@ -50,6 +63,27 @@ struct RhiTextureInfo
 /// @brief 校验纹理视图描述与父纹理是否匹配（含 0 值到默认范围的解析）。
 bool rhi_validate_texture_view_desc(const RhiTextureInfo &texture, const TextureViewDesc &desc,
                                     std::string &error);
+
+/// @brief 已解析的纹理视图范围（把 desc 里的 0 解析成"到最后一层/面"）。
+///
+/// 两个后端都直接拿这份结果去填 subresourceRange / 逻辑视图范围，避免各自再算一遍
+/// `mip_count == 0 ? mip_levels - base_mip : mip_count`（GL 与 Vulkan 分叉点）。
+struct RhiTextureViewRange
+{
+    TextureViewDimension dim = TextureViewDimension::Texture2D;
+    TextureAspect aspect = TextureAspect::Color;
+    uint32_t base_mip = 0;
+    uint32_t mip_count = 1;
+    uint32_t base_layer = 0;
+    uint32_t layer_count = 1;
+};
+
+/// @brief 校验纹理视图描述并解析出最终范围（校验规则同 `rhi_validate_texture_view_desc`）。
+///
+/// Vulkan 的 cubemap 视图要求 `baseArrayLayer % 6 == 0` 且 `layerCount` 是 6 的倍数，
+/// 这条约束在这里统一拒绝，避免把非法范围送进 `vkCreateImageView`。
+bool rhi_resolve_texture_view_range(const RhiTextureInfo &texture, const TextureViewDesc &desc,
+                                    RhiTextureViewRange &range, std::string &error);
 
 /// @brief 校验采样器描述。
 bool rhi_validate_sampler_desc(const SamplerDesc &desc, std::string &error);

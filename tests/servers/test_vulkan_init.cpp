@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <vector>
 
 int main()
@@ -78,7 +79,7 @@ int main()
         std::printf("[TEST] command encoder round-trip OK.\n");
     }
 
-    // V1：采样器映射 + destroy 链路。
+    // V1：采样器映射（含 compare_op）+ destroy 链路。
     {
         SamplerHandle sampler = device->create_sampler(SamplerDesc{});
         if (!sampler.is_valid())
@@ -87,7 +88,23 @@ int main()
             return 1;
         }
         device->destroy_sampler(sampler);
-        std::printf("[TEST] sampler create/destroy OK.\n");
+
+        // 阴影 PCF 用的深度比较采样器：compareEnable + compareOp 必须都映射到位。
+        SamplerDesc compare_desc;
+        compare_desc.compare_enable = true;
+        compare_desc.compare_op = CompareFunction::GreaterEqual;
+        compare_desc.mag_filter = FilterMode::Nearest;
+        compare_desc.min_filter = FilterMode::Nearest;
+        compare_desc.address_u = AddressMode::ClampToEdge;
+        compare_desc.address_v = AddressMode::ClampToEdge;
+        SamplerHandle compare_sampler = device->create_sampler(compare_desc);
+        if (!compare_sampler.is_valid())
+        {
+            std::printf("[TEST] create_sampler(compare) failed.\n");
+            return 1;
+        }
+        device->destroy_sampler(compare_sampler);
+        std::printf("[TEST] sampler create/destroy OK (default + compare).\n");
     }
 
     // V2：create_texture 必须完成 VkImage + 独占显存分配/绑定，且颜色/深度/cubemap
@@ -159,6 +176,7 @@ int main()
             return 1;
         }
 
+        // 完整 cubemap 视图（6 层）与 mip 子范围视图（base 1，count 2）
         TextureViewDesc cube_view_desc;
         cube_view_desc.dim = TextureViewDimension::Cube;
         cube_view_desc.aspect = TextureAspect::Color;
@@ -169,9 +187,84 @@ int main()
             return 1;
         }
         device->destroy_texture_view(cube_view);
+
+        TextureViewDesc cube_mip_view_desc;
+        cube_mip_view_desc.dim = TextureViewDimension::Cube;
+        cube_mip_view_desc.base_mip = 1;
+        cube_mip_view_desc.mip_count = 2;
+        TextureViewHandle cube_mip_view = device->create_texture_view(cube, cube_mip_view_desc);
+        if (!cube_mip_view.is_valid())
+        {
+            std::printf("[TEST] create_texture_view(cube mip range) failed.\n");
+            return 1;
+        }
+        device->destroy_texture_view(cube_mip_view);
+
+        // 非法视图描述必须在入口被拒绝（只打印 [ERROR]，不能进入 driver）：
+        // 1) cubemap 不能按 2D 查看；2) base_layer 不是 6 的倍数；
+        // 3) layer_count 不是 6 的倍数；4) 深度纹理用 Color aspect；
+        // 5) mip 范围越界；6) 无效父句柄。
+        TextureViewDesc cube_as_2d;
+        cube_as_2d.dim = TextureViewDimension::Texture2D;
+        if (device->create_texture_view(cube, cube_as_2d).is_valid())
+        {
+            std::printf("[TEST] create_texture_view accepted a cube-as-2D view.\n");
+            return 1;
+        }
+
+        TextureViewDesc misaligned_cube;
+        misaligned_cube.dim = TextureViewDimension::Cube;
+        misaligned_cube.base_layer = 3;
+        if (device->create_texture_view(cube, misaligned_cube).is_valid())
+        {
+            std::printf("[TEST] create_texture_view accepted a misaligned cubemap base_layer.\n");
+            return 1;
+        }
+
+        TextureViewDesc partial_cube;
+        partial_cube.dim = TextureViewDimension::Cube;
+        partial_cube.layer_count = 3;
+        if (device->create_texture_view(cube, partial_cube).is_valid())
+        {
+            std::printf("[TEST] create_texture_view accepted a partial cubemap layer_count.\n");
+            return 1;
+        }
+
+        TextureViewDesc mip_out_of_range;
+        mip_out_of_range.dim = TextureViewDimension::Cube;
+        mip_out_of_range.base_mip = 5; // 该纹理只有 5 层（0..4）
+        if (device->create_texture_view(cube, mip_out_of_range).is_valid())
+        {
+            std::printf("[TEST] create_texture_view accepted an out-of-range mip.\n");
+            return 1;
+        }
+
+        if (device->create_texture_view(TextureHandle{}, cube_view_desc).is_valid())
+        {
+            std::printf("[TEST] create_texture_view accepted an invalid texture handle.\n");
+            return 1;
+        }
+
+        // 颜色纹理用 DepthOnly / 深度纹理用 Color 都必须被拒绝
+        TextureViewDesc depth_as_color;
+        depth_as_color.aspect = TextureAspect::Color;
+        depth_desc.label = "smoke-depth-reject";
+        TextureHandle depth_for_view = device->create_texture(depth_desc);
+        if (!depth_for_view.is_valid())
+        {
+            std::printf("[TEST] create_texture(depth-view-reject) failed.\n");
+            return 1;
+        }
+        if (device->create_texture_view(depth_for_view, depth_as_color).is_valid())
+        {
+            std::printf("[TEST] create_texture_view accepted a depth texture with Color aspect.\n");
+            return 1;
+        }
+        device->destroy_texture(depth_for_view);
+
         device->destroy_texture(cube);
 
-        std::printf("[TEST] texture create/bind/destroy OK (color + depth + cubemap).\n");
+        std::printf("[TEST] texture view create/range validation OK (2D + depth + cubemap mip range).\n");
     }
 
     // V3：queue_write_texture（staging + layout transition）与 generate_mip_map。
@@ -308,6 +401,87 @@ int main()
         std::printf("[TEST] upload usage validation handled.\n");
     }
 
+    // V2-1：create_buffer + queue_write_buffer（staging → vkCmdCopyBuffer）。
+    {
+        // 1) 顶点缓冲：整段写入。
+        GPUBufferDesc vertex_desc;
+        vertex_desc.label = "smoke-vertex";
+        vertex_desc.size = 4 * 1024;
+        vertex_desc.usage = GPUBufferUsage::VERTEX | GPUBufferUsage::COPY_DST;
+        GPUBufferHandle vertex_buffer = device->create_buffer(vertex_desc);
+        if (!vertex_buffer.is_valid())
+        {
+            std::printf("[TEST] create_buffer(vertex) failed.\n");
+            return 1;
+        }
+        std::vector<float> vertices(256 * 3);
+        for (size_t i = 0; i < vertices.size(); ++i)
+            vertices[i] = static_cast<float>(i);
+        device->queue_write_buffer(vertex_buffer, 0, vertices.data(), vertices.size() * sizeof(float));
+
+        // 2) 索引缓冲：26 字节容量，分两次写入（第二次带偏移），覆盖 2 字节整数倍
+        //    的拷贝大小（vkCmdCopyBuffer 不要求 4 字节对齐，这里刻意用 12 字节验证）。
+        GPUBufferDesc index_desc;
+        index_desc.label = "smoke-index";
+        index_desc.size = 24;
+        index_desc.usage = GPUBufferUsage::INDEX | GPUBufferUsage::COPY_DST;
+        GPUBufferHandle index_buffer = device->create_buffer(index_desc);
+        if (!index_buffer.is_valid())
+        {
+            std::printf("[TEST] create_buffer(index) failed.\n");
+            return 1;
+        }
+        const uint16_t indices[6] = {0, 1, 2, 2, 3, 0};
+        device->queue_write_buffer(index_buffer, 0, indices, sizeof(indices));
+        device->queue_write_buffer(index_buffer, 12, indices, sizeof(indices));
+
+        // 3) uniform 缓冲：64 字节（UBO 常见尺寸）。
+        GPUBufferDesc uniform_desc;
+        uniform_desc.label = "smoke-uniform";
+        uniform_desc.size = 64;
+        uniform_desc.usage = GPUBufferUsage::UNIFORM | GPUBufferUsage::COPY_DST;
+        GPUBufferHandle uniform_buffer = device->create_buffer(uniform_desc);
+        if (!uniform_buffer.is_valid())
+        {
+            std::printf("[TEST] create_buffer(uniform) failed.\n");
+            return 1;
+        }
+        float ubo[16] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                         0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+        device->queue_write_buffer(uniform_buffer, 0, ubo, sizeof(ubo));
+
+        // 4) 非法写入必须在入口被拒绝：越界区间、空指针、未带 COPY_DST 的缓冲区。
+        device->queue_write_buffer(index_buffer, 24, indices, sizeof(indices));
+        device->queue_write_buffer(index_buffer, 0, nullptr, sizeof(indices));
+
+        GPUBufferDesc no_copy_desc;
+        no_copy_desc.label = "smoke-buffer-no-copy";
+        no_copy_desc.size = 64;
+        no_copy_desc.usage = GPUBufferUsage::VERTEX;
+        GPUBufferHandle no_copy_buffer = device->create_buffer(no_copy_desc);
+        if (!no_copy_buffer.is_valid())
+        {
+            std::printf("[TEST] create_buffer(no-copy) failed.\n");
+            return 1;
+        }
+        device->queue_write_buffer(no_copy_buffer, 0, ubo, sizeof(ubo)); // 期望打印 ERROR 后返回
+        device->destroy_buffer(no_copy_buffer);
+
+        // 5) 非法描述（size == 0 / usage 为空）必须在 create 入口被拒绝。
+        if (device->create_buffer(GPUBufferDesc{}).is_valid())
+        {
+            std::printf("[TEST] create_buffer accepted an invalid description.\n");
+            return 1;
+        }
+
+        std::printf("[TEST] buffer create/write OK (vertex + index with offset + uniform).\n");
+
+        device->destroy_buffer(vertex_buffer);
+        device->destroy_buffer(index_buffer);
+        device->destroy_buffer(uniform_buffer);
+        std::printf("[TEST] buffer write validation handled.\n");
+    }
+
     // V1：非法描述必须在 create 入口被拒绝，不能进入 driver。
     {
         TextureDescRefactor bad_texture;
@@ -325,6 +499,22 @@ int main()
         if (device->create_sampler(bad_sampler).is_valid())
         {
             std::printf("[TEST] create_sampler accepted an invalid description.\n");
+            return 1;
+        }
+
+        SamplerDesc nan_sampler;
+        nan_sampler.lod_min_clamp = std::numeric_limits<float>::quiet_NaN();
+        if (device->create_sampler(nan_sampler).is_valid())
+        {
+            std::printf("[TEST] create_sampler accepted a NaN lod clamp.\n");
+            return 1;
+        }
+
+        SamplerDesc old_lod_sampler;
+        old_lod_sampler.lod_max_clamp = 2000.0f; // 超过 VK_LOD_CLAMP_NONE
+        if (device->create_sampler(old_lod_sampler).is_valid())
+        {
+            std::printf("[TEST] create_sampler accepted an out-of-range maxLod.\n");
             return 1;
         }
 

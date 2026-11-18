@@ -65,6 +65,27 @@ private:
     vk::Extent2D choose_swap_extent(const vk::SurfaceCapabilitiesKHR &capabilities) const;
     uint64_t alloc_handle_id() { return next_handle_id++; }
 
+    /// @brief 复用的 host-visible staging buffer（缓冲区上传用）。
+    ///
+    /// 容量按最大的写入请求扩容（向上取整到 4 KiB），避免每次 queue_write_buffer
+    /// 都重新分配一块 VkBuffer + VkDeviceMemory。queue_write_buffer 是"提交 + fence
+    /// 等待"的同步语义，调用返回时上一次拷贝已经完成，因此同一块 staging 可以在下
+    /// 一次写入时安全复用。
+    ///
+    /// 注意成员声明顺序：staging 必须声明在 device 之后，保证它与 device 的析构顺序
+    /// （staging 先销毁）正确。
+    struct StagingBuffer
+    {
+        // 声明顺序保证逆序析构：buffer 先于它绑定的 memory 释放。
+        vk::raii::DeviceMemory memory { nullptr };
+        vk::raii::Buffer buffer { nullptr };
+        uint64_t capacity = 0;
+    };
+    StagingBuffer staging_buffer;
+
+    /// @brief 保证 staging buffer 容量不小于 size；需要时重建（旧 buffer 先于旧 memory 释放）。
+    bool ensure_staging_capacity(uint64_t size, const char *what);
+
     /// @brief 记录一组命令并立即提交到图形队列，阻塞到 fence 信号。
     ///
     /// 供 queue_write_texture / generate_mip_map 这类"一次性上传"使用：内部创建

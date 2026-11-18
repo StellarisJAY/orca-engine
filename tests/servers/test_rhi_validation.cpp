@@ -1,6 +1,7 @@
 #include "doctest/doctest.h"
 #include "rhi_validation.h"
 
+#include <limits>
 #include <string>
 
 namespace
@@ -37,6 +38,14 @@ namespace
         desc.fragment.targets.push_back(target);
         return desc;
     }
+
+    GPUBufferDesc make_valid_buffer()
+    {
+        GPUBufferDesc desc;
+        desc.size = 1024;
+        desc.usage = GPUBufferUsage::VERTEX | GPUBufferUsage::COPY_DST;
+        return desc;
+    }
 } // namespace
 
 TEST_CASE("RHI validation: format predicates")
@@ -68,6 +77,63 @@ TEST_CASE("RHI validation: format predicates")
     CHECK(rhi_format_texel_size(Format::Depth32Float) == 4);
     CHECK(rhi_format_texel_size(Format::RGBA16Float) == 8);
     CHECK(rhi_format_texel_size(Format::Undefined) == 0);
+}
+
+TEST_CASE("RHI validation: buffer desc")
+{
+    std::string error;
+
+    GPUBufferDesc desc = make_valid_buffer();
+    CHECK(rhi_validate_buffer_desc(desc, error));
+
+    // 顶点 / 索引 / uniform 各自只带一个主用途也合法；COPY_DST 是写入的前提。
+    desc = make_valid_buffer();
+    desc.usage = GPUBufferUsage::INDEX | GPUBufferUsage::COPY_DST;
+    CHECK(rhi_validate_buffer_desc(desc, error));
+
+    desc = make_valid_buffer();
+    desc.usage = GPUBufferUsage::UNIFORM;
+    CHECK(rhi_validate_buffer_desc(desc, error));
+
+    desc = make_valid_buffer();
+    desc.size = 0;
+    CHECK_FALSE(rhi_validate_buffer_desc(desc, error));
+    CHECK(error.find("size") != std::string::npos);
+
+    desc = make_valid_buffer();
+    desc.usage = 0;
+    CHECK_FALSE(rhi_validate_buffer_desc(desc, error));
+    CHECK(error.find("usage") != std::string::npos);
+
+    // STORAGE 与纹理的 STORAGE 一样是预留能力，本期必须被拒绝。
+    desc = make_valid_buffer();
+    desc.usage = GPUBufferUsage::STORAGE;
+    CHECK_FALSE(rhi_validate_buffer_desc(desc, error));
+
+    // 未定义的用途位不能被静默忽略。
+    desc = make_valid_buffer();
+    desc.usage = static_cast<uint8_t>(GPUBufferUsage::VERTEX | 0x40);
+    CHECK_FALSE(rhi_validate_buffer_desc(desc, error));
+
+    // GL 一个缓冲对象只能有一个目标：两个主用途同时出现必须被拒绝。
+    desc = make_valid_buffer();
+    desc.usage = GPUBufferUsage::VERTEX | GPUBufferUsage::INDEX;
+    CHECK_FALSE(rhi_validate_buffer_desc(desc, error));
+}
+
+TEST_CASE("RHI validation: buffer write range")
+{
+    std::string error;
+
+    CHECK(rhi_validate_buffer_write(1024, 0, 1024, error));
+    CHECK(rhi_validate_buffer_write(1024, 512, 512, error));
+    CHECK_FALSE(rhi_validate_buffer_write(1024, 1024, 0, error)); // size == 0 非法
+
+    // 越界与偏移超出缓冲尾都必须被拒绝（不能出现 offset + size 溢出绕过检查）。
+    CHECK_FALSE(rhi_validate_buffer_write(1024, 1024, 4, error));
+    CHECK_FALSE(rhi_validate_buffer_write(1024, 0, 1025, error));
+    CHECK_FALSE(rhi_validate_buffer_write(1024, 2048, 4, error));
+    CHECK_FALSE(rhi_validate_buffer_write(1024, UINT64_MAX, 4, error));
 }
 
 TEST_CASE("RHI validation: texture desc")
@@ -161,7 +227,7 @@ TEST_CASE("RHI validation: texture view desc")
     view.aspect = TextureAspect::DepthOnly;
     CHECK(rhi_validate_texture_view_desc(depth_texture, view, error));
 
-    // cubemap：6 层，必须按 Cube 维度查看
+    // cubemap：6 层，必须按 Cube 维度查看；eCube 视图要求 base_layer 是 6 的倍数
     RhiTextureInfo cube;
     cube.format = Format::RGBA8Unorm;
     cube.dim = TextureDimension::Cube;
@@ -172,9 +238,88 @@ TEST_CASE("RHI validation: texture view desc")
     view = make_valid_view();
     view.dim = TextureViewDimension::Cube;
     CHECK(rhi_validate_texture_view_desc(cube, view, error));
-    view.base_layer = 5;
+    view.base_layer = 5; // 非 6 的倍数
     view.layer_count = 2;
     CHECK_FALSE(rhi_validate_texture_view_desc(cube, view, error));
+
+    // 1D 纹理没有可用的视图维度
+    RhiTextureInfo texture1d = texture;
+    texture1d.dim = TextureDimension::Texture1D;
+    view = make_valid_view();
+    CHECK_FALSE(rhi_validate_texture_view_desc(texture1d, view, error));
+}
+
+TEST_CASE("RHI validation: texture view range")
+{
+    RhiTextureInfo cube;
+    cube.format = Format::RGBA8Unorm;
+    cube.dim = TextureDimension::Cube;
+    cube.width = 64;
+    cube.height = 64;
+    cube.mip_levels = 5;
+    cube.layers = 6;
+
+    RhiTextureViewRange range;
+    std::string error;
+
+    // mip_count / layer_count 为 0 时解析成"到最后一层/面"
+    TextureViewDesc desc;
+    desc.dim = TextureViewDimension::Cube;
+    CHECK(rhi_resolve_texture_view_range(cube, desc, range, error));
+    CHECK(range.dim == TextureViewDimension::Cube);
+    CHECK(range.aspect == TextureAspect::Color);
+    CHECK(range.base_mip == 0);
+    CHECK(range.mip_count == 5);
+    CHECK(range.base_layer == 0);
+    CHECK(range.layer_count == 6);
+
+    // 显式范围与"0 展开"都要落到同一个结果上
+    desc.base_mip = 1;
+    desc.mip_count = 2;
+    CHECK(rhi_resolve_texture_view_range(cube, desc, range, error));
+    CHECK(range.base_mip == 1);
+    CHECK(range.mip_count == 2);
+    desc.mip_count = 0;
+    CHECK(rhi_resolve_texture_view_range(cube, desc, range, error));
+    CHECK(range.mip_count == 4);
+
+    // cubemap 视图的 base_layer / layer_count 都必须是 6 的倍数（Vulkan eCube 约束）
+    desc = TextureViewDesc{};
+    desc.dim = TextureViewDimension::Cube;
+    desc.base_layer = 3;
+    CHECK_FALSE(rhi_resolve_texture_view_range(cube, desc, range, error));
+    CHECK(error.find("multiple of 6") != std::string::npos);
+
+    desc = TextureViewDesc{};
+    desc.dim = TextureViewDimension::Cube;
+    desc.layer_count = 3;
+    CHECK_FALSE(rhi_resolve_texture_view_range(cube, desc, range, error));
+    CHECK(error.find("multiple of 6") != std::string::npos);
+
+    // 超大 mip_count 不能靠 uint32 溢出绕过区间检查
+    desc = TextureViewDesc{};
+    desc.dim = TextureViewDimension::Cube;
+    desc.mip_count = UINT32_MAX;
+    CHECK_FALSE(rhi_resolve_texture_view_range(cube, desc, range, error));
+
+    // 2D 纹理解析为单层
+    RhiTextureInfo texture;
+    texture.format = Format::RGBA8Unorm;
+    texture.dim = TextureDimension::Texture2D;
+    texture.width = 64;
+    texture.height = 64;
+    texture.mip_levels = 4;
+    texture.layers = 1;
+    CHECK(rhi_resolve_texture_view_range(texture, TextureViewDesc{}, range, error));
+    CHECK(range.base_mip == 0);
+    CHECK(range.mip_count == 4);
+    CHECK(range.base_layer == 0);
+    CHECK(range.layer_count == 1);
+
+    // 1D 纹理没有视图维度（GL/VK 都不支持）
+    RhiTextureInfo texture1d = texture;
+    texture1d.dim = TextureDimension::Texture1D;
+    CHECK_FALSE(rhi_resolve_texture_view_range(texture1d, TextureViewDesc{}, range, error));
 }
 
 TEST_CASE("RHI validation: sampler desc")
@@ -191,6 +336,29 @@ TEST_CASE("RHI validation: sampler desc")
     desc.lod_min_clamp = 2.0f;
     desc.lod_max_clamp = 1.0f;
     CHECK_FALSE(rhi_validate_sampler_desc(desc, error));
+
+    // NaN / Inf 会绕过顺序比较，必须显式拒绝
+    desc = SamplerDesc{};
+    desc.lod_min_clamp = std::numeric_limits<float>::quiet_NaN();
+    CHECK_FALSE(rhi_validate_sampler_desc(desc, error));
+    CHECK(error.find("finite") != std::string::npos);
+
+    desc = SamplerDesc{};
+    desc.lod_max_clamp = std::numeric_limits<float>::infinity();
+    CHECK_FALSE(rhi_validate_sampler_desc(desc, error));
+    CHECK(error.find("finite") != std::string::npos);
+
+    // maxLod 超过 VK_LOD_CLAMP_NONE（1000）在 Vulkan 里是非法描述，共享层提前拒绝
+    desc = SamplerDesc{};
+    desc.lod_max_clamp = 2000.0f;
+    CHECK_FALSE(rhi_validate_sampler_desc(desc, error));
+    CHECK(error.find("1000") != std::string::npos);
+
+    // compare 相关字段不参与 lod 校验（compare_op 的取值域由枚举本身保证）
+    desc = SamplerDesc{};
+    desc.compare_enable = true;
+    desc.compare_op = CompareFunction::GreaterEqual;
+    CHECK(rhi_validate_sampler_desc(desc, error));
 }
 
 TEST_CASE("RHI validation: render pipeline desc")

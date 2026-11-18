@@ -57,3 +57,39 @@ vk::ImageUsageFlags vk_image_usage_from_flags(uint8_t usage, Format format)
         flags |= vk::ImageUsageFlagBits::eStorage;
     return flags;
 }
+
+vk::BufferUsageFlags vk_buffer_usage_from_flags(uint8_t usage)
+{
+    vk::BufferUsageFlags flags;
+    if ((usage & GPUBufferUsage::VERTEX) != 0)
+        flags |= vk::BufferUsageFlagBits::eVertexBuffer;
+    if ((usage & GPUBufferUsage::INDEX) != 0)
+        flags |= vk::BufferUsageFlagBits::eIndexBuffer;
+    if ((usage & GPUBufferUsage::UNIFORM) != 0)
+        flags |= vk::BufferUsageFlagBits::eUniformBuffer;
+    if ((usage & GPUBufferUsage::COPY_DST) != 0)
+        flags |= vk::BufferUsageFlagBits::eTransferDst;
+    if ((usage & GPUBufferUsage::COPY_SRC) != 0)
+        flags |= vk::BufferUsageFlagBits::eTransferSrc;
+    // STORAGE 在接口里标注为预留，共享校验当前会拒绝；这里先保留映射，
+    // compute / 存储缓冲真正实现时不需要再改这张表。
+    if ((usage & GPUBufferUsage::STORAGE) != 0)
+        flags |= vk::BufferUsageFlagBits::eStorageBuffer;
+    return flags;
+}
+
+vk::CompareOp vk_compare_op_from_function(CompareFunction function)
+{
+    switch (function)
+    {
+    case CompareFunction::Never: return vk::CompareOp::eNever;
+    case CompareFunction::Less: return vk::CompareOp::eLess;
+    case CompareFunction::Equal: return vk::CompareOp::eEqual;
+    case CompareFunction::LessEqual: return vk::CompareOp::eLessOrEqual;
+    case CompareFunction::Greater: return vk::CompareOp::eGreater;
+    case CompareFunction::NotEqual: return vk::CompareOp::eNotEqual;
+    case CompareFunction::GreaterEqual: return vk::CompareOp::eGreaterOrEqual;
+    case CompareFunction::Always: return vk::CompareOp::eAlways;
+    default: return vk::CompareOp::eLessOrEqual;
+    }
+}

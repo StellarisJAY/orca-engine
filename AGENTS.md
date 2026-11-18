@@ -37,7 +37,7 @@
 | 构建系统 | CMake >= 3.16 | 当前构建目录使用 `MinGW Makefiles` 生成器 |
 | 编译器（现有环境） | MinGW-w64 g++ | `build/CMakeCache.txt` 中为 `E:/tools/mingw64/bin/g++.exe` |
 | 图形 API | OpenGL 3.3 Core（默认、可用） | 通过 `thirdparty/glad` 加载现代入口点；GLSL `#version 330 core` |
-| 图形 API（可选） | Vulkan | V0/V1 已完成：构建、唯一句柄、异常处理、`Format ↔ vk::Format` 映射与 GL/VK 共用描述校验；instance/device/swapchain 初始化可跑通；V2 已完成纹理显存分配/绑定、内容上传（staging + layout transition）与 mipmap 生成。buffer/绑定组/完整管线/draw/submit/present 仍未实现 |
+| 图形 API（可选） | Vulkan | V0/V1 已完成：构建、唯一句柄、异常处理、`Format ↔ vk::Format` 映射与 GL/VK 共用描述校验；instance/device/swapchain 初始化可跑通；V2 已完成纹理显存分配/绑定、内容上传（staging + layout transition）与 mipmap 生成，缓冲区显存分配/上传（`create_buffer`/`queue_write_buffer` + staging 池），以及纹理视图（2D/深度/cubemap + mip 子范围）与采样器（含 `compare_op`）。绑定组/完整管线/draw/submit/present 仍未实现 |
 | 窗口/输入 | GLFW（默认）或 SDL3 | 二选一，预编译库只提供 Windows/MinGW-w64 版本 |
 | 图像解码 | `stb_image`（单头文件） | 由 `ImageTextureLoader` 使用 |
 | glTF 解析 | `cgltf`（单头文件） | `.gltf/.glb` 的 JSON/GLB、bufferView/accessor；`#define CGLTF_IMPLEMENTATION` 在 `gltf_loader.cpp` 中定义 |
@@ -110,7 +110,7 @@ ORCA_RENDERER_DEFAULT = opengl
 ```powershell
 # SDL3 窗口后端（需要同时关闭 GLFW）
 cmake -S . -B build -DORCA_PLATFORM_GLFW=OFF -DORCA_PLATFORM_SDL3=ON
-# Vulkan 后端（V0/V1/V2 纹理可构建、可初始化；尚不能绘制，详见 docs/vulkan_rhi_checklist.md）
+# Vulkan 后端（V0/V1/V2 纹理/视图/采样器/缓冲区可构建、可初始化；尚不能绘制，详见 docs/vulkan_rhi_checklist.md）
 cmake -S . -B build -DORCA_RENDERER_OPENGL=OFF -DORCA_RENDERER_VULKAN=ON -DORCA_RENDERER_DEFAULT=vulkan
 ```
 
@@ -155,16 +155,16 @@ cd build
 
 | 目标 | 内容 | 是否注册到 CTest |
 |---|---|---|
-| `orca-tests` | doctest 单元测试：math / object / os / io / resource（OBJ + glTF + 贴图解码 + PackedScene + Mesh 状态 + 天空盒校验）/ scene（含 Node3D 变换）/ servers（天空盒立方体、RHI 描述校验；Vulkan 构建时另含 Format/Usage 与图像布局映射） | 是，名称为 `orca-tests` |
+| `orca-tests` | doctest 单元测试：math / object / os / io / resource（OBJ + glTF + 贴图解码 + PackedScene + Mesh 状态 + 天空盒校验）/ scene（含 Node3D 变换）/ servers（天空盒立方体、RHI 描述校验含 buffer desc/write 区间、view 范围解析与 sampler/compare 校验；Vulkan 构建时另含 Format/ImageUsage/BufferUsage/CompareOp 与图像布局映射） | 是，名称为 `orca-tests` |
 | `orca-platform-window-test` | 创建窗口并初始化 OpenGL 设备，手动运行 | 否 |
-| `orca-vulkan-init-test` | Vulkan `init → init_device → init_swapchain` 冒烟，并创建/销毁颜色/深度/cubemap 纹理验证显存分配，再上传纹理内容（含带行距的部分区域）与生成 cubemap mipmap；设置 `ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT=1` 可只初始化后退出 | 否 |
+| `orca-vulkan-init-test` | Vulkan `init → init_device → init_swapchain` 冒烟，并创建/销毁颜色/深度/cubemap 纹理验证显存分配与视图（含 cubemap mip 子范围、非法视图拒绝），上传纹理内容（含带行距的部分区域）与生成 cubemap mipmap，创建默认/compare 采样器，最后创建顶点/索引/uniform 缓冲并写入；设置 `ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT=1` 可只初始化后退出 | 否 |
 | `orca-application-test` | 演示程序（加载资源、渲染场景），手动运行 | 否 |
 | `orca-app-test-sponza` | Sponza glTF 场景演示 | 否 |
 
 > `tests/resource/test_obj_loader.cpp` 已重写并加入 `orca-tests`，覆盖四边形、负索引、缺失/混合法线、空面过滤、UV/兜底切线方向，以及 `ResourceLoader` 的 URL 缓存。修改 OBJ/资源加载时请同步更新这些用例。
 > 另有 `tests/core/io/test_file_access_and_path.cpp`（二进制读取、`decode_uri`）、`tests/resource/test_image_texture_loader.cpp`（内存解码 PNG、sampler setter）、`tests/resource/test_mesh.cpp`（RID dirty 状态）、`tests/resource/test_scene.cpp`（`PackedScene` 的 `add_node/add_root/duplicate/validate`）、`tests/resource/test_gltf_loader.cpp`（.gltf/.glb、节点层级、多 primitive、外部 bin、内嵌/data URI 图片、材质与 MR 拆分）、`tests/resource/test_skybox.cpp`（六面齐全/尺寸/通道/正方形/像素长度校验、GL 面顺序、逐面行序翻转）、`tests/scene/test_node3d_transform.cpp`（`set_transform`/负缩放/父子变换），修改对应实现时同步维护。
 > `test_gltf_loader.cpp` 在测试运行时自行生成 glTF/GLB 与 PNG 字节（base64、PNG、GLB 构造都在用例内），不依赖 `build/resources/` 中的样例资源。
-> 新增 `tests/servers/test_rhi_validation.cpp`（GL/Vulkan 共用的纹理/视图/采样器/管线描述校验）与 `tests/servers/test_vk_format.cpp`（仅 Vulkan 构建：Format↔vk::Format 双向映射、ImageUsage 位映射）；`tests/servers/test_vk_image_layout.cpp`（仅 Vulkan 构建：aspect / resting layout / barrier 映射 / mip 尺寸）。修改 `rhi_validation.*`、`vk_format.*` 或 `vk_image_layout.*` 时同步维护。
+> 新增 `tests/servers/test_rhi_validation.cpp`（GL/Vulkan 共用的纹理/缓冲区/视图（含范围解析）/采样器（含 lod/compare 约束）/管线描述校验）与 `tests/servers/test_vk_format.cpp`（仅 Vulkan 构建：Format↔vk::Format 双向映射、ImageUsage/BufferUsage 位映射、CompareFunction↔vk::CompareOp 映射）；`tests/servers/test_vk_image_layout.cpp`（仅 Vulkan 构建：aspect / resting layout / barrier 映射 / mip 尺寸）。修改 `rhi_validation.*`、`vk_format.*` 或 `vk_image_layout.*` 时同步维护。
 
 ### 3.5 测试编写规范
 
@@ -213,7 +213,7 @@ orca-engine/
 │  ├─ rendering_device.h/.cpp      # 后端抽象接口 + 工厂（按编译宏选 GL/VK）
 │  ├─ rendering_server.h/.cpp      # 高层 API：scene/camera/light/mesh/material/texture
 │  ├─ rendering_storage.h/.cpp     # 各资源的 CPU 端描述 + RIDStorage 实例
-│  ├─ rhi_validation.h/.cpp        # 后端无关的 RHI 描述校验（GL/Vulkan 共用）
+│  ├─ rhi_validation.h/.cpp        # 后端无关的 RHI 描述校验 + 视图范围解析（GL/Vulkan 共用）
 │  ├─ shader_loader.h/.cpp         # 从 res://shaders 或源码目录读取 GLSL
 │  ├─ skybox_cube.h/.cpp           # 天空盒用的 8 顶点立方体几何（仅位置 + 索引）
 │  ├─ opengl/
@@ -228,11 +228,12 @@ orca-engine/
 │  │  ├─ vk_rendering_device.h/.cpp# Vulkan 私有对象、生命周期/队列桩（V0/V1 已修构建与句柄）
 │  │  ├─ vk_rendering_device_init.cpp # instance/surface/物理设备/逻辑设备
 │  │  ├─ vk_swapchain.cpp          # swapchain 创建/格式选择/resize（V3 待补全）
-│  │  ├─ vk_internal.h             # Vulkan 资源对象数据结构（buffer/bind group 仍缺）
-│  │  ├─ vk_format.h/.cpp          # Format ↔ vk::Format 双向映射 + ImageUsage 映射
+│  │  ├─ vk_internal.h             # Vulkan 资源对象数据结构（buffer 已有；bind group/pipeline layout 仍缺）
+│  │  ├─ vk_format.h/.cpp          # Format ↔ vk::Format 双向映射 + ImageUsage/BufferUsage/CompareOp 映射
 │  │  ├─ vk_memory.h/.cpp          # 显存类型选择 + 独占分配（G-06 自建分配器）
 │  │  ├─ vk_image_layout.h/.cpp    # 布局/aspect/resting layout/barrier 映射（上传与 mipmap 共用）
 │  │  ├─ vk_resource.cpp           # shader/image/view/sampler 创建与销毁
+│  │  ├─ vk_buffer.cpp             # buffer 创建/写入/销毁 + 设备级 staging 池
 │  │  ├─ vk_pipeline.cpp           # graphics pipeline（V5 待补全）
 │  │  └─ vk_command.cpp            # 命令池/录制/render pass/draw（V6 待补全）
 │  └─ shaders/
@@ -290,8 +291,8 @@ orca-engine/
 │  ├─ scene/test_node3d_transform.cpp # Node3D TRS/负缩放/父子变换
 │  ├─ servers/test_skybox_cube.cpp # 天空盒立方体几何
 │  ├─ servers/test_rhi_validation.cpp # 后端无关的 RHI 描述校验（无窗口/GPU）
-│  ├─ servers/test_vk_format.cpp   # Vulkan Format/Usage 映射纯逻辑（仅 Vulkan 构建）
-│  ├─ servers/test_vulkan_init.cpp # Vulkan instance/device/swapchain + 纹理显存/上传/mipmap 冒烟（手动）
+│  ├─ servers/test_vk_format.cpp   # Vulkan Format/ImageUsage/BufferUsage/CompareOp 映射纯逻辑（仅 Vulkan 构建）
+│  ├─ servers/test_vulkan_init.cpp # Vulkan instance/device/swapchain + 纹理/视图/采样器 + 上传/mipmap + buffer 冒烟（手动）
 │  ├─ platform/test_window.cpp     # 窗口+设备初始化集成测试
 │  ├─ application/test_application.cpp # 可交互演示程序
 │  └─ application/test_scene_sponza.cpp # Sponza glTF 场景演示
@@ -370,8 +371,8 @@ Application::run()
 
 | 项目 | 现状 |
 |---|---|
-| Vulkan 后端 | V0/V1 已完成：`vk_command.cpp` 进入构建、唯一句柄、异常处理、Format↔vk::Format 与 ImageUsage 映射、GL/VK 共用描述校验；`init/init_device/init_swapchain` 可跑通（实测交换链 800x600、BGRA8UnormSrgb、validation 无 error）。V2 已完成纹理显存分配/绑定（`vk_memory.*`）与内容上传（`queue_write_texture` staging + layout transition）和 mipmap 生成（`generate_mip_map`，颜色/cubemap 冒烟通过）。buffer/bind group/pipeline layout、draw、submit、present 仍未实现，不能渲染 |
-| `RenderingDeviceRefactor`（新 RHI） | GL 适配器：M0/M1 与资源对象（纹理/视图/采样器/绑定组/布局）已实现；`create_render_pipeline` 仍是空桩，`gl_executor` 回放仍为空，`RenderingServer` 仍走旧 `RenderingDevice`。Vulkan 适配器：V0/V1 完成构建与格式/校验，V2 完成纹理显存、内容上传与 mipmap，资源对象创建可走到 driver 边界，但缓冲/绑定/管线/命令提交未完成。GL/VK 共用 `rhi_validation.*` |
+| Vulkan 后端 | V0/V1 已完成：`vk_command.cpp` 进入构建、唯一句柄、异常处理、Format↔vk::Format 与 ImageUsage 映射、GL/VK 共用描述校验；`init/init_device/init_swapchain` 可跑通（实测交换链 800x600、BGRA8UnormSrgb、validation 无 error）。V2 已完成纹理显存分配/绑定（`vk_memory.*`）、内容上传（`queue_write_texture` staging + layout transition）、mipmap 生成（`generate_mip_map`）、缓冲区分配/上传（`vk_buffer.cpp`：`create_buffer` + 复用 staging 池 + `vkCmdCopyBuffer`）、纹理视图（`create_texture_view`：2D/深度/cubemap + mip 子范围）与采样器（`create_sampler`，含 `compare_op`）。bind group/pipeline layout、draw、submit、present 仍未实现，不能渲染 |
+| `RenderingDeviceRefactor`（新 RHI） | GL 适配器：M0/M1 与资源对象（纹理/视图/采样器/绑定组/布局）已实现；`create_render_pipeline` 仍是空桩，`gl_executor` 回放仍为空，`RenderingServer` 仍走旧 `RenderingDevice`。Vulkan 适配器：V0/V1 完成构建与格式/校验，V2 完成纹理显存、内容上传、mipmap、缓冲区创建/上传、视图与采样器，资源对象创建可走到 driver 边界，但绑定组/管线布局/管线/命令提交未完成。GL/VK 共用 `rhi_validation.*` |
 | 资源缓存 | `ResourceLoader::load()` 已接入 `ResourceCache`（弱引用、URL 键、析构自动摘除）；同一 URL 的 Mesh/MTL/纹理返回同一实例。纹理 sRGB 不一致时 MTL 加载器会复制一份，避免共享实例被改写 |
 | `RenderingServer::sync()` | 空实现；资源上传发生在节点进树时 |
 | `RenderingServer::free()` | 只处理 `Camera/Mesh/Instance`；Material/Texture/Scene/Environment/Light 的 GPU 释放未实现 |
@@ -381,7 +382,7 @@ Application::run()
 | 天空盒 | 只有 cubemap 天空盒（无 HDR/等距柱状图、无 IBL/环境反射）；六面必须齐全、正方形、同尺寸同通道，否则 `World3D::ensure_skybox` 打印错误并整块跳过；天空盒不参与光照 |
 | 纹理 | `ImageTextureLoader` 直接使用 stb 解码后的通道数；`srgb` 默认 false，由材质/MTL 加载器按槽位覆盖，直接 `load()` 得到的纹理需要调用方自己标记 sRGB |
 | glTF / 场景资源 | `PackedScene` 与 `GLTFLoader` 已完成解析与材质/贴图；**尚未实现** `instantiate_scene()`（阶段 3），加载结果还不能直接变成 `Node3D` 树。不支持动画/skin/morph/透明/emissive 贴图/多 UV；`KHR_texture_transform` 的贴图会被跳过；多 scene 只加载默认 scene；glTF 图片直接解码，不复用 `ResourceLoader` 的纹理缓存 |
-| 测试 | `orca-tests` 已包含 OBJ/glTF loader、PackedScene、贴图内存解码、Mesh RID 状态、二进制 IO、Node3D 变换、天空盒校验与拼装、RHI 描述校验用例；Vulkan 构建另含 Format/Usage 映射与布局映射用例；无 CI、无格式化/静态检查配置 |
+| 测试 | `orca-tests` 已包含 OBJ/glTF loader、PackedScene、贴图内存解码、Mesh RID 状态、二进制 IO、Node3D 变换、天空盒校验与拼装、RHI 描述校验（含 buffer 描述与写入区间、纹理视图范围解析、sampler lod/compare 约束）用例；Vulkan 构建另含 Format/ImageUsage/BufferUsage/CompareOp 映射与布局映射用例；无 CI、无格式化/静态检查配置 |
 | 场景功能 | `SceneTree::find_node()` 返回 nullptr；`SceneTree::destroy()` 为空；`Viewport::find_world_3d()` 返回 nullptr；`SceneTree` 不支持切换场景的完整清理 |
 | 序列化/编辑器 | 完全没有 |
 
@@ -410,7 +411,10 @@ Application::run()
 21. **Vulkan 交换链实际格式可能是 BGRA8UnormSrgb（`Format::BGRA8UnormSrgb`）。** `get_swapchain_format()` 返回实际格式，不再硬编码；新增格式必须同步：`Format` 枚举、`vulkan/vk_format.h` 双向映射、`gl_resources.cpp` 的 `gl_format_info`。另外 Vulkan 使用 sRGB 交换链时硬件会做 sRGB 编码，shader 不应再手工 `linear_to_srgb()`（与 GL 的非 sRGB 默认帧缓冲约定相反）；该颜色空间策略（G-03）在接入绘制前必须统一。
 22. **RHI 描述校验统一在 `servers/rendering/rhi_validation.*`。** 新增资源类型或格式约束时，先改共享校验，再让 GL 的 `gl_validate_*` 与 Vulkan 的 `create_*` 都走同一条路径；不要在某个后端里单独加一套分叉规则。
 23. **Vulkan 纹理显存由 `vulkan/vk_memory.*` 独占分配，且 image 必须先于 memory 销毁。** `create_texture` 按 `vkGetImageMemoryRequirements2` 的结果分配 `eDeviceLocal` 内存（驱动声明 dedicated 需求时链入 `MemoryDedicatedAllocateInfo`）并 `vkBindImageMemory`；`VkTextureHandleData` 里 `memory` 必须声明在 `image` 之前，才能保证逆序析构正确。当前每张纹理一块 allocation，纹理数量大时再考虑在 `vk_memory` 内换成子分配/VMA。`create_texture` 本身仍不做内容上传：创建后内容未定义，必须随后调用 `queue_write_texture`（需要 mip 时再 `generate_mip_map`）才能采样到有效内容。
-24. **Vulkan 的 `queue_write_texture` / `generate_mip_map` 是同步一次性提交，不是 WebGPU 那种"排队到帧批次"。** 两者都通过 `vk_command.cpp` 的 `submit_immediate_commands` 新建临时命令池 + fence，提交后立即等待完成；因此调用返回时 GPU 已执行完，且天然先于之后提交的帧。代价是每次上传一次 submit + fence 等待（纹理上传只发生一次，暂可接受），V6 做帧 fence 时可并入按帧复用的上传池。此外：上传要求纹理创建时带 `COPY_DST`，mipmap 要求 `COPY_SRC | COPY_DST`（GL 后端没有这条限制）；格式不支持 blit 时 `generate_mip_map` 只告警跳过；上传/mipmap 后 `VkTextureHandleData::current_layout` 记录整张图的布局（整图统一状态），V3 的 render pass 必须从这里取 oldLayout，不能假设初始布局。`generate_mip_map` 用 `vkCmdBlitImage`，`bytes_per_row` 由 CPU 侧重排成紧密打包，不依赖 `bufferRowLength` 的 texel 对齐规则。
+24. **Vulkan 的 `queue_write_texture` / `generate_mip_map` / `queue_write_buffer` 是同步一次性提交，不是 WebGPU 那种"排队到帧批次"。** 三者都通过 `vk_command.cpp` 的 `submit_immediate_commands` 新建临时命令池 + fence，提交后立即等待完成；因此调用返回时 GPU 已执行完，且天然先于之后提交的帧。代价是每次上传一次 submit + fence 等待（上传只发生在创建期，暂可接受），V6 做帧 fence 时可并入按帧复用的上传池。此外：纹理上传要求创建时带 `COPY_DST`，mipmap 要求 `COPY_SRC | COPY_DST`，缓冲区写入要求 `COPY_DST`（GL 后端的纹理没有这些用途限制，但 buffer 写入同样要求 COPY_DST）；格式不支持 blit 时 `generate_mip_map` 只告警跳过；上传/mipmap 后 `VkTextureHandleData::current_layout` 记录整张图的布局（整图统一状态），V3 的 render pass 必须从这里取 oldLayout，不能假设初始布局。`generate_mip_map` 用 `vkCmdBlitImage`，`bytes_per_row` 由 CPU 侧重排成紧密打包，不依赖 `bufferRowLength` 的 texel 对齐规则。
+25. **Vulkan 缓冲区是设备本地显存 + 复用 staging 池上传，且 buffer 必须先于 memory 销毁。** `create_buffer`（`vulkan/vk_buffer.cpp`）按 `vkGetBufferMemoryRequirements2` 分配 `eDeviceLocal` 内存并绑定，写入统一走 `queue_write_buffer`（设备级 `staging_buffer`，4 KiB 粒度扩容，map/memcpy/flush/unmap + `vkCmdCopyBuffer` + 两道 memory barrier）。因此：`VkBufferHandleData` 里 `memory` 必须声明在 `buffer` 之前；staging 池扩容时赋值顺序必须先替换 buffer 再替换 memory；`vkCmdCopyBuffer` 不要求 4 字节对齐（索引缓冲按 2 字节写入合法），只有 `vkCmdUpdateBuffer` 才要求 4 字节倍数，别把两条约束混用。uniform buffer 目前也是设备本地 + staging 拷贝：**不要**在每帧更新 UBO 的路径上直接调用 `queue_write_buffer`（会变成每帧 submit + fence 等待），V6 的按帧上传池/帧 fence 落地前，动态 UBO 需要在 `vk_memory` 里选 host-visible 内存或加专门通道。销毁仍是立即 `memdelete`（当前无帧提交队列），V6 后需改延迟销毁（D-15）。此外没有读回 API，冒烟只能验证"创建/写入/销毁 + validation 无错"。
+26. **纹理视图的范围解析只有一处（`rhi_resolve_texture_view_range`），cubemap 有 6 层对齐约束。** `create_texture_view` 不再各自推算 `mip_count/layer_count == 0`，GL 与 Vulkan 都拿共享层解析后的范围；cubemap 视图要求 `base_layer` 与 `layer_count` 都是 6 的倍数（Vulkan `eCube` 约束），本项目 cubemap 固定 6 层，实际只允许 `base_layer=0 / layer_count=6`。视图的 `format` 固定取父纹理格式，**不支持** sRGB ↔ 非 sRGB 重解释；`subresourceRange.aspectMask` 由父纹理格式经 `vk_image_aspect` 推导，不要按 `desc.aspect` 直接传（共享校验已保证两者一致，按 desc 传会让深度分支依赖调用方）。新增视图维度（2DArray/3D）时先改共享解析与两个后端的 viewType 映射。
+27. **采样器的 `compare_op` 与 lod 校验是两端共用契约。** `SamplerDesc.compare_op`（`CompareFunction`，与管线 `depth_compare` 共用枚举）在 Vulkan 映射为 `vk::SamplerCreateInfo::compareOp`（`vk_format.cpp: vk_compare_op_from_function`）、GL 映射为 `GL_TEXTURE_COMPARE_FUNC`；即使 `compare_enable == false` 也必须给合法值。lod 校验在 `rhi_validate_sampler_desc`：拒绝 NaN/Inf、要求 `lod_max >= lod_min`、且 `lod_max <= 1000`（`VK_LOD_CLAMP_NONE`，GL 无此限制但为两端一致统一按 Vulkan 约束）。anisotropy 仍不在接口里，别只在一端加字段。
 
 ---
 

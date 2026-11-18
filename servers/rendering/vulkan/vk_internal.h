@@ -19,6 +19,22 @@ struct VkShaderModuleData
     ShaderType type = ShaderType::VERTEX;
 };
 
+struct VkBufferHandleData
+{
+    // 声明顺序保证逆序析构：buffer 先于它绑定的 memory 释放（Vulkan 要求先销毁
+    // VkBuffer，再释放它占用的 VkDeviceMemory）。
+    vk::raii::DeviceMemory memory { nullptr };
+    vk::raii::Buffer buffer { nullptr };
+    /// @brief 本次独占分配的大小，便于日志与后续显存统计
+    vk::DeviceSize allocation_size = 0;
+    /// @brief 缓冲区字节数（queue_write_buffer 据此校验写入区间）
+    uint64_t size = 0;
+    /// @brief 创建时的 usage 位掩码：queue_write_buffer 据此校验是否带 COPY_DST
+    uint8_t usage = 0;
+    /// @brief 调试用标签（创建 desc.label 的副本，供写入日志）
+    std::string label;
+};
+
 struct VkTextureHandleData
 {
     // 声明顺序保证逆序析构：image 先于 memory 释放（Vulkan 要求先销毁 image，
@@ -50,11 +66,26 @@ struct VkTextureHandleData
 struct VkTextureViewHandleData
 {
     vk::raii::ImageView image_view { nullptr };
+    /// @brief 父纹理的调试标签（日志用）
+    std::string label;
+    /// @brief 父纹理格式；视图不重解释格式（sRGB ↔ 非 sRGB 视图本期不支持）
+    Format format = Format::Undefined;
+    /// @brief 已解析的视图维度（Texture2D / Cube）
+    TextureViewDimension dim = TextureViewDimension::Texture2D;
+    TextureAspect aspect = TextureAspect::Color;
+    /// @brief 已解析的 mip 范围（desc 里的 0 已展开成真实层数）
+    uint32_t base_mip = 0;
+    uint32_t mip_count = 1;
+    /// @brief 已解析的层范围（cubemap 固定 base 0 / count 6）
+    uint32_t base_layer = 0;
+    uint32_t layer_count = 1;
 };
 
 struct VkSamplerHandleData
 {
     vk::raii::Sampler sampler { nullptr };
+    /// @brief 创建时的描述（含 compare_op），供绑定组校验与调试日志使用
+    SamplerDesc desc;
 };
 
 struct VkGraphicsPipelineHandleData

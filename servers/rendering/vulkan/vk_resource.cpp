@@ -45,6 +45,12 @@ namespace
             return vk::Filter::eLinear;
         }
     }
+
+    /// @brief 采样器创建日志用的可读名字。
+    const char *filter_name(FilterMode filter)
+    {
+        return filter == FilterMode::Nearest ? "nearest" : "linear";
+    }
 } // namespace
 
 /// @brief 创建 shader 模块。
@@ -508,11 +514,19 @@ void VkRenderingDevice::generate_mip_map(TextureHandle texture)
                 texture_data->mip_levels);
 }
 
+/// @brief 创建纹理视图。
+///
+/// 范围解析全部走共享层 `rhi_resolve_texture_view_range`（与 GL 适配器同一份规则）：
+/// 这里只负责把解析结果映射成 `VkImageViewCreateInfo`。视图格式固定为父纹理格式
+/// （本期不支持 sRGB ↔ 非 sRGB 重解释视图，那需要额外校验格式兼容性）。
 TextureViewHandle VkRenderingDevice::create_texture_view(TextureHandle texture, const TextureViewDesc &desc)
 {
     TextureViewHandle texture_view;
     if (!texture.is_valid() || texture.data == nullptr)
+    {
+        std::printf("[ERROR] Vulkan create_texture_view: invalid texture handle\n");
         return texture_view;
+    }
 
     const auto texture_data = static_cast<VkTextureHandleData *>(texture.data);
     RhiTextureInfo texture_info;
@@ -523,23 +537,26 @@ TextureViewHandle VkRenderingDevice::create_texture_view(TextureHandle texture, 
     texture_info.mip_levels = texture_data->mip_levels;
     texture_info.layers = texture_data->layers;
 
+    RhiTextureViewRange range;
     std::string error;
-    if (!rhi_validate_texture_view_desc(texture_info, desc, error))
+    if (!rhi_resolve_texture_view_range(texture_info, desc, range, error))
     {
-        std::printf("[ERROR] Vulkan create_texture_view: %s\n", error.c_str());
+        std::printf("[ERROR] Vulkan create_texture_view(%s): %s\n", texture_data->label.c_str(), error.c_str());
         return texture_view;
     }
 
     vk::Format view_format = vk::Format::eUndefined;
     if (!vk_format_info(texture_data->format, view_format))
     {
-        std::printf("[ERROR] Vulkan create_texture_view: unsupported parent format\n");
+        std::printf("[ERROR] Vulkan create_texture_view(%s): unsupported parent format\n",
+                    texture_data->label.c_str());
         return texture_view;
     }
 
-    const uint32_t mip_count = desc.mip_count == 0 ? texture_data->mip_levels - desc.base_mip : desc.mip_count;
-    const uint32_t layer_count =
-        desc.layer_count == 0 ? texture_data->layers - desc.base_layer : desc.layer_count;
+    // aspect 由父纹理格式决定（共享校验已保证 desc.aspect 与格式一致）：深度格式只能
+    // 用 eDepth 作 aspect，颜色格式用 eColor。不要把两者按 desc 直接传，否则深度纹理
+    // 用 Color 视图的路径会绕过 eDepth 分支。
+    const vk::ImageAspectFlags aspect = vk_image_aspect(texture_data->format);
 
     VkTextureViewHandleData *data = nullptr;
     try
@@ -547,27 +564,39 @@ TextureViewHandle VkRenderingDevice::create_texture_view(TextureHandle texture, 
         vk::ImageViewCreateInfo create_info;
         create_info.setImage(texture_data->image);
         create_info.viewType =
-            desc.dim == TextureViewDimension::Cube ? vk::ImageViewType::eCube : vk::ImageViewType::e2D;
+            range.dim == TextureViewDimension::Cube ? vk::ImageViewType::eCube : vk::ImageViewType::e2D;
         create_info.format = view_format;
-        create_info.subresourceRange.aspectMask =
-            desc.aspect == TextureAspect::DepthOnly ? vk::ImageAspectFlagBits::eDepth
-                                                    : vk::ImageAspectFlagBits::eColor;
-        create_info.subresourceRange.baseMipLevel = desc.base_mip;
-        create_info.subresourceRange.levelCount = mip_count;
-        create_info.subresourceRange.baseArrayLayer = desc.base_layer;
-        create_info.subresourceRange.layerCount = layer_count;
+        create_info.subresourceRange.aspectMask = aspect;
+        create_info.subresourceRange.baseMipLevel = range.base_mip;
+        create_info.subresourceRange.levelCount = range.mip_count;
+        create_info.subresourceRange.baseArrayLayer = range.base_layer;
+        create_info.subresourceRange.layerCount = range.layer_count;
 
         data = memnew(VkTextureViewHandleData);
         data->image_view = device.createImageView(create_info);
+        data->label = texture_data->label;
+        data->format = texture_data->format;
+        data->dim = range.dim;
+        data->aspect = range.aspect;
+        data->base_mip = range.base_mip;
+        data->mip_count = range.mip_count;
+        data->base_layer = range.base_layer;
+        data->layer_count = range.layer_count;
+
         texture_view.handle = alloc_handle_id();
         texture_view.data = data;
     }
-    catch (const vk::SystemError &error)
+    catch (const vk::SystemError &vk_error)
     {
-        print_vk_error("create_texture_view", error);
+        print_vk_error(("create_texture_view(" + texture_data->label + ")").c_str(), vk_error);
         memdelete(data);
         return {};
     }
+
+    std::printf("[INFO] Vulkan created texture view(%s): %s, mip %u..%u, layer %u..%u\n",
+                texture_data->label.c_str(),
+                range.dim == TextureViewDimension::Cube ? "Cube" : "2D", range.base_mip,
+                range.base_mip + range.mip_count - 1, range.base_layer, range.base_layer + range.layer_count - 1);
     return texture_view;
 }
 
@@ -601,13 +630,20 @@ SamplerHandle VkRenderingDevice::create_sampler(const SamplerDesc &desc)
         create_info.setMinLod(desc.lod_min_clamp);
         create_info.setMaxLod(desc.lod_max_clamp);
         create_info.setCompareEnable(desc.compare_enable);
-        // TODO(G-05)：接口 SamplerDesc 还没有 compare_op；启用 compare 时需要补 compareOp。
+        // compareOp 即使不启用比较也必须给合法值（vk::SamplerCreateInfo 的默认是 eNever，
+        // 但为了与 WebGPU 默认一致，统一从 desc.compare_op 映射）。
+        create_info.setCompareOp(vk_compare_op_from_function(desc.compare_op));
 
         sampler_data = memnew(VkSamplerHandleData);
         sampler_data->sampler = device.createSampler(create_info);
+        sampler_data->desc = desc;
 
         sampler_handle.data = sampler_data;
         sampler_handle.handle = alloc_handle_id();
+
+        std::printf("[INFO] Vulkan created sampler: min/mag = %s/%s, mipmap = %s, compare = %s\n",
+                    filter_name(desc.min_filter), filter_name(desc.mag_filter), filter_name(desc.mipmap_filter),
+                    desc.compare_enable ? "enabled" : "disabled");
     }
     catch (const vk::SystemError &error)
     {

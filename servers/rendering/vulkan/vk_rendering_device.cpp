@@ -21,25 +21,6 @@ void VkRenderingDevice::shutdown()
     }
 }
 
-GPUBufferHandle VkRenderingDevice::create_buffer(const GPUBufferDesc &desc)
-{
-    (void)desc;
-    return {};
-}
-
-void VkRenderingDevice::queue_write_buffer(GPUBufferHandle handle, uint64_t offset, const void *data, uint64_t size)
-{
-    (void)handle;
-    (void)offset;
-    (void)data;
-    (void)size;
-}
-
-void VkRenderingDevice::destroy_buffer(GPUBufferHandle handle)
-{
-    (void)handle;
-}
-
 BindGroupLayoutHandle VkRenderingDevice::create_bind_group_layout(const BindGroupLayoutDesc &desc)
 {
     (void)desc;
