@@ -40,7 +40,7 @@ namespace
         GPUBufferUsage::VERTEX | GPUBufferUsage::INDEX | GPUBufferUsage::UNIFORM | GPUBufferUsage::COPY_DST |
         GPUBufferUsage::COPY_SRC;
 
-    /// @brief 一个缓冲区只能有一种"主用途"（GL 的目标绑定约束）。
+    /// @brief 一个缓冲区只能有一种"主用途"（接口层的保守约束，保持描述可移植）。
     constexpr uint8_t PRIMARY_BUFFER_USAGE =
         GPUBufferUsage::VERTEX | GPUBufferUsage::INDEX | GPUBufferUsage::UNIFORM | GPUBufferUsage::STORAGE;
 } // namespace
@@ -96,8 +96,8 @@ bool rhi_validate_buffer_desc(const GPUBufferDesc &desc, std::string &error)
     if ((desc.usage & ~SUPPORTED_BUFFER_USAGE) != 0)
         return fail(error, "usage contains unknown or currently unsupported bits");
 
-    // GL 的一个缓冲对象只能绑定一个目标；两个主用途同时出现会让 gl_buffer_target
-    // 静默取第一个，Vulkan 侧也会出现"创建成功但用法不一致"的隐患，因此统一拒绝。
+    // 两个主用途同时出现会让后端静默选择其中一个，产生"创建成功但用法不一致"的隐患，
+    // 因此统一拒绝。
     const uint8_t primary = desc.usage & PRIMARY_BUFFER_USAGE;
     if (primary != 0 && (primary & (primary - 1)) != 0)
         return fail(error, "at most one of VERTEX / INDEX / UNIFORM / STORAGE may be set");
@@ -147,7 +147,7 @@ bool rhi_resolve_texture_view_range(const RhiTextureInfo &texture, const Texture
         return fail(error, "a 1D texture cannot be viewed as Texture2D or Cube");
 
     // aspect 必须与父纹理的实际格式一致：Vulkan 里颜色图像用 eDepth 作 aspect 是非法
-    // 视图，GL 里深度纹理也没法当 color 采样。
+    // 视图。
     if (rhi_format_is_depth(texture.format))
     {
         if (desc.aspect != TextureAspect::DepthOnly)
@@ -227,8 +227,7 @@ bool rhi_validate_sampler_desc(const SamplerDesc &desc, std::string &error)
         return fail(error, "lod_min_clamp must not be negative");
     if (desc.lod_max_clamp < desc.lod_min_clamp)
         return fail(error, "lod_max_clamp must be greater than or equal to lod_min_clamp");
-    // VK_LOD_CLAMP_NONE == 1000.0：Vulkan 要求 maxLod 不超过它（VUID-VkSamplerCreateInfo-maxLod-01973），
-    // GL 没有这条限制，但为了让同一个描述在两个后端都合法，统一按 Vulkan 约束校验。
+    // VK_LOD_CLAMP_NONE == 1000.0：Vulkan 要求 maxLod 不超过它（VUID-VkSamplerCreateInfo-maxLod-01973）。
     if (desc.lod_max_clamp > 1000.0f)
         return fail(error, "lod_max_clamp must not exceed 1000.0");
     return true;
@@ -259,7 +258,7 @@ bool rhi_validate_render_pipeline_desc(const RenderPipelineDesc &desc, std::stri
     if (desc.depth_stencil.format != Format::Undefined && !rhi_format_is_depth(desc.depth_stencil.format))
         return fail(error, "depth_stencil: format must be a depth format");
 
-    // 当前两个后端的每条命令只支持一个顶点缓冲 slot（与 pass_set_vertex_buffer 的约定一致）。
+    // 当前每条命令只支持一个顶点缓冲 slot（与 pass_set_vertex_buffer 的约定一致）。
     if (desc.vertex.buffers.size() > 1)
         return fail(error, "only one vertex buffer is supported for now");
 

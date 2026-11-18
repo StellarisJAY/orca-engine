@@ -18,25 +18,23 @@
 //      - 句柄按值传递，销毁后调用方手里的副本即失效，必须重新从 create_* 获取。
 //
 // 2. 资源销毁
-//    destroy_* 可以在任意时刻调用（包括提交后、帧中间）。后端内部自行处理延迟销毁：
-//    OpenGL 立即删除（驱动保证安全），Vulkan 延迟到对应 fence 信号之后。
-//
+//    destroy_* 可以在任意时刻调用（包括提交后、帧中间）。Vulkan 后端内部自行处理
+//    延迟销毁：在帧 fence 信号之后回收，避免删除仍被在途命令引用的资源。
+
 // 3. 命令录制
 //    一帧的流程是：create_command_encoder -> encoder_begin_render_pass ...
 //    -> pass_end -> encoder_finish -> queue_submit。
 //    queue_write_* 与 queue_submit 的先后顺序决定了数据可见性：
 //    在同一帧内先写入、后提交的数据对本次提交的绘制可见。
-//
+
 // 4. 默认帧缓冲
 //    ColorAttachmentDesc.view 为无效句柄时表示"默认帧缓冲"（交换链）。
-//    此时 viewport 由交换链尺寸决定，深度附件由后端提供的交换链深度缓冲承担。
-//
+//    此时 viewport 由交换链尺寸决定，深度附件由交换链的深度缓冲承担。
+
 // 5. 绑定组的名字字段
-//    GLSL 3.30 不支持 layout(binding = N)，OpenGL 后端必须通过名字定位
-//    uniform block / sampler uniform。因此 BindGroupLayoutEntry.name 必填：
-//      - UniformBuffer 项填 uniform block 名（如 "ViewBlock"）；
-//      - 纹理 / 采样器项填 shader 里的 sampler uniform 名（如 "u_albedo_texture"）。
-//    Vulkan 后端可以忽略该字段。
+//    BindGroupLayoutEntry.name 是调试/未来后端的保留字段（按 uniform 名绑定）。
+//    Vulkan 按 binding 编号创建 descriptor set，忽略该字段；填写它便于把描述
+//    与 shader 里的 uniform 名对照排查。
 // =============================================================================
 
 // =============================================================================
@@ -118,7 +116,7 @@ enum class Format
     R16Float,
     RGBA16Float,
     Depth32Float,
-    /// @brief Vulkan 交换链在部分平台只提供 BGRA 通道顺序；OpenGL 后端也保留映射。
+    /// @brief Vulkan 交换链在部分平台只提供 BGRA 通道顺序。
     BGRA8Unorm,
     BGRA8UnormSrgb,
 };
@@ -229,7 +227,7 @@ struct TextureViewDesc
     TextureAspect aspect = TextureAspect::Color;
 };
 
-/// @brief 采样器参数。OpenGL 3.3 原生支持独立 sampler 对象，可直接映射。
+/// @brief 采样器参数。对应 Vulkan 的独立 sampler 对象。
 enum class AddressMode
 {
     ClampToEdge,
@@ -246,7 +244,7 @@ enum class FilterMode
 /// @brief 深度比较函数：采样器 compare_op（阴影 PCF）与管线 depth_compare 共用同一套取值。
 ///
 /// 命名沿用 WebGPU 的 CompareFunction：`LessEqual` 表示"新值 <= 旧值"通过比较
-/// （Vulkan 的 `VK_COMPARE_OP_LESS_OR_EQUAL`、GL 的 `GL_LEQUAL`）。
+/// （Vulkan 的 `VK_COMPARE_OP_LESS_OR_EQUAL`）。
 enum class CompareFunction
 {
     Never,
@@ -269,10 +267,10 @@ struct SamplerDesc
     FilterMode mipmap_filter = FilterMode::Linear;
     float lod_min_clamp = 0.0f;
     float lod_max_clamp = 1000.0f;
-    /// @brief 深度比较采样（阴影 PCF 预留）；GL 对应 GL_TEXTURE_COMPARE_MODE
+    /// @brief 深度比较采样（阴影 PCF 预留）；对应 Vulkan 的 compareEnable
     bool compare_enable = false;
     /// @brief 比较函数；仅 compare_enable 为 true 时生效。默认 LessEqual 与 WebGPU 一致。
-    ///        GL 对应 GL_TEXTURE_COMPARE_FUNC，Vulkan 对应 VkSamplerCreateInfo::compareOp。
+    ///        Vulkan 映射为 VkSamplerCreateInfo::compareOp。
     CompareFunction compare_op = CompareFunction::LessEqual;
 };
 
@@ -322,7 +320,7 @@ struct BindGroupLayoutEntry
     /// @brief 可见阶段，见 ShaderStage
     uint8_t visibility = ShaderStage::FRAGMENT;
     BindingType type = BindingType::UniformBuffer;
-    /// @brief GL 后端用它定位 uniform block / sampler uniform；Vulkan 可忽略
+    /// @brief 调试/未来后端的保留字段（按 uniform 名绑定）；Vulkan 忽略
     std::string name;
     /// @brief UniformBuffer：单次绑定的最小字节数；0 表示不校验
     uint64_t min_binding_size = 0;
@@ -575,10 +573,11 @@ struct ShaderModuleDesc
 
 /// @brief 现代图形 API 风格渲染后端接口（仿 WebGPU）。
 ///
+/// 当前唯一实现是 Vulkan（原 Refactor 版 OpenGL 适配层已移除）。
 /// 分层约定：
 ///   - 本接口只描述"所有现代后端共有"的显式概念（资源对象、绑定组、管线、命令录制）；
-///   - 后端专有细节（GL 的 FBO/VAO/状态机、Vulkan 的 layout/barrier/descriptor pool）
-///     必须封装在各自后端内部，不得出现在本头文件里；
+///   - 后端专有细节（Vulkan 的 layout/barrier/descriptor pool）
+///     必须封装在 Vulkan 后端内部，不得出现在本头文件里；
 ///   - 头文件不依赖 math / core 模块，保持渲染层内部自洽。
 class RenderingDeviceRefactor
 {
@@ -596,7 +595,7 @@ public:
     /// @return 成功?
     virtual bool init_device() = 0;
 
-    /// @brief 初始化交换链（OpenGL: 配置默认帧缓冲）
+    /// @brief 初始化交换链（Vulkan: 创建 swapchain 及配套资源）
     /// @return 成功?
     virtual bool init_swapchain() = 0;
 
@@ -611,8 +610,7 @@ public:
     /// 不传附件 view 的 render pass 用它确定 viewport。
     virtual void get_swapchain_size(uint32_t &width, uint32_t &height) const = 0;
 
-    /// @brief 呈现一帧。OpenGL 后端为 no-op（交换仍由平台层完成）；
-    ///        Vulkan 后端在这里做 vkQueuePresentKHR。
+    /// @brief 呈现一帧。Vulkan 后端在这里做 vkQueuePresentKHR。
     virtual void present() = 0;
 
     virtual void shutdown() = 0;
@@ -716,6 +714,7 @@ public:
     // ------------------------- 单例 -----------------------------------------
 
     static void create_singleton();
+    /// @brief 显式指定驱动；当前只支持 Vulkan，传入其他驱动会打印错误并保持空单例。
     static void create_singleton(RenderingDriverType driver);
     static void destroy_singleton();
     static RenderingDriverType get_default_driver();

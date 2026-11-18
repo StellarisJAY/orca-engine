@@ -115,7 +115,7 @@ TEST_CASE("RHI validation: buffer desc")
     desc.usage = static_cast<uint8_t>(GPUBufferUsage::VERTEX | 0x40);
     CHECK_FALSE(rhi_validate_buffer_desc(desc, error));
 
-    // GL 一个缓冲对象只能有一个目标：两个主用途同时出现必须被拒绝。
+    // 一个缓冲对象只能有一个主用途：两个主用途同时出现必须被拒绝。
     desc = make_valid_buffer();
     desc.usage = GPUBufferUsage::VERTEX | GPUBufferUsage::INDEX;
     CHECK_FALSE(rhi_validate_buffer_desc(desc, error));
@@ -316,7 +316,7 @@ TEST_CASE("RHI validation: texture view range")
     CHECK(range.base_layer == 0);
     CHECK(range.layer_count == 1);
 
-    // 1D 纹理没有视图维度（GL/VK 都不支持）
+    // 1D 纹理没有视图维度（接口不支持）
     RhiTextureInfo texture1d = texture;
     texture1d.dim = TextureDimension::Texture1D;
     CHECK_FALSE(rhi_resolve_texture_view_range(texture1d, TextureViewDesc{}, range, error));

@@ -1,7 +1,6 @@
 // glad 的实现部分（gladLoadGL / glad_gl* 函数定义）必须且只能出现在一个
-// 翻译单元里。之前 gl_rendering_device.cpp 与 gl_rendering_device_refactor.cpp
-// 各自定义了 GLAD_GL_IMPLEMENTATION，两个目标文件都在 orca-rendering 里，
-// 一旦两个后端对象都被链接进来就会产生 multiple definition 错误。
+// 翻译单元里。早期 OpenGL 渲染设备把 GLAD_GL_IMPLEMENTATION 写在自己的 .cpp 里，
+// 多个目标文件同时链接时会产生 multiple definition 错误。
 //
 // 约定：
 //   - 只有本文件定义 GLAD_GL_IMPLEMENTATION；

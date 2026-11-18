@@ -2,7 +2,9 @@
 
 > 审计对象：`servers/rendering/rendering_device_refactor.h`（WebGPU 风格接口）与
 > `servers/rendering/vulkan/*`（Vulkan 适配层）。
-> 参考实现：`servers/rendering/opengl/*`（同一接口的 OpenGL 适配器，含描述校验与资源对象）。
+> 参考实现（历史）：原 `RenderingDeviceRefactor` 的 OpenGL 适配器已于 2026-11-18 移除
+> （`gl_rendering_device_refactor.*`、`gl_internal.h`、`gl_resources.cpp`、`gl_command.cpp`、`gl_executor.*`），
+> 新 RHI 现只保留 Vulkan 实现。下文沿用这些文件名的段落仅用于对照历史审计基线，不再代表当前代码。
 > 审计日期：2026-11-16。
 > 审计方式：全量通读 + 三组真实构建/编译验证（见 §2）。
 > 审计基线：**骨架阶段；既不能完整构建，也不能绘制任何内容。**
@@ -85,7 +87,7 @@
 ```powershell
 cmake -S . -B <tmp> -G "MinGW Makefiles" `
   -DCMAKE_BUILD_TYPE=Debug `
-  -DORCA_RENDERER_OPENGL=OFF -DORCA_RENDERER_VULKAN=ON -DORCA_RENDERER_DEFAULT=vulkan
+  -DORCA_RENDERER_OPENGL=OFF -DORCA_RENDERER_VULKAN=ON
 cmake --build <tmp> --target orca-vulkan-init-test
 ```
 
@@ -447,7 +449,10 @@ vk_command.cpp:231 cmd_buffer_data->command_buffers = cmd_encoder_data->command_
 | `vk_pipeline.cpp` | graphics pipeline | ⚠️ 骨架缺关键状态 |
 | `vk_command.cpp` | encoder/render pass/draw/queue | ⚠️ 未加入构建、编不过、大面积空桩 |
 
-### 9.2 与 GL 适配器的对齐说明
+### 9.2 与 GL 适配器的对齐说明（历史）
+
+> 原 `RenderingDeviceRefactor` 的 OpenGL 适配器已于 2026-11-18 移除；本节保留为审计时的
+> 对照记录，不再代表当前代码或后续实现依据。当前新 RHI 只保留 Vulkan 实现。
 
 - GL 侧已实现、可直接参考的部分：
   - `gl_resources.cpp:221-405` 格式映射与四类描述校验（纯逻辑、无 GL 调用）；
@@ -477,12 +482,12 @@ vk_command.cpp:231 cmd_buffer_data->command_buffers = cmd_encoder_data->command_
 ```powershell
 # 纯 Vulkan（审计时编译失败于 D-03；V0 后应通过）
 cmake -S . -B build-vk-only -G "MinGW Makefiles" `
-  -DORCA_RENDERER_OPENGL=OFF -DORCA_RENDERER_VULKAN=ON -DORCA_RENDERER_DEFAULT=vulkan
+  -DORCA_RENDERER_OPENGL=OFF -DORCA_RENDERER_VULKAN=ON
 cmake --build build-vk-only --target orca-vulkan-init-test
 
 # 双后端（审计时链接失败于 D-01；V0 后应通过）
 cmake -S . -B build-vk-gl -G "MinGW Makefiles" `
-  -DORCA_RENDERER_OPENGL=ON -DORCA_RENDERER_VULKAN=ON -DORCA_RENDERER_DEFAULT=vulkan
+  -DORCA_RENDERER_OPENGL=ON -DORCA_RENDERER_VULKAN=ON
 cmake --build build-vk-gl --target orca-vulkan-init-test
 
 # 单文件语法检查（审计时 4 个错误于 D-02；V0 后应通过）

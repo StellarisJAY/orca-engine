@@ -34,12 +34,6 @@ if(ORCA_RENDERER_VULKAN)
     target_link_libraries(orca-tests PRIVATE Vulkan::Vulkan)
 endif()
 
-# gl_internal.h 里的格式映射断言直接对比 GL 常量，因此单元测试需要 glad 头文件。
-# 只加 include 路径：实现（GLAD_GL_IMPLEMENTATION）仍然只存在于 orca-rendering 的 gl_loader.cpp。
-if(ORCA_RENDERER_OPENGL)
-    target_include_directories(orca-tests PRIVATE ${PROJECT_SOURCE_DIR}/thirdparty/glad/include)
-endif()
-
 add_executable(orca-platform-window-test platform/test_window.cpp)
 add_executable(orca-application-test application/test_application.cpp)
 add_executable(orca-app-test-sponza application/test_scene_sponza.cpp)

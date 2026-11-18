@@ -1,9 +1,9 @@
 #include "rendering_device_refactor.h"
+
+#include <cstdio>
+
 #if defined(ORCA_RENDERER_VULKAN)
 #include "vulkan/vk_rendering_device.h"
-#endif
-#if defined(ORCA_RENDERER_OPENGL)
-#include "opengl/gl_rendering_device_refactor.h"
 #endif
 
 void RenderingDeviceRefactor::create_singleton()
@@ -13,24 +13,21 @@ void RenderingDeviceRefactor::create_singleton()
 
 void RenderingDeviceRefactor::create_singleton(RenderingDriverType driver)
 {
-    switch (driver)
+    // 新 RHI 只保留 Vulkan 实现；OpenGL 适配层已移除，因此显式请求 OpenGL 会被拒绝，
+    // 而不是静默创建 Vulkan 设备（避免窗口按 GL 创建、设备却是 Vulkan 的错配）。
+    if (driver != RenderingDriverType::Vulkan)
     {
-    case RenderingDriverType::Vulkan:
-#if defined(ORCA_RENDERER_VULKAN)
-        singleton = std::make_shared<VkRenderingDevice>();
+        std::fprintf(stderr,
+                     "[ERROR] RenderingDeviceRefactor only supports Vulkan; "
+                     "the OpenGL adapter has been removed\n");
         return;
-#else
-        break;
-#endif
-    case RenderingDriverType::OpenGL:
-#if defined(ORCA_RENDERER_OPENGL)
-        singleton = std::make_shared<GLRenderingDeviceRefactor>();
-        return;
-#else
-        break;
-#endif
     }
-    std::fprintf(stderr, "[ERROR] rendering driver is not available in this build: %d\n", int(driver));
+
+#if defined(ORCA_RENDERER_VULKAN)
+    singleton = std::make_shared<VkRenderingDevice>();
+#else
+    std::fprintf(stderr, "[ERROR] Vulkan backend is not available in this build\n");
+#endif
 }
 
 void RenderingDeviceRefactor::destroy_singleton()
@@ -40,18 +37,7 @@ void RenderingDeviceRefactor::destroy_singleton()
 
 RenderingDriverType RenderingDeviceRefactor::get_default_driver()
 {
-#if defined(ORCA_RENDERER_DEFAULT_OPENGL)
-    return RenderingDriverType::OpenGL;
-#endif
-#if defined(ORCA_RENDERER_DEFAULT_VULKAN)
+    // 新 RHI 没有 OpenGL 实现，默认驱动恒为 Vulkan；旧 RenderingDevice 在编译了 GL 时
+    // 仍默认 OpenGL（见 rendering_device.cpp）。
     return RenderingDriverType::Vulkan;
-#endif
-    // 请求的默认后端在本次构建中不可用时，回退到任意可用后端。
-#if defined(ORCA_RENDERER_VULKAN)
-    return RenderingDriverType::Vulkan;
-#elif defined(ORCA_RENDERER_OPENGL)
-    return RenderingDriverType::OpenGL;
-#else
-    return RenderingDriverType::Vulkan; // 不会到达：构建要求至少启用一个后端
-#endif
 }

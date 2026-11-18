@@ -300,9 +300,9 @@ void VkRenderingDevice::queue_write_texture(TextureHandle texture, const Texture
         return;
     }
 
-    // 与 GL 后端保持同一套 bytes_per_row 约定：0 表示紧密打包；否则必须是
-    // 像素字节数的整数倍且不小于紧密行宽。Vulkan 的 bufferRowLength 以 texel 计数，
-    // 这里先把数据按行重排成紧密打包，避免对齐/步长差异传给驱动。
+    // bytes_per_row 约定：0 表示紧密打包；否则必须是像素字节数的整数倍且不小于
+    // 紧密行宽。Vulkan 的 bufferRowLength 以 texel 计数，这里先把数据按行重排成
+    // 紧密打包，避免对齐/步长差异传给驱动。
     const uint32_t tight_row_bytes = upload_width * texel_size;
     uint32_t source_row_pitch = tight_row_bytes;
     if (desc.bytes_per_row != 0)
@@ -516,7 +516,7 @@ void VkRenderingDevice::generate_mip_map(TextureHandle texture)
 
 /// @brief 创建纹理视图。
 ///
-/// 范围解析全部走共享层 `rhi_resolve_texture_view_range`（与 GL 适配器同一份规则）：
+/// 范围解析全部走共享层 `rhi_resolve_texture_view_range`：
 /// 这里只负责把解析结果映射成 `VkImageViewCreateInfo`。视图格式固定为父纹理格式
 /// （本期不支持 sRGB ↔ 非 sRGB 重解释视图，那需要额外校验格式兼容性）。
 TextureViewHandle VkRenderingDevice::create_texture_view(TextureHandle texture, const TextureViewDesc &desc)

@@ -32,15 +32,8 @@ add_custom_target(orca-shader-resources ALL
     COMMENT "Copying shader sources to runtime resources")
 add_dependencies(orca-rendering orca-shader-resources)
 
-# 默认后端：把 ORCA_RENDERER_DEFAULT 转成编译期宏，供 RenderingDevice::get_default_driver() 使用。
-string(TOUPPER "${ORCA_RENDERER_DEFAULT}" ORCA_RENDERER_DEFAULT_UPPER)
-if(ORCA_RENDERER_DEFAULT_UPPER STREQUAL "VULKAN")
-    target_compile_definitions(orca-rendering PUBLIC ORCA_RENDERER_DEFAULT_VULKAN)
-elseif(ORCA_RENDERER_DEFAULT_UPPER STREQUAL "OPENGL")
-    target_compile_definitions(orca-rendering PUBLIC ORCA_RENDERER_DEFAULT_OPENGL)
-else()
-    message(FATAL_ERROR "ORCA_RENDERER_DEFAULT 必须是 vulkan 或 opengl，当前为 '${ORCA_RENDERER_DEFAULT}'")
-endif()
+# 后端默认驱动由各接口自己的工厂决定：旧 RenderingDevice 在编译了 GL 时默认 OpenGL，
+# 新 RHI（RenderingDeviceRefactor）固定为 Vulkan，因此不再需要全局默认后端宏。
 
 if(ORCA_RENDERER_VULKAN)
     # Vulkan 仅作为实现细节，头文件不对外暴露，使用 PRIVATE 链接。
@@ -61,15 +54,13 @@ if(ORCA_RENDERER_VULKAN)
 endif()
 
 if(ORCA_RENDERER_OPENGL)
+    # 旧 RenderingDevice 的 OpenGL 实现（RenderingServer 仍走这条路径）。
+    # 新 RHI（RenderingDeviceRefactor）的 OpenGL 适配层已移除，只保留 Vulkan 实现。
     # gl_loader.cpp 是 glad 实现（GLAD_GL_IMPLEMENTATION）的唯一翻译单元，
     # 其它 OpenGL 源文件只 include 头文件获取声明，避免符号重复定义。
     target_sources(orca-rendering PRIVATE
         opengl/gl_loader.cpp
-        opengl/gl_rendering_device.cpp
-        opengl/gl_rendering_device_refactor.cpp
-        opengl/gl_resources.cpp
-        opengl/gl_command.cpp
-        opengl/gl_executor.cpp)
+        opengl/gl_rendering_device.cpp)
     target_include_directories(orca-rendering PRIVATE ${PROJECT_SOURCE_DIR}/thirdparty/glad/include)
     # 静态库的 PRIVATE 依赖会以 LINK_ONLY 形式传递给最终可执行文件，因此消费方无需显式链接 GL。
     target_link_libraries(orca-rendering PRIVATE OpenGL::GL)

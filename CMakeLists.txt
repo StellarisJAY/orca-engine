@@ -18,11 +18,11 @@ option(ORCA_PLATFORM_GLFW "Use GLFW for window and input" ON)
 option(ORCA_PLATFORM_SDL3 "Use SDL3 for window and input" OFF)
 
 # ---- 图形后端选择 ----
-# 可以同时编译多个后端（便于对比/切换），运行时用 RenderingDevice::create_singleton(type) 选择。
+# ORCA_RENDERER_OPENGL 只编译旧 RenderingDevice 的 OpenGL 实现（RenderingServer 仍在使用）；
+# 新 RHI（RenderingDeviceRefactor）的 OpenGL 适配层已移除，只保留 Vulkan 实现。
+# 可以同时编译两个后端：旧设备走 OpenGL，新 RHI 走 Vulkan，运行时按接口分别选择。
 option(ORCA_RENDERER_VULKAN "Enable the Vulkan rendering backend" OFF)
-option(ORCA_RENDERER_OPENGL "Enable the OpenGL rendering backend" ON)
-# 默认后端（RenderingDevice::create_singleton() 无参版本使用）。取值：vulkan 或 opengl。
-set(ORCA_RENDERER_DEFAULT "opengl" CACHE STRING "Default rendering backend (vulkan|opengl)")
+option(ORCA_RENDERER_OPENGL "Enable the legacy OpenGL rendering backend" ON)
 
 if(ORCA_RENDERER_VULKAN)
     find_package(Vulkan REQUIRED)

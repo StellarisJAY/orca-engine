@@ -4,7 +4,7 @@
 
 int main()
 {
-    // 使用编译期默认后端（ORCA_RENDERER_DEFAULT，默认 opengl）。
+    // 旧 RenderingDevice 的默认后端：编译了 OpenGL 时使用 GL；纯 Vulkan 构建没有旧设备实现。
     RenderingDevice::create_singleton();
     auto device = RenderingDevice::get_singleton();
     if (!device)
