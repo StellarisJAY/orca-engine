@@ -39,6 +39,8 @@ private:
     vk::raii::Instance instance { nullptr };
     vk::raii::DebugUtilsMessengerEXT debug_messenger { nullptr };
     vk::raii::PhysicalDevice physical_device { nullptr };
+    /// @brief 物理设备内存属性，init_device 时缓存，供 vk_memory 显存分配使用
+    vk::PhysicalDeviceMemoryProperties memory_properties {};
     vk::PhysicalDeviceFeatures device_features;
     vk::raii::Device device { nullptr };
     vk::raii::Queue graphics_queue { nullptr };

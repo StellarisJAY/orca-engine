@@ -314,6 +314,8 @@ bool VkRenderingDevice::init_device()
         // 选择物理设备
         if (!select_physical_device())
             return false;
+        // 缓存内存属性：vk_memory::allocate_device_memory 在创建资源时需要它来选内存类型。
+        memory_properties = physical_device.getMemoryProperties();
         // 创建逻辑设备
         if (!create_logical_device())
             return false;

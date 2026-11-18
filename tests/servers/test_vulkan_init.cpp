@@ -88,6 +88,90 @@ int main()
         std::printf("[TEST] sampler create/destroy OK.\n");
     }
 
+    // V2：create_texture 必须完成 VkImage + 独占显存分配/绑定，且颜色/深度/cubemap
+    // 三种形态都能创建视图并销毁（内容上传与 mipmap 生成仍不在本用例范围）。
+    {
+        TextureDescRefactor color_desc;
+        color_desc.label = "smoke-color";
+        color_desc.format = Format::RGBA8UnormSrgb;
+        color_desc.width = 64;
+        color_desc.height = 64;
+        color_desc.mip_levels = 1;
+        color_desc.usage = TextureUsage::TEXTURE_BINDING | TextureUsage::COPY_DST | TextureUsage::COPY_SRC;
+        TextureHandle color = device->create_texture(color_desc);
+        if (!color.is_valid())
+        {
+            std::printf("[TEST] create_texture(color) failed.\n");
+            return 1;
+        }
+
+        TextureViewDesc color_view_desc;
+        color_view_desc.dim = TextureViewDimension::Texture2D;
+        color_view_desc.aspect = TextureAspect::Color;
+        TextureViewHandle color_view = device->create_texture_view(color, color_view_desc);
+        if (!color_view.is_valid())
+        {
+            std::printf("[TEST] create_texture_view(color) failed.\n");
+            return 1;
+        }
+        device->destroy_texture_view(color_view);
+        device->destroy_texture(color);
+
+        TextureDescRefactor depth_desc;
+        depth_desc.label = "smoke-depth";
+        depth_desc.format = Format::Depth32Float;
+        depth_desc.width = 80;
+        depth_desc.height = 60;
+        depth_desc.mip_levels = 1;
+        depth_desc.usage = TextureUsage::TEXTURE_BINDING | TextureUsage::RENDER_ATTACHMENT;
+        TextureHandle depth = device->create_texture(depth_desc);
+        if (!depth.is_valid())
+        {
+            std::printf("[TEST] create_texture(depth) failed.\n");
+            return 1;
+        }
+
+        TextureViewDesc depth_view_desc;
+        depth_view_desc.aspect = TextureAspect::DepthOnly;
+        TextureViewHandle depth_view = device->create_texture_view(depth, depth_view_desc);
+        if (!depth_view.is_valid())
+        {
+            std::printf("[TEST] create_texture_view(depth) failed.\n");
+            return 1;
+        }
+        device->destroy_texture_view(depth_view);
+        device->destroy_texture(depth);
+
+        TextureDescRefactor cube_desc;
+        cube_desc.label = "smoke-cube";
+        cube_desc.dim = TextureDimension::Cube;
+        cube_desc.format = Format::R8Unorm;
+        cube_desc.width = 16;
+        cube_desc.height = 16;
+        cube_desc.mip_levels = 5;
+        cube_desc.usage = TextureUsage::TEXTURE_BINDING | TextureUsage::COPY_DST;
+        TextureHandle cube = device->create_texture(cube_desc);
+        if (!cube.is_valid())
+        {
+            std::printf("[TEST] create_texture(cube) failed.\n");
+            return 1;
+        }
+
+        TextureViewDesc cube_view_desc;
+        cube_view_desc.dim = TextureViewDimension::Cube;
+        cube_view_desc.aspect = TextureAspect::Color;
+        TextureViewHandle cube_view = device->create_texture_view(cube, cube_view_desc);
+        if (!cube_view.is_valid())
+        {
+            std::printf("[TEST] create_texture_view(cube) failed.\n");
+            return 1;
+        }
+        device->destroy_texture_view(cube_view);
+        device->destroy_texture(cube);
+
+        std::printf("[TEST] texture create/bind/destroy OK (color + depth + cubemap).\n");
+    }
+
     // V1：非法描述必须在 create 入口被拒绝，不能进入 driver。
     {
         TextureDescRefactor bad_texture;

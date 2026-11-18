@@ -21,7 +21,12 @@ struct VkShaderModuleData
 
 struct VkTextureHandleData
 {
+    // 声明顺序保证逆序析构：image 先于 memory 释放（Vulkan 要求先销毁 image，
+    // 再释放它绑定的 VkDeviceMemory）。
+    vk::raii::DeviceMemory memory { nullptr };
     vk::raii::Image image { nullptr };
+    /// @brief 本次独占分配的大小，便于日志与后续显存统计
+    vk::DeviceSize allocation_size = 0;
     /// @brief 创建时保存的描述，供 create_texture_view 校验与格式映射使用
     Format format = Format::Undefined;
     TextureDimension dim = TextureDimension::Texture2D;

@@ -1,6 +1,7 @@
 #include "vk_rendering_device.h"
 #include "vk_internal.h"
 #include "vk_format.h"
+#include "vk_memory.h"
 #include "rhi_validation.h"
 #include "os/memory.h"
 
@@ -90,7 +91,11 @@ void VkRenderingDevice::destroy_shader_module(ShaderHandle handle)
     memdelete(static_cast<VkShaderModuleData *>(handle.data));
 }
 
-/// @brief 创建 image（本期尚未分配/绑定显存，见审计清单 D-23/V2）。
+/// @brief 创建 image 并分配、绑定显存。
+///
+/// 本期使用 vk_memory 的"每资源独占 allocation"（G-06 决策）：image 创建后按
+/// vkGetImageMemoryRequirements2 的结果分配一块设备本地显存并绑定。内容上传
+/// （queue_write_texture）与 layout transition、mipmap 生成仍留在 V2-4。
 TextureHandle VkRenderingDevice::create_texture(const TextureDescRefactor &desc)
 {
     TextureHandle texture;
@@ -118,6 +123,9 @@ TextureHandle VkRenderingDevice::create_texture(const TextureDescRefactor &desc)
         create_info.format = format;
         create_info.usage = vk_image_usage_from_flags(desc.usage, desc.format);
         create_info.samples = vk::SampleCountFlagBits::e1;
+        // 目前所有纹理都按最优布局创建；需要 CPU 直接映射的线性布局留给后续 staging。
+        create_info.tiling = vk::ImageTiling::eOptimal;
+        create_info.initialLayout = vk::ImageLayout::eUndefined;
 
         vk::Extent3D extent;
         extent.width = desc.width;
@@ -140,8 +148,53 @@ TextureHandle VkRenderingDevice::create_texture(const TextureDescRefactor &desc)
         }
         create_info.setExtent(extent);
 
-        auto data = memnew(VkTextureHandleData);
+        data = memnew(VkTextureHandleData);
         data->image = device.createImage(create_info);
+
+        // 显存分配：按 image 自身的内存需求选择类型位，并要求设备本地内存。
+        // 每张纹理独占一块 allocation（见 vk_memory.h 的 G-06 说明）。这里同时查询
+        // dedicated 需求，驱动要求/倾向独占分配时把 VkMemoryDedicatedAllocateInfo
+        // 链进 vkAllocateMemory，避免 validation 报警。
+        vk::ImageMemoryRequirementsInfo2 image_requirements_info;
+        image_requirements_info.setImage(*data->image);
+        auto requirements_chain =
+            device.getImageMemoryRequirements2<vk::MemoryRequirements2, vk::MemoryDedicatedRequirements>(
+                image_requirements_info);
+        const vk::MemoryRequirements &memory_requirements =
+            requirements_chain.get<vk::MemoryRequirements2>().memoryRequirements;
+        const vk::MemoryDedicatedRequirements &dedicated_requirements =
+            requirements_chain.get<vk::MemoryDedicatedRequirements>();
+
+        vk::MemoryDedicatedAllocateInfo dedicated_info;
+        dedicated_info.setImage(*data->image);
+        const vk::MemoryDedicatedAllocateInfo *dedicated_info_ptr = nullptr;
+        if (dedicated_requirements.requiresDedicatedAllocation || dedicated_requirements.prefersDedicatedAllocation)
+            dedicated_info_ptr = &dedicated_info;
+
+        data->memory = vk_memory::allocate_device_memory(device, memory_properties, memory_requirements,
+                                                         vk::MemoryPropertyFlagBits::eDeviceLocal,
+                                                         dedicated_info_ptr);
+        if (data->memory == nullptr)
+        {
+            std::printf("[ERROR] Vulkan create_texture(%s): failed to allocate device memory\n", desc.label.c_str());
+            memdelete(data);
+            data = nullptr;
+            return {};
+        }
+
+        try
+        {
+            (*device).bindImageMemory(*data->image, *data->memory, 0);
+        }
+        catch (const vk::SystemError &error)
+        {
+            print_vk_error(("bind_image_memory(" + desc.label + ")").c_str(), error);
+            memdelete(data);
+            data = nullptr;
+            return {};
+        }
+        data->allocation_size = memory_requirements.size;
+
         data->format = desc.format;
         data->dim = desc.dim;
         data->width = desc.width;
@@ -151,6 +204,10 @@ TextureHandle VkRenderingDevice::create_texture(const TextureDescRefactor &desc)
 
         texture.handle = alloc_handle_id();
         texture.data = data;
+
+        std::printf("[INFO] Vulkan created texture(%s): %ux%u, %u mip(s), %u layer(s), %.2f KiB\n",
+                    desc.label.c_str(), desc.width, desc.height, desc.mip_levels, data->layers,
+                    static_cast<double>(data->allocation_size) / 1024.0);
     }
     catch (const vk::SystemError &error)
     {

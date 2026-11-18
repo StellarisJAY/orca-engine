@@ -35,6 +35,7 @@
    | ❌ 未实现 | 22 | 50% |
 
    > V0/V1 完成后：✅ 17 / ⚠️ 7 / ❌ 20（§10.2 列出变更项）。
+   > V2 纹理显存完成后：✅ 18 / ⚠️ 6 / ❌ 20（`create_texture` 转为可用，见 §10.8）。
 
 5. **推进顺序建议**：先修 P0-1～P0-9（构建、句柄、内存、纹理描述、默认帧缓冲、命令/提交链路），
    再做 P0-10～P0-12（管线/绑定/Shader 工具链），最后才谈“画一个三角形”和接入 `RenderingServer`。
@@ -49,7 +50,10 @@
       的错误 `static_cast`（D-13/D-14）。
 - [x] **V1-1** 补 `Format ↔ vk::Format` 双向映射，修 `get_vk_image_usage` 的运算符优先级 bug（D-18）。
 - [ ] **V2-1** 选型并接入显存分配器（VMA 或自建，G-06），实现 `create_buffer + 暂存上传`（D-06）。
-- [ ] **V2-2** 修 `create_texture` 的合法字段（arrayLayers、extent.depth、cubemap、深度附件用法）并绑定显存（D-04/D-19）。
+      分配器已定为“自建、每资源独占 allocation”并落地在 `vulkan/vk_memory.{h,cpp}`（纹理已用上）；
+      buffer + staging 上传池仍待实现。
+- [x] **V2-2** 修 `create_texture` 的合法字段（arrayLayers、extent.depth、cubemap、深度附件用法）并绑定显存（D-04/D-19）。
+      字段在 V1 已合法化，本次补齐显存分配/绑定（含 dedicated allocation 查询）。
 - [ ] **V2-3** 补全 `create_texture_view` 的 viewType/format/subresourceRange（D-05）。
 - [ ] **V2-4** 实现 `queue_write_texture`（staging + layout transition）与 `generate_mip_map`（D-06）。
 - [ ] **V3-1** 交换链图像视图、深度缓冲、每图像 render pass/framebuffer、acquire/present 同步、resize 重建（D-16/D-25）。
@@ -180,12 +184,12 @@ vk_command.cpp:231 cmd_buffer_data->command_buffers = cmd_encoder_data->command_
 
 | ID | 接口 | 状态 | 证据 | 现状 |
 |---|---|---|---|---|
-| I-14 | `create_texture` | ⚠️ | `vk_resource.cpp:99-132` | 创建了 `VkImage`，但描述非法：`arrayLayers` 未设（默认 0）、`extent.depth` 未设（默认 0）、cubemap 映射成 `e3D`、未分配/绑定显存、无 layout/transition。 |
+| I-14 | `create_texture` | ✅ | `vk_resource.cpp:99-219` | 完整实现：描述校验 + 格式映射 + `VkImageCreateInfo` 合法字段 + `vkGetImageMemoryRequirements2` + 独占显存分配 + `vkBindImageMemory`；颜色/深度/cubemap 三种形态已实测可创建。内容上传/layout transition 仍属 I-17。 |
 | I-15 | `create_texture_view` | ⚠️ | `vk_resource.cpp:142-159` | 创建了 `VkImageView`，但只设置了 image：`viewType` 默认 `e1D`、`format` 默认 `Undefined`、`subresourceRange` 的 aspect/levelCount/layerCount 全为 0；desc 字段完全没使用。必被 validation 拒绝。 |
 | I-16 | `create_sampler` | ✅ | `vk_resource.cpp:192-217` | filter/address/mipmap/lod/compareEnable 的映射基本正确。小缺口见 D-26。 |
 | I-17 | `queue_write_texture` | ❌ | `vk_rendering_device.cpp:51-55` | 空实现；无 staging buffer、无 layout transition、无 `vkCmdCopyBufferToImage`。 |
 | I-18 | `generate_mip_map` | ❌ | `vk_resource.cpp:134-136` | 空实现（GL 侧有 `glGenerateMipmap`）。 |
-| I-19 | `destroy_texture` | ✅ | `vk_resource.cpp:219-229` | `memdelete` 触发 RAII image 析构。当前无内存/视图引用，先可用；延迟销毁见 D-15。 |
+| I-19 | `destroy_texture` | ✅ | `vk_resource.cpp:337-343` | `memdelete` 触发 RAII 析构；成员声明顺序保证 image 先于它绑定的 DeviceMemory 释放。延迟销毁见 D-15。 |
 | I-20 | `destroy_texture_view` | ✅ | `vk_resource.cpp:231-241` | 同上。 |
 | I-21 | `destroy_sampler` | ✅ | `vk_resource.cpp:243-253` | 同上。 |
 
@@ -301,7 +305,7 @@ vk_command.cpp:231 cmd_buffer_data->command_buffers = cmd_encoder_data->command_
 | G-03 | 交换链格式与颜色空间 | GL 默认帧缓冲非 sRGB，shader 手工 `linear_to_srgb()`（`AGENTS.md` 5.3-20）；Vulkan 优先选 `B8G8R8A8Srgb`，硬件会做 sRGB 编码，若 shader 再手工编码就是双重编码。 | 明确 Vulkan 约定：要么选 UNORM 交换链 + shader 手工编码（与 GL 一致），要么选 sRGB 交换链 + 关闭手工编码（需要 shader 变体/分支）。同时给 `Format` 补 BGRA 表示或强制选 RGBA 格式。 |
 | G-04 | 裁剪矩形 | 接口只有 `pass_set_viewport`，没有 scissor 命令；Vulkan 管线把 scissor 设为 dynamic。 | 约定 `pass_set_viewport` 同时设置 scissor（最简单），或在 `encoder_begin_render_pass` 按 pass 尺寸设默认 scissor。 |
 | G-05 | 采样器比较函数 | `SamplerDesc.compare_enable` 只有 bool，没有 `compare_op`。 | 增加 `CompareFunction compare_op` 字段；Vulkan 需要 `compareOp`，GL 需要 `GL_TEXTURE_COMPARE_FUNC`。 |
-| G-06 | 显存分配策略 | 当前完全没有 `vkAllocateMemory`；`thirdparty/` 没有 VMA。 | 决策：引入 VMA（推荐，但需要把源码/预编译库加入 `thirdparty`）或自建“每资源独立 allocation + 上传池”。这决定 D-04/D-06/D-23 的实现形态。 |
+| G-06 | 显存分配策略 | 当前完全没有 `vkAllocateMemory`；`thirdparty/` 没有 VMA。 | **已决策（2026-11）**：自建“每资源独占 allocation”，实现位于 `vulkan/vk_memory.{h,cpp}`；纹理已接入（§10.8），buffer/staging 池待 V2-1。后续资源量上来可只改 `vk_memory` 换成子分配或 VMA。 |
 | G-07 | 默认帧缓冲深度 | 接口注释说“深度附件由后端提供的交换链深度缓冲承担”，但接口没有暴露“默认深度视图”的途径。 | Vulkan 在 `init_swapchain` 创建深度 image + view，并让 `encoder_begin_render_pass` 在 depth view 无效时自动使用它；同时明确每 swapchain image 对应一份。 |
 | G-08 | 图像 acquire / present 归属 | `present()` 没有返回值，也没有“当前图像索引”入口。 | 后端内部在 `queue_submit` 前或 begin pass 时 acquire；`present()` 负责 present 并推进帧。需要在头文件注释中写清“帧边界由后端 maintainer”。 |
 | G-09 | render pass 对象 vs dynamic rendering | 当前 Vulkan 代码试图用 `VkRenderPass` 对象（`encoder_begin_render_pass` 里创建），但管线创建又传 null renderPass，两者矛盾。 | 明确选一条：经典 render pass 对象（与现有代码一致，Windows/GL 对照更稳），或启用 `VK_KHR_dynamic_rendering` + `VkPipelineRenderingCreateInfo`。推荐前者，先落地。 |
@@ -451,7 +455,7 @@ vk_command.cpp:231 cmd_buffer_data->command_buffers = cmd_encoder_data->command_
 - `platform` 层的 `RenderingWindowInfo` 已具备 `create_vulkan_surface` 与
   `vulkan_instance_extensions`（`glfw_window.cpp:260-277`、`sdl3_window.cpp:429-437` 在
   `ORCA_RENDERER_VULKAN` 宏下），这部分可用；缺的只是 resize 事件转发与 Vulkan present。
-- `thirdparty/` 没有 VMA；显存分配需要新增依赖或自建（G-06）。
+- `thirdparty/` 没有 VMA；显存分配采用自建“每资源独占 allocation”（`vulkan/vk_memory.*`，G-06 已决策）。
 
 ### 9.4 审计时的临时构建命令（V0 修复前基线）
 
@@ -513,35 +517,36 @@ g++ -std=c++17 -fsyntax-only -I servers/rendering -I core `
 | I-06 `get_swapchain_size` | ⚠️ | ✅ | 返回 swapchain extent |
 | I-08 `shutdown` | ⚠️ | ✅ | `waitIdle` 后由 RAII 释放 |
 | I-10 `destroy_shader_module` | ⚠️ | ✅ | 正确析构 `VkShaderModuleData` |
+| I-14 `create_texture` | ⚠️ | ✅ | 合法字段 + 显存分配/绑定（本次 V2-2，见 §10.8） |
 | I-30 `create_command_encoder` | ⚠️ | ✅ | 唯一 handle、录制前 begin、失败清理 |
 | I-40 `encoder_finish` | ⚠️ | ✅ | 编译通过，池+缓冲 move 转移 |
 | I-41 `destroy_command_buffer` | ❌ | ✅ | 释放命令池与 command buffer |
 | I-43 `queue_wait_idle` | ❌ | ✅ | 调用 `device.waitIdle()` |
-| 其余 | — | 不变 | I-03/I-09/I-14/I-15/I-28/I-31/I-36 仍为 ⚠️；缓冲区/绑定组/draw/submit/present 仍为 ❌ |
+| 其余 | — | 不变 | I-03/I-09/I-15/I-28/I-31/I-36 仍为 ⚠️；缓冲区/绑定组/draw/submit/present 仍为 ❌ |
 
-最新统计：**✅ 17 / ⚠️ 7 / ❌ 20**（总 44）。
+最新统计：**✅ 18 / ⚠️ 6 / ❌ 20**（总 44）。
 
 ### 10.4 缺陷关闭情况（相对 §5）
 
-- **已关闭**：D-01、D-02、D-03、D-13、D-14、D-17、D-18、D-21、D-22、D-29、D-31、D-32、D-34。
+- **已关闭**：D-01、D-02、D-03、D-04、D-13、D-14、D-17、D-18、D-21、D-22、D-29、D-31、D-32、D-34。
 - **部分关闭**：
-  - D-04：`create_texture` 的描述字段已合法化，但仍缺显存分配/绑定（留待 V2）；
-  - D-05：视图描述字段已补全，但仍依赖纹理显存（留待 V2）；
+  - D-05：视图描述字段已补全，父纹理显存也已就绪；view 可用；
   - D-15：pipeline destroy、encoder/command buffer 所有权与销毁已修；render pass/framebuffer 每 pass 泄漏与延迟销毁仍开放；
-  - D-19：深度格式的 usage/格式映射已修；render pass 的 depth attachment/layout 仍开放；
+  - D-19：深度格式的 usage/格式映射、深度纹理显存已修；render pass 的 depth attachment/layout 仍开放；
   - D-24：`queue_wait_idle` 已实现；fence/多帧在飞仍开放；
   - D-26：采样器 lod 校验已接入；`compare_op`（G-05）仍开放；
   - D-28：pipeline destroy 与失败清理已修；pipeline layout 仍与 `desc.pipeline_layout` 不一致；
   - D-35：`samples_count`/`usage`/`mip_levels` 校验与 label 日志已接入；其余限制未变。
-- **仍开放（按优先级）**：D-04（显存）、D-06（buffer/bind group/pipeline layout）、D-07（默认帧缓冲 render pass）、D-08（draw/bind）、D-09（submit/present）、D-10（完整管线状态）、D-11（SPIR-V 工具链）、D-12（接入 RenderingServer）、D-16/D-25（swapchain 视图/深度/同步/resize）、D-23（分配器）、D-20/D-27/D-33/D-36/D-37。
+  - D-23：显存分配器（自建独占 allocation）已建立并用于纹理；staging buffer 池仍缺。
+- **仍开放（按优先级）**：D-06（buffer/bind group/pipeline layout）、D-07（默认帧缓冲 render pass）、D-08（draw/bind）、D-09（submit/present）、D-10（完整管线状态）、D-11（SPIR-V 工具链）、D-12（接入 RenderingServer）、D-16/D-25（swapchain 视图/深度/同步/resize）、D-20/D-27/D-33/D-36/D-37；D-23 的 staging 部分。
 
 ### 10.5 验证结果
 
-| 配置 | 构建 | 单元测试 | init 冒烟 |
+| 配置 | 构建 | 单元测试 | init + 纹理冒烟 |
 |---|---|---|---|
 | GL-only（`ORCA_RENDERER_OPENGL=ON`） | ✅ 全部目标 | ✅ `ctest` 通过（含新增 RHI 校验用例） | ✅ Vulkan 未编入时输出 SKIP、退出码 0 |
-| Vulkan + GL | ✅ 全部目标 | ✅ `ctest` 通过（7 个新用例 / 95 断言） | ✅ 退出码 0 |
-| Vulkan-only | ✅ 全部目标 | ✅ `ctest` 通过（含 Vulkan 格式映射用例） | ✅ 退出码 0 |
+| Vulkan + GL | ✅ 全部目标 | ✅ `ctest` 通过（7 个新用例 / 95 断言） | ✅ 退出码 0，颜色/深度/cubemap 纹理创建通过 |
+| Vulkan-only | ✅ 全部目标 | ✅ `ctest` 通过（含 Vulkan 格式映射用例） | ✅ 退出码 0，同上 |
 
 `init` 冒烟实测（Intel Graphics，Debug + validation layer）：
 
@@ -554,24 +559,33 @@ g++ -std=c++17 -fsyntax-only -I servers/rendering -I core `
 [TEST] Vulkan initialized: swapchain format=9, size=800x600
 [TEST] command encoder round-trip OK.
 [TEST] sampler create/destroy OK.
+[INFO] Vulkan created texture(smoke-color): 64x64, 1 mip(s), 1 layer(s), 16.00 KiB
+[INFO] Vulkan created texture(smoke-depth): 80x60, 1 mip(s), 1 layer(s), 40.12 KiB
+[INFO] Vulkan created texture(smoke-cube): 16x16, 5 mip(s), 6 layer(s), 24.00 KiB
+[TEST] texture create/bind/destroy OK (color + depth + cubemap).
 [TEST] invalid descriptions rejected.
 ```
 
 - `format=9` 即 `Format::BGRA8UnormSrgb`，说明交换链格式已能被接口表达。
+- 纹理日志中的 KiB 来自 `vkGetImageMemoryRequirements2` 的 `size`，说明显存确实分配并绑定成功。
 - validation layer 输出中**没有 VUID/validation error**（只有 loader 的注册表/层加载日志）。
 - 复现：设置 `$env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT=1` 后运行
   `tests/orca-vulkan-init-test.exe`。
 
-### 10.6 V0/V1 变更文件
+### 10.6 V0/V1/V2 变更文件
 
-新增：
+新增（V0/V1）：
 
 - `servers/rendering/rhi_validation.h` / `.cpp`
 - `servers/rendering/vulkan/vk_format.h` / `.cpp`
 - `tests/servers/test_rhi_validation.cpp`
 - `tests/servers/test_vk_format.cpp`
 
-修改：
+新增（V2 纹理显存）：
+
+- `servers/rendering/vulkan/vk_memory.h` / `.cpp`（内存类型选择 + 独占 `vkAllocateMemory`）
+
+修改（V0/V1）：
 
 - `servers/rendering/CMakeLists.txt`、`tests/CMakeLists.txt`
 - `servers/rendering/rendering_device_refactor.h`（Format 增加 BGRA）
@@ -586,10 +600,35 @@ g++ -std=c++17 -fsyntax-only -I servers/rendering -I core `
 - `tests/servers/test_vulkan_init.cpp`
 - `application/application.cpp`（空设备保护）
 
-### 10.7 下一步（V2 前置决策）
+修改（V2 纹理显存）：
 
-1. 先定 G-06：VMA vs 自建显存分配器（本机 `thirdparty/` 无 VMA）。
-2. 实现 `create_buffer` / `queue_write_buffer` / staging 上传。
-3. 让 `create_texture` 完成 `vkAllocateMemory` + `vkBindImageMemory`；实现 `queue_write_texture` 与 `generate_mip_map`。
-4. 之后进入 V3（swapchain image view/深度/acquire-present）。在 V2 完成前，`create_texture` 仍会因未绑显存而在 validation layer 报错，这是已知的中间状态。
+- `servers/rendering/vulkan/vk_resource.cpp`（`create_texture` 分配/绑定 + 失败路径修正）
+- `servers/rendering/vulkan/vk_internal.h`（`VkTextureHandleData::memory`/`allocation_size`，析构顺序）
+- `servers/rendering/vulkan/vk_rendering_device.h` / `vk_rendering_device_init.cpp`（缓存 `memory_properties`）
+- `servers/rendering/CMakeLists.txt`（加入 `vk_memory.cpp`）
+- `tests/servers/test_vulkan_init.cpp`（颜色/深度/cubemap 纹理冒烟）
+
+### 10.7 下一步（V2 剩余）
+
+1. G-06 已定：**自建、每资源独占 allocation**（`vulkan/vk_memory.*`），纹理已接入；
+   不做子分配，暂不引入 VMA。
+2. 实现 `create_buffer` / `queue_write_buffer` / staging 上传池（复用 `vk_memory` + host-visible 内存）。
+3. 实现 `queue_write_texture`（staging buffer + layout transition）与 `generate_mip_map`。
+4. 之后进入 V3（swapchain image view/深度/acquire-present）。
+
+### 10.8 V2：`create_texture` 显存分配与绑定（本次）
+
+| 任务 | 内容 | 结果 |
+|---|---|---|
+| V2-2a | 新增 `vulkan/vk_memory.{h,cpp}`：`find_memory_type_index` + `allocate_device_memory`，处理 `memoryTypeBits` 与 required 属性，找不到设备本地类型时降级并告警 | 完成 |
+| V2-2b | `create_texture` 用 `vkGetImageMemoryRequirements2`（结构链同时取 `MemoryDedicatedRequirements`）；要求 `eDeviceLocal`，驱动声明 dedicated 需求时链入 `MemoryDedicatedAllocateInfo`，随后 `vkBindImageMemory` | 完成 |
+| V2-2c | `VkTextureHandleData` 增加 `memory`/`allocation_size`，`memory` 声明在 `image` 之前以保证 image 先销毁；`create_texture` 修正异常路径上 `auto data` 遮蔽外层指针导致的泄漏 | 完成 |
+| V2-2d | `init_device` 缓存 `vk::PhysicalDeviceMemoryProperties`；`create_texture` 打印实际分配大小，便于冒烟与后续显存统计 | 完成 |
+| V2-2e | 扩展 `test_vulkan_init.cpp`：RGBA8 颜色纹理（含 COLOR view）、Depth32Float 深度纹理（含 DEPTH view）、16x16 R8 cubemap（6 层 5 mip，含 CUBE view）的创建/绑定/销毁 | 完成（三配置构建 + ctest + 冒烟均通过） |
+
+已知边界：
+
+- 每张纹理独立 `vkAllocateMemory`，纹理数量大时会产生较多 allocation；后续如需优化，
+  `vk_memory` 是唯一改动点（可换成内存块子分配或 VMA）。
+- 纹理内容上传（`queue_write_texture`）、layout transition、mipmap 生成仍为 TODO（V2-3/V2-4）。
 

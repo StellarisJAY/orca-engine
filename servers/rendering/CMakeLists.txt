@@ -49,6 +49,7 @@ if(ORCA_RENDERER_VULKAN)
         vulkan/vk_rendering_device_init.cpp
         vulkan/vk_resource.cpp
         vulkan/vk_format.cpp
+        vulkan/vk_memory.cpp
         vulkan/vk_pipeline.cpp
         vulkan/vk_command.cpp
         vulkan/vk_swapchain.cpp
