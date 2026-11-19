@@ -181,6 +181,242 @@ int main()
         std::printf("[TEST] command encoder round-trip OK.\n");
     }
 
+    // I-31：encoder_begin_render_pass 必须创建完整的 render pass（附件 format/samples/
+    // initial+final layout、subpass、dependency），framebuffer 尺寸由附件推导，render area
+    // 来自 desc；pass 内部对象随 command buffer 释放（不再每个 pass 新建即泄漏）。
+    {
+        TextureDescRefactor render_target_desc;
+        render_target_desc.label = "smoke-render-target";
+        render_target_desc.format = Format::RGBA8UnormSrgb;
+        render_target_desc.width = 128;
+        render_target_desc.height = 96;
+        render_target_desc.mip_levels = 1;
+        render_target_desc.usage = TextureUsage::RENDER_ATTACHMENT | TextureUsage::TEXTURE_BINDING;
+        TextureHandle render_target = device->create_texture(render_target_desc);
+        if (!render_target.is_valid())
+        {
+            std::printf("[TEST] create_texture(render target) failed.\n");
+            return 1;
+        }
+
+        TextureDescRefactor render_depth_desc;
+        render_depth_desc.label = "smoke-render-depth";
+        render_depth_desc.format = Format::Depth32Float;
+        render_depth_desc.width = 128;
+        render_depth_desc.height = 96;
+        render_depth_desc.mip_levels = 1;
+        render_depth_desc.usage = TextureUsage::RENDER_ATTACHMENT | TextureUsage::TEXTURE_BINDING;
+        TextureHandle render_depth = device->create_texture(render_depth_desc);
+        if (!render_depth.is_valid())
+        {
+            std::printf("[TEST] create_texture(render depth) failed.\n");
+            return 1;
+        }
+
+        TextureViewDesc render_color_view_desc;
+        render_color_view_desc.dim = TextureViewDimension::Texture2D;
+        render_color_view_desc.aspect = TextureAspect::Color;
+        TextureViewHandle render_color_view = device->create_texture_view(render_target, render_color_view_desc);
+        if (!render_color_view.is_valid())
+        {
+            std::printf("[TEST] create_texture_view(render target) failed.\n");
+            return 1;
+        }
+
+        TextureViewDesc render_depth_view_desc;
+        render_depth_view_desc.aspect = TextureAspect::DepthOnly;
+        TextureViewHandle render_depth_view = device->create_texture_view(render_depth, render_depth_view_desc);
+        if (!render_depth_view.is_valid())
+        {
+            std::printf("[TEST] create_texture_view(render depth) failed.\n");
+            return 1;
+        }
+
+        RenderPassDesc pass_desc;
+        pass_desc.label = "smoke-pass";
+        ColorAttachmentDesc color_attachment;
+        color_attachment.view = render_color_view;
+        color_attachment.load_op = LoadOp::Clear;
+        color_attachment.store_op = StoreOp::Store;
+        color_attachment.clear_color[0] = 0.1f;
+        color_attachment.clear_color[1] = 0.2f;
+        color_attachment.clear_color[2] = 0.3f;
+        color_attachment.clear_color[3] = 1.0f;
+        pass_desc.color_attachments.push_back(color_attachment);
+
+        DepthAttachmentDesc depth_attachment;
+        depth_attachment.view = render_depth_view;
+        depth_attachment.load_op = LoadOp::Clear;
+        depth_attachment.store_op = StoreOp::Discard;
+        depth_attachment.clear_depth = 1.0f;
+        pass_desc.depth_attachments.push_back(depth_attachment);
+        // width/height 保持 0：framebuffer 与 render area 都应由附件推导（128x96）。
+
+        CommandEncoderHandle encoder = device->create_command_encoder();
+        if (!encoder.is_valid())
+        {
+            std::printf("[TEST] create_command_encoder(render pass) failed.\n");
+            return 1;
+        }
+
+        RenderPassHandle pass = device->encoder_begin_render_pass(encoder, pass_desc);
+        if (!pass.is_valid())
+        {
+            std::printf("[TEST] encoder_begin_render_pass(color+depth) failed.\n");
+            return 1;
+        }
+        device->pass_set_viewport(pass, 0.0f, 0.0f, 128.0f, 96.0f, 0.0f, 1.0f);
+        device->pass_end(pass);
+
+        // 深度-only pass（0 个 color reference）也是合法形态（shadow map 的录制方式）。
+        RenderPassDesc depth_only_desc;
+        depth_only_desc.label = "smoke-depth-only";
+        DepthAttachmentDesc depth_only_attachment;
+        depth_only_attachment.view = render_depth_view;
+        depth_only_attachment.load_op = LoadOp::Clear;
+        depth_only_attachment.store_op = StoreOp::Discard;
+        depth_only_desc.depth_attachments.push_back(depth_only_attachment);
+        RenderPassHandle depth_only_pass = device->encoder_begin_render_pass(encoder, depth_only_desc);
+        if (!depth_only_pass.is_valid())
+        {
+            std::printf("[TEST] encoder_begin_render_pass(depth-only) failed.\n");
+            return 1;
+        }
+        device->pass_end(depth_only_pass);
+
+        CommandBufferHandle render_pass_cb = device->encoder_finish(encoder);
+        if (!render_pass_cb.is_valid())
+        {
+            std::printf("[TEST] encoder_finish(render pass) failed.\n");
+            return 1;
+        }
+        device->destroy_command_buffer(render_pass_cb);
+        std::printf("[TEST] render pass create/record/end OK (color+depth + depth-only).\n");
+
+        // 拒绝路径：非法 desc 必须在创建 driver 对象之前被拒绝（失败后 encoder 仍可复用）。
+        CommandEncoderHandle reject_encoder = device->create_command_encoder();
+        if (!reject_encoder.is_valid())
+        {
+            std::printf("[TEST] create_command_encoder(reject) failed.\n");
+            return 1;
+        }
+
+        RenderPassDesc empty_desc;
+        empty_desc.label = "reject-empty";
+        if (device->encoder_begin_render_pass(reject_encoder, empty_desc).is_valid())
+        {
+            std::printf("[TEST] encoder_begin_render_pass accepted a pass with no attachments.\n");
+            return 1;
+        }
+
+        TextureDescRefactor mismatch_depth_desc = render_depth_desc;
+        mismatch_depth_desc.label = "smoke-mismatch-depth";
+        mismatch_depth_desc.width = 64;
+        mismatch_depth_desc.height = 64;
+        TextureHandle mismatch_depth = device->create_texture(mismatch_depth_desc);
+        if (!mismatch_depth.is_valid())
+        {
+            std::printf("[TEST] create_texture(mismatch depth) failed.\n");
+            return 1;
+        }
+        TextureViewDesc mismatch_depth_view_desc;
+        mismatch_depth_view_desc.aspect = TextureAspect::DepthOnly;
+        TextureViewHandle mismatch_depth_view = device->create_texture_view(mismatch_depth, mismatch_depth_view_desc);
+        if (!mismatch_depth_view.is_valid())
+        {
+            std::printf("[TEST] create_texture_view(mismatch depth) failed.\n");
+            return 1;
+        }
+
+        RenderPassDesc mismatch_desc = pass_desc;
+        mismatch_desc.label = "reject-mismatch";
+        mismatch_desc.depth_attachments[0].view = mismatch_depth_view;
+        if (device->encoder_begin_render_pass(reject_encoder, mismatch_desc).is_valid())
+        {
+            std::printf("[TEST] encoder_begin_render_pass accepted mismatched attachment sizes.\n");
+            return 1;
+        }
+
+        RenderPassDesc overflow_desc = pass_desc;
+        overflow_desc.label = "reject-overflow";
+        overflow_desc.width = 200; // 大于附件宽度 128
+        if (device->encoder_begin_render_pass(reject_encoder, overflow_desc).is_valid())
+        {
+            std::printf("[TEST] encoder_begin_render_pass accepted an out-of-range render area.\n");
+            return 1;
+        }
+
+        RenderPassDesc mixed_desc = pass_desc;
+        mixed_desc.label = "reject-mixed";
+        mixed_desc.depth_attachments[0].view = TextureViewHandle{};
+        if (device->encoder_begin_render_pass(reject_encoder, mixed_desc).is_valid())
+        {
+            std::printf("[TEST] encoder_begin_render_pass mixed explicit color with default framebuffer.\n");
+            return 1;
+        }
+
+        TextureDescRefactor cube_desc;
+        cube_desc.label = "smoke-attach-cube";
+        cube_desc.dim = TextureDimension::Cube;
+        cube_desc.format = Format::R8Unorm;
+        cube_desc.width = 8;
+        cube_desc.height = 8;
+        cube_desc.usage = TextureUsage::TEXTURE_BINDING | TextureUsage::COPY_DST;
+        TextureHandle attachment_cube = device->create_texture(cube_desc);
+        if (!attachment_cube.is_valid())
+        {
+            std::printf("[TEST] create_texture(attachment cube) failed.\n");
+            return 1;
+        }
+        TextureViewDesc cube_view_desc;
+        cube_view_desc.dim = TextureViewDimension::Cube;
+        TextureViewHandle cube_view = device->create_texture_view(attachment_cube, cube_view_desc);
+        if (!cube_view.is_valid())
+        {
+            std::printf("[TEST] create_texture_view(attachment cube) failed.\n");
+            return 1;
+        }
+        RenderPassDesc cube_pass_desc;
+        cube_pass_desc.label = "reject-cube";
+        ColorAttachmentDesc cube_color;
+        cube_color.view = cube_view;
+        cube_pass_desc.color_attachments.push_back(cube_color);
+        if (device->encoder_begin_render_pass(reject_encoder, cube_pass_desc).is_valid())
+        {
+            std::printf("[TEST] encoder_begin_render_pass accepted a cubemap view as attachment.\n");
+            return 1;
+        }
+
+        // 默认帧缓冲在 acquire 接线（V3-2）之前必须被明确拒绝，不能退化成非法 render pass。
+        RenderPassDesc default_fb_desc;
+        default_fb_desc.label = "reject-default-fb-before-acquire";
+        ColorAttachmentDesc default_color; // view 无效 = 默认帧缓冲
+        default_fb_desc.color_attachments.push_back(default_color);
+        if (device->encoder_begin_render_pass(reject_encoder, default_fb_desc).is_valid())
+        {
+            std::printf("[TEST] encoder_begin_render_pass accepted the default framebuffer before acquire.\n");
+            return 1;
+        }
+
+        CommandBufferHandle reject_cb = device->encoder_finish(reject_encoder);
+        if (!reject_cb.is_valid())
+        {
+            std::printf("[TEST] encoder_finish(reject) failed.\n");
+            return 1;
+        }
+        device->destroy_command_buffer(reject_cb);
+        std::printf("[TEST] render pass rejection paths OK (empty/mismatch/overflow/mixed/cube/default-fb).\n");
+
+        device->destroy_texture_view(cube_view);
+        device->destroy_texture(attachment_cube);
+        device->destroy_texture_view(mismatch_depth_view);
+        device->destroy_texture(mismatch_depth);
+        device->destroy_texture_view(render_depth_view);
+        device->destroy_texture(render_depth);
+        device->destroy_texture_view(render_color_view);
+        device->destroy_texture(render_target);
+    }
+
     // V4：SPIR-V 工具链。shaders-vulkan/<name>/{vert,frag}.glsl 由 CMake 的
     // orca-shader-spirv 目标编译成 .spv；这里验证 create_shader_module 的
     // 源类型/入口点/stage 校验与销毁链路。

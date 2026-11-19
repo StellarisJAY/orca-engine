@@ -3,6 +3,8 @@
 #include "vk_format.h"
 #include "vk_rendering_device.h"
 
+#include <vector>
+
 // =============================================================================
 // Vulkan 后端私有对象（句柄的 data 字段指向这些结构，调用方不得解引用/释放）。
 //
@@ -12,6 +14,8 @@
 //   - 需要"父对象先于子对象销毁"的依赖（command buffer → command pool、
 //     image view → image），依靠成员声明顺序保证析构逆序正确。
 // =============================================================================
+
+struct VkRenderPassHandleData;
 
 struct VkShaderModuleData
 {
@@ -68,6 +72,14 @@ struct VkTextureHandleData
 struct VkTextureViewHandleData
 {
     vk::raii::ImageView image_view { nullptr };
+    /// @brief 父纹理（非拥有指针）。
+    ///
+    /// render pass 需要读取父纹理的实际布局（Vulkan 的 layout 是显式状态，不能按视图
+    /// 猜测）；因此调用方必须先销毁视图、再销毁父纹理，否则这里会悬空。
+    VkTextureHandleData *texture = nullptr;
+    /// @brief 视图 base_mip 对应的像素尺寸（framebuffer 与 render area 推导用）
+    uint32_t width = 0;
+    uint32_t height = 0;
     /// @brief 父纹理的调试标签（日志用）
     std::string label;
     /// @brief 父纹理格式；视图不重解释格式（sRGB ↔ 非 sRGB 视图本期不支持）
@@ -96,12 +108,22 @@ struct VkGraphicsPipelineHandleData
     vk::raii::PipelineLayout pipeline_layout { nullptr };
 };
 
-/// @brief 指令编码器：持有命令池和正在录制的 command buffer。
+/// @brief render pass 结束后需要把父纹理切换到的新布局。
+struct VkRenderPassLayoutUpdate
+{
+    VkTextureHandleData *texture = nullptr;
+    vk::ImageLayout final_layout = vk::ImageLayout::eUndefined;
+};
+
+/// @brief command encoder：持有命令池、正在录制的 command buffer 与本次录制创建的 pass。
 struct VkCommandEncoderHandleData
 {
     // 声明顺序保证销毁时 command_buffer 先于 command_pool 释放。
     vk::raii::CommandPool command_pool { nullptr };
     vk::raii::CommandBuffer command_buffer { nullptr };
+    /// @brief 本 encoder 录制的 render pass/framebuffer；encoder_finish 时移交 command buffer，
+    ///        由 destroy_command_buffer 统一释放（避免每个 pass 新建即泄漏）。
+    std::vector<VkRenderPassHandleData *> render_passes;
 };
 
 struct VkRenderPassHandleData
@@ -109,8 +131,10 @@ struct VkRenderPassHandleData
     vk::raii::RenderPass render_pass { nullptr };
     vk::raii::Framebuffer framebuffer { nullptr };
     // 因为部分命令以 RenderPass 为参数，需要在 RenderPass 记录所属 CommandEncoder。
-    // 注意不要错误释放该指针。
+    // encoder_finish 之后置空（该 encoder 已失效）。
     VkCommandEncoderHandleData *command_encoder_data = nullptr;
+    /// @brief pass_end 后要写回父纹理的布局（仅在录制被提交执行后才真实生效）。
+    std::vector<VkRenderPassLayoutUpdate> layout_updates;
 };
 
 struct VkCommandBufferHandleData
@@ -119,4 +143,7 @@ struct VkCommandBufferHandleData
     // 至少和 command buffer 活得一样久。
     vk::raii::CommandPool command_pool { nullptr };
     vk::raii::CommandBuffer command_buffer { nullptr };
+    /// @brief 录制期间创建的 render pass/framebuffer；destroy_command_buffer 时释放。
+    ///        调用约定：必须在命令缓冲提交并执行完之后再销毁。
+    std::vector<VkRenderPassHandleData *> render_passes;
 };

@@ -37,7 +37,7 @@
 | 构建系统 | CMake >= 3.16 | 当前构建目录使用 `MinGW Makefiles` 生成器 |
 | 编译器（现有环境） | MinGW-w64 g++ | `build/CMakeCache.txt` 中为 `E:/tools/mingw64/bin/g++.exe` |
 | 图形 API（旧设备） | OpenGL 3.3 Core（默认、可用） | 仅旧 `RenderingDevice` 使用；新 RHI 已移除 OpenGL 适配层。通过 `thirdparty/glad` 加载现代入口点；GLSL `#version 330 core` |
-| 图形 API（新 RHI） | Vulkan | V0/V1/V2/V4 已完成：构建、唯一句柄、异常处理、`Format ↔ vk::Format` 映射与共享 RHI 描述校验；instance/device/swapchain 初始化可跑通；V2 已完成纹理显存分配/绑定、内容上传（staging + layout transition）与 mipmap 生成，缓冲区显存分配/上传（`create_buffer`/`queue_write_buffer` + staging 池），以及纹理视图（2D/深度/cubemap + mip 子范围）与采样器（含 `compare_op`）；V4 完成 SPIR-V 工具链（glslc 编译 `shaders-vulkan/`）与 `create_shader_module` 的源类型/入口点/stage 校验；V3-1 在 `init_swapchain` 补齐交换链 image view、每图像深度、默认 render pass/framebuffer 与 acquire/present 同步对象；I-04 完成 `resize_swapchain`（oldSwapchain 重建、零尺寸推迟）。绑定组/完整管线/draw/submit/present 仍未实现 |
+| 图形 API（新 RHI） | Vulkan | V0/V1/V2/V4 已完成：构建、唯一句柄、异常处理、`Format ↔ vk::Format` 映射与共享 RHI 描述校验；instance/device/swapchain 初始化可跑通；V2 已完成纹理显存分配/绑定、内容上传（staging + layout transition）与 mipmap 生成，缓冲区显存分配/上传（`create_buffer`/`queue_write_buffer` + staging 池），以及纹理视图（2D/深度/cubemap + mip 子范围）与采样器（含 `compare_op`）；V4 完成 SPIR-V 工具链（glslc 编译 `shaders-vulkan/`）与 `create_shader_module` 的源类型/入口点/stage 校验；V3-1 在 `init_swapchain` 补齐交换链 image view、每图像深度、默认 render pass/framebuffer 与 acquire/present 同步对象；I-04 完成 `resize_swapchain`（oldSwapchain 重建、零尺寸推迟）；I-31 完成 `encoder_begin_render_pass` 的 render pass 创建（完整附件/subpass/dependency、尺寸推导、默认帧缓冲分支，pass 内部对象随 command buffer 释放）。绑定组/完整管线/draw/submit/present 仍未实现 |
 | 窗口/输入 | GLFW（默认）或 SDL3 | 二选一，预编译库只提供 Windows/MinGW-w64 版本 |
 | 图像解码 | `stb_image`（单头文件） | 由 `ImageTextureLoader` 使用 |
 | glTF 解析 | `cgltf`（单头文件） | `.gltf/.glb` 的 JSON/GLB、bufferView/accessor；`#define CGLTF_IMPLEMENTATION` 在 `gltf_loader.cpp` 中定义 |
@@ -110,8 +110,9 @@ ORCA_RENDERER_VULKAN  = OFF
 # SDL3 窗口后端（需要同时关闭 GLFW）
 cmake -S . -B build -DORCA_PLATFORM_GLFW=OFF -DORCA_PLATFORM_SDL3=ON
 # Vulkan 后端（V0/V1/V2/V4 可构建、可初始化、可创建 SPIR-V shader 模块，V3-1 已补交换链
-# 视图/深度/默认帧缓冲/同步对象，I-04 已补 resize 重建；尚不能绘制，
-# 需要 Vulkan SDK 的 glslc 把 shaders-vulkan/ 编译成 .spv，详见 docs/vulkan_rhi_checklist_v2.md）
+# 视图/深度/默认帧缓冲/同步对象，I-04 已补 resize 重建，I-31 已补 render pass 创建；
+# 尚不能绘制，需要 Vulkan SDK 的 glslc 把 shaders-vulkan/ 编译成 .spv，
+# 详见 docs/vulkan_rhi_checklist_v2.md）
 cmake -S . -B build -DORCA_RENDERER_OPENGL=OFF -DORCA_RENDERER_VULKAN=ON
 ```
 
@@ -159,7 +160,7 @@ cd build
 |---|---|---|
 | `orca-tests` | doctest 单元测试：math / object / os / io / resource（OBJ + glTF + 贴图解码 + PackedScene + Mesh 状态 + 天空盒校验）/ scene（含 Node3D 变换）/ servers（天空盒立方体、RHI 描述校验含 buffer desc/write 区间、view 范围解析、sampler/compare 约束与 shader 模块 SPIR-V 校验；Vulkan 构建时另含 Format/ImageUsage/BufferUsage/CompareOp 与图像布局映射） | 是，名称为 `orca-tests` |
 | `orca-platform-window-test` | 创建窗口并初始化 OpenGL 设备，手动运行 | 否 |
-| `orca-vulkan-init-test` | Vulkan `init → init_device → init_swapchain` 冒烟（含交换链 image view/每图像深度/默认 render pass+framebuffer/同步对象，重复 `init_swapchain` 的 oldSwapchain 重建，以及 `resize_swapchain` 的零尺寸推迟与 800x600 → 640x480 重建），并创建/销毁颜色/深度/cubemap 纹理验证显存分配与视图（含 cubemap mip 子范围、非法视图拒绝），上传纹理内容（含带行距的部分区域）与生成 cubemap mipmap，创建默认/compare 采样器，创建顶点/索引/uniform 缓冲并写入，最后从 `.spv` 创建 triangle/builtin-skybox shader 模块并验证拒绝路径；设置 `ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT=1` 可只初始化后退出 | 否 |
+| `orca-vulkan-init-test` | Vulkan `init → init_device → init_swapchain` 冒烟（含交换链 image view/每图像深度/默认 render pass+framebuffer/同步对象，重复 `init_swapchain` 的 oldSwapchain 重建，以及 `resize_swapchain` 的零尺寸推迟与 800x600 → 640x480 重建），并录制 color+depth 与 depth-only 两个 render pass（`desc.width/height=0` 时由附件推导、6 条非法 desc 拒绝路径），创建/销毁颜色/深度/cubemap 纹理验证显存分配与视图（含 cubemap mip 子范围、非法视图拒绝），上传纹理内容（含带行距的部分区域）与生成 cubemap mipmap，创建默认/compare 采样器，创建顶点/索引/uniform 缓冲并写入，最后从 `.spv` 创建 triangle/builtin-skybox shader 模块并验证拒绝路径；设置 `ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT=1` 可只初始化后退出 | 否 |
 | `orca-application-test` | 演示程序（加载资源、渲染场景），手动运行 | 否 |
 | `orca-app-test-sponza` | Sponza glTF 场景演示 | 否 |
 
@@ -226,14 +227,14 @@ orca-engine/
 │  │  ├─ vk_rendering_device.h/.cpp# Vulkan 私有对象、生命周期/队列桩（V0/V1 已修构建与句柄）
 │  │  ├─ vk_rendering_device_init.cpp # instance/surface/物理设备/逻辑设备
 │  │  ├─ vk_swapchain.cpp          # swapchain + image view/每图像深度/默认 render pass/framebuffer/同步对象 + resize 重建（V3-1/I-04）
-│  │  ├─ vk_internal.h             # Vulkan 资源对象数据结构（buffer 已有；bind group/pipeline layout 仍缺）
+│  │  ├─ vk_internal.h             # Vulkan 资源对象数据结构（视图记录父纹理/布局/尺寸；pass 归 command buffer 持有；bind group/pipeline layout 仍缺）
 │  │  ├─ vk_format.h/.cpp          # Format ↔ vk::Format 双向映射 + ImageUsage/BufferUsage/CompareOp 映射
 │  │  ├─ vk_memory.h/.cpp          # 显存类型选择 + 独占分配（G-06 自建分配器）
 │  │  ├─ vk_image_layout.h/.cpp    # 布局/aspect/resting layout/barrier 映射（上传与 mipmap 共用）
 │  │  ├─ vk_resource.cpp           # shader（SPIR-V 校验/创建）、image/view/sampler 创建与销毁
 │  │  ├─ vk_buffer.cpp             # buffer 创建/写入/销毁 + 设备级 staging 池
 │  │  ├─ vk_pipeline.cpp           # graphics pipeline（V5 待补全）
-│  │  └─ vk_command.cpp            # 命令池/录制/render pass/draw（V6 待补全）
+│  │  └─ vk_command.cpp            # 命令池/录制/render pass（完整附件/subpass/dependency/默认帧缓冲）/draw（V6 待补全）
 │  ├─ shaders/
 │     ├─ builtin/vert.glsl         # 内置顶点着色器
 │     ├─ builtin/frag.glsl         # GGX/Smith/Schlick、法线贴图、视差贴图
@@ -293,14 +294,14 @@ orca-engine/
 │  ├─ servers/test_skybox_cube.cpp # 天空盒立方体几何
 │  ├─ servers/test_rhi_validation.cpp # 后端无关的 RHI 描述校验（无窗口/GPU）
 │  ├─ servers/test_vk_format.cpp   # Vulkan Format/ImageUsage/BufferUsage/CompareOp 映射纯逻辑（仅 Vulkan 构建）
-│  ├─ servers/test_vulkan_init.cpp # Vulkan instance/device/swapchain（含 resize 重建）+ 纹理/视图/采样器 + 上传/mipmap + buffer + SPIR-V shader 模块冒烟（手动）
+│  ├─ servers/test_vulkan_init.cpp # Vulkan instance/device/swapchain（含 resize 重建）+ render pass 录制（color+depth/depth-only）+ 纹理/视图/采样器 + 上传/mipmap + buffer + SPIR-V shader 模块冒烟（手动）
 │  ├─ platform/test_window.cpp     # 窗口+设备初始化集成测试
 │  ├─ application/test_application.cpp # 可交互演示程序
 │  └─ application/test_scene_sponza.cpp # Sponza glTF 场景演示
 ├─ docs/
 │  ├─ resource_module_roadmap.md   # 资源模块设计/路线图（部分已完成）
 │  ├─ material_texture_plan.md     # 材质纹理方案（部分已完成）
-│  ├─ vulkan_rhi_checklist_v2.md   # Vulkan 适配层清单（当前状态 + V0–V7 进度；V0/V1/V2/V4 与 V3-1/I-04 已完成）
+│  ├─ vulkan_rhi_checklist_v2.md   # Vulkan 适配层清单（当前状态 + V0–V7 进度；V0/V1/V2/V4 与 V3-1/V3-3/I-04/I-31 已完成）
 │  ├─ vulkan_rhi_checklist.md      # 历史审计基线（2026-11-16，不再维护）
 │  └─ webgpu-draw-diagram.svg      # RHI 绘制流程示意图
 └─ build/                          # CMake 生成目录，已忽略；运行资源也在这里
@@ -374,7 +375,7 @@ Application::run()
 
 | 项目 | 现状 |
 |---|---|
-| Vulkan 后端 | V0/V1/V2/V4 已完成：`vk_command.cpp` 进入构建、唯一句柄、异常处理、Format↔vk::Format 与 ImageUsage 映射、共享 RHI 描述校验；`init/init_device/init_swapchain` 可跑通（实测交换链 800x600、BGRA8UnormSrgb、validation 无 error），V3-1 补齐交换链 image view/每图像深度（D32Sfloat）/默认 render pass+framebuffer/acquire-present 同步对象，重复 `init_swapchain` 走 oldSwapchain 重建；I-04 完成 `resize_swapchain`（复用 oldSwapchain 路径，零尺寸推迟，实测 800x600 → 640x480）。V2 完成纹理显存分配/绑定（`vk_memory.*`）、内容上传（`queue_write_texture` staging + layout transition）、mipmap 生成（`generate_mip_map`）、缓冲区分配/上传（`vk_buffer.cpp`：`create_buffer` + 复用 staging 池 + `vkCmdCopyBuffer`）、纹理视图（`create_texture_view`：2D/深度/cubemap + mip 子范围）与采样器（`create_sampler`，含 `compare_op`）。V4 完成 SPIR-V 工具链：`shaders-vulkan/` 由 glslc 编译到 `build/resources/shaders-vulkan/*.spv`，`ShaderLoader::load_spirv` 读取，`create_shader_module` 校验 source_kind/长度对齐/magic/版本/入口点/stage。默认帧缓冲尚未接进 `encoder_begin_render_pass`（V3-3）；bind group/pipeline layout、draw、submit、present 仍未实现，不能渲染 |
+| Vulkan 后端 | V0/V1/V2/V4 已完成：`vk_command.cpp` 进入构建、唯一句柄、异常处理、Format↔vk::Format 与 ImageUsage 映射、共享 RHI 描述校验；`init/init_device/init_swapchain` 可跑通（实测交换链 800x600、BGRA8UnormSrgb、validation 无 error），V3-1 补齐交换链 image view/每图像深度（D32Sfloat）/默认 render pass+framebuffer/acquire-present 同步对象，重复 `init_swapchain` 走 oldSwapchain 重建；I-04 完成 `resize_swapchain`（复用 oldSwapchain 路径，零尺寸推迟，实测 800x600 → 640x480）。V2 完成纹理显存分配/绑定（`vk_memory.*`）、内容上传（`queue_write_texture` staging + layout transition）、mipmap 生成（`generate_mip_map`）、缓冲区分配/上传（`vk_buffer.cpp`：`create_buffer` + 复用 staging 池 + `vkCmdCopyBuffer`）、纹理视图（`create_texture_view`：2D/深度/cubemap + mip 子范围）与采样器（`create_sampler`，含 `compare_op`）。V4 完成 SPIR-V 工具链：`shaders-vulkan/` 由 glslc 编译到 `build/resources/shaders-vulkan/*.spv`，`ShaderLoader::load_spirv` 读取，`create_shader_module` 校验 source_kind/长度对齐/magic/版本/入口点/stage。I-31 完成 `encoder_begin_render_pass` 的 render pass 创建：显式附件填全 format/samples/load-store/initial+final layout，配 subpass 与两道 dependency，framebuffer 尺寸由附件推导、render area 取 `desc.width/height`；无效 color/depth view 走默认帧缓冲分支，复用交换链缓存对象，未 acquire 时明确拒绝。render pass/framebuffer 归 command buffer 所有，`destroy_command_buffer` 统一释放。bind group/pipeline layout、draw、submit、present 仍未实现，不能渲染 |
 | `RenderingDeviceRefactor`（新 RHI） | 只保留 Vulkan 适配器；原 Refactor 版 OpenGL 适配层已清理（`gl_rendering_device_refactor.*`、`gl_internal.h`、`gl_resources.cpp`、`gl_command.cpp`、`gl_executor.*` 已删除）。Vulkan 适配器：V0/V1 完成构建与格式/校验，V2 完成纹理显存、内容上传、mipmap、缓冲区创建/上传、视图与采样器，资源对象创建可走到 driver 边界，但绑定组/管线布局/管线/命令提交未完成。共享 `rhi_validation.*` 只由 Vulkan 的 `create_*` 调用；`RenderingServer` 仍走旧 `RenderingDevice` |
 | 资源缓存 | `ResourceLoader::load()` 已接入 `ResourceCache`（弱引用、URL 键、析构自动摘除）；同一 URL 的 Mesh/MTL/纹理返回同一实例。纹理 sRGB 不一致时 MTL 加载器会复制一份，避免共享实例被改写 |
 | `RenderingServer::sync()` | 空实现；资源上传发生在节点进树时 |
@@ -420,6 +421,7 @@ Application::run()
 27. **采样器的 `compare_op` 与 lod 校验是 Vulkan 的接口约定。** `SamplerDesc.compare_op`（`CompareFunction`，与管线 `depth_compare` 共用枚举）在 Vulkan 映射为 `vk::SamplerCreateInfo::compareOp`（`vk_format.cpp: vk_compare_op_from_function`）；即使 `compare_enable == false` 也必须给合法值。lod 校验在 `rhi_validate_sampler_desc`：拒绝 NaN/Inf、要求 `lod_max >= lod_min`、且 `lod_max <= 1000`（`VK_LOD_CLAMP_NONE`）。anisotropy 仍不在接口里，别只加后端字段而不进接口。
 28. **SPIR-V 由构建期 glslc 生成，不是运行时编译。** `shaders-vulkan/**/*.glsl` 是 Vulkan 专用源（`#version 450`、显式 `set/binding`、NDC y 翻转），CMake 目标 `orca-shader-spirv` 用 `glslc --target-env=vulkan1.1` 编到 `<build>/resources/shaders-vulkan/**/*.spv`；源码树里没有 `.spv`，新增 shader 必须放进 `shaders-vulkan/` 并按 `vert.glsl`/`frag.glsl` 命名（stage 由文件名推断）。`create_shader_module` 只接受 `ShaderSourceKind::SPIRV`，GLSL 文本会被拒绝；`.spv` 必须 4 字节对齐长度、20 字节头、magic/版本合法，且 `OpEntryPoint` 里存在 `entry_point` 并与 `type` 对应；模块 stage 与管线槽位不一致会在 `create_render_pipeline` 被拒绝。
 29. **交换链依赖资源必须随 swapchain 一起重建，且默认 render pass 的 load/store 是固定的。** `init_swapchain` 创建 image view / 每图像深度（`D32Sfloat`，回退 `D24S8`/`D32SfloatS8`）/ 默认 render pass + framebuffer / 2 组 semaphore+fence；成员必须声明在 `swapchain` 之后，重入时先 `device.waitIdle()`，再由 `destroy_swapchain_dependents()` 按 framebuffer → render pass → depth(view/image/memory) → color view 的顺序释放，再把旧 swapchain 作为 `oldSwapchain` 交回驱动。新增任何引用交换链 image 的对象都要挂进这个释放路径。`resize_swapchain` 只更新 `window_info` 并复用这条路径，**不要**硬把请求尺寸写进 `VkSwapchainCreateInfoKHR::imageExtent`：Windows 下 `currentExtent` 由窗口客户区决定，请求值只用于 `UINT32_MAX` 回退分支；零尺寸（最小化）必须推迟重建。默认帧缓冲的 render pass 固定 color `Clear+Store`（final `PresentSrcKHR`）、depth `Clear+DontCare`（final `DepthStencilAttachmentOptimal`）；load/store 不能像 clear value 那样在 begin 时覆盖，要支持 `Load` 必须按组合缓存 render pass+framebuffer（V3-3）。
+30. **render pass 的附件模板、布局簿记与释放都集中在 `encoder_begin_render_pass`（I-31）。** 显式附件必须是单层 2D 视图且同尺寸；附件描述要填全 format/samples/load-store/initial+final layout，并配一道 subpass 与 external→subpass / subpass→external 两道 dependency。`initialLayout` 取父纹理的 `current_layout`（不要硬编码 Undefined），`finalLayout` 固定为 `ColorAttachmentOptimal` / `DepthStencilAttachmentOptimal`，并由 `pass_end` 写回父纹理——**录制顺序即布局簿记**，录制后丢弃命令缓冲会让簿记失真。framebuffer 尺寸由附件决定，`desc.width/height` 只是 render area（0 表示取附件尺寸）。render pass/framebuffer 归 command buffer 所有，`destroy_command_buffer` 统一释放（V6 之前仍是立即销毁，D-15）；默认帧缓冲分支使用 `current_swapchain_image` 对应的缓存 framebuffer，未 acquire 时明确拒绝（V3-2）。`VkTextureViewHandleData` 持有父纹理的非拥有指针，销毁顺序必须是视图先于父纹理。
 
 ---
 

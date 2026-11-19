@@ -594,6 +594,12 @@ TextureViewHandle VkRenderingDevice::create_texture_view(TextureHandle texture, 
 
         data = memnew(VkTextureViewHandleData);
         data->image_view = device.createImageView(create_info);
+        data->texture = texture_data;
+        // 附件尺寸按视图的 base_mip 计算：mip 子范围视图的 framebuffer 尺寸不是整图尺寸。
+        const vk::Extent2D view_extent =
+            vk_mip_extent(texture_data->width, texture_data->height, range.base_mip);
+        data->width = view_extent.width;
+        data->height = view_extent.height;
         data->label = texture_data->label;
         data->format = texture_data->format;
         data->dim = range.dim;

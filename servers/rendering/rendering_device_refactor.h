@@ -94,6 +94,7 @@ struct CommandEncoderHandle : public BaseHandle
 
 struct RenderPassHandle : public BaseHandle
 {
+    // 句柄在所属 command buffer 被 destroy_command_buffer 释放前有效。
 };
 
 struct CommandBufferHandle : public BaseHandle
@@ -533,6 +534,7 @@ struct ColorAttachmentDesc
 
 struct DepthAttachmentDesc
 {
+    /// @brief 无效句柄表示默认帧缓冲的内部深度缓冲（仅当 color 走默认帧缓冲时可用）
     TextureViewHandle view;
     LoadOp load_op = LoadOp::Clear;
     StoreOp store_op = StoreOp::Store;
@@ -723,6 +725,8 @@ public:
     virtual CommandBufferHandle encoder_finish(CommandEncoderHandle encoder) = 0;
 
     /// @brief 销毁 command buffer（提交完成后由调用方释放）
+    ///        该录制创建的 render pass/framebuffer 等内部对象随之释放，
+    ///        之后对应的 RenderPassHandle 不再有效。
     virtual void destroy_command_buffer(CommandBufferHandle cmd) = 0;
 
     // ------------------------- 设备指令队列 ----------------------------------

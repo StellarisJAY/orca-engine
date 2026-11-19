@@ -30,7 +30,9 @@ struct SwapChainSupportDetails {
 /// 当前状态（2026-11）：V0/V1/V2/V4 已完成（构建、唯一句柄、异常处理、格式映射、
 /// 描述校验、显存/纹理/缓冲/视图/采样器、SPIR-V 工具链）；V3-1 完成（交换链
 /// image view、每图像深度、默认 render pass/framebuffer、acquire/present 同步对象）；
-/// I-04 完成（`resize_swapchain` 用 oldSwapchain 重建全部依赖资源）。
+/// I-04 完成（`resize_swapchain` 用 oldSwapchain 重建全部依赖资源）；I-31 完成
+/// `encoder_begin_render_pass` 的 render pass 创建（完整附件/subpass/dependency、
+/// 尺寸推导、默认帧缓冲分支，pass 内部对象随 command buffer 释放）。
 /// 绑定组、完整管线、draw/submit/present 仍未实现。进度见 docs/vulkan_rhi_checklist_v2.md。
 class VkRenderingDevice : public RenderingDeviceRefactor
 {

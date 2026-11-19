@@ -1,6 +1,7 @@
 # Vulkan 适配层清单（RenderingDeviceRefactor）
 
-> 版本：**2026-11-19 复核版 + V3-1 / I-04 完成**（代码基线 `c49f58e`，工作区含 V4、V3-1 与 I-04 改动）
+> 版本：**2026-11-19 复核版 + V3-1 / I-04 / I-31 完成**（代码基线 `b8af876`，工作区含 V4、V3-1、
+> I-04 与 I-31 改动）
 > 审计对象：`servers/rendering/rendering_device_refactor.h`（WebGPU 风格接口，44 个纯虚函数）
 > 与 `servers/rendering/vulkan/*`（Vulkan 适配层）。
 > 复核方式：全量重读 Vulkan 适配层源码并逐接口对照，配合三配置构建、`ctest`、
@@ -8,8 +9,10 @@
 > 当前阶段：**V0 / V1 / V2 / V4 已完成**（构建、句柄、格式映射、描述校验、纹理与缓冲区显存、
 > 内容上传、mipmap、纹理视图、采样器、SPIR-V 工具链与 shader 模块校验）；**V3-1 已完成**
 > （交换链 image view、每图像深度缓冲、默认 render pass/framebuffer、acquire/present 同步对象）；
-> **I-04 `resize_swapchain` 已完成**（oldSwapchain 重建交换链与全部依赖资源，零尺寸推迟）。
-> **V3-2 的 acquire 接线、V3-3、V3-4 的 `present`、V3-5（平台 resize 事件转发）与 V5 / V6 / V7
+> **I-04 `resize_swapchain` 已完成**（oldSwapchain 重建交换链与全部依赖资源，零尺寸推迟）；
+> **I-31 `encoder_begin_render_pass` 的 render pass 创建已完成**（完整附件描述/subpass/
+> dependency、尺寸推导、默认帧缓冲分支、pass 内部对象随 command buffer 释放）。
+> **V3-2 的 acquire 接线、V3-4 的 `present`、V3-5（平台 resize 事件转发）与 V5 / V6 / V7
 > 尚未完成**，适配层仍不能渲染任何内容。
 > 本次整理原则：已完成项直接标记完成；原先按提交批次记录的逐条修复细节不再保留
 > （已体现在代码中）；只留下当前状态、未完成项、仍开放缺陷、待决策缺口与后续计划。
@@ -36,26 +39,29 @@
    `glslc` 把 `servers/rendering/shaders-vulkan/` 下的 Vulkan GLSL 变体编译成
    `.spv`（输出到 `<build>/resources/shaders-vulkan/`）；`create_shader_module`
    先走共享校验（长度/对齐/magic/版本/入口点/stage 一致性），再复制到对齐缓冲创建模块。
-4. **仍然不能出画面。** 默认帧缓冲的 render pass/framebuffer 已在 `init_swapchain`
-   创建，但 `encoder_begin_render_pass` 还没有接上它们（V3-3）；此外绑定组/描述符集、
-   管线布局、完整管线状态、`pass_set_bind_group`、顶点/索引绑定、draw、`queue_submit`、
-   `present` 仍缺失；新 RHI 也不在任何一帧的渲染路径中（`RenderingServer` 与
-   `Application` 仍走旧 `RenderingDevice`）。直接补 `pass_draw` 依然无效，必须先完成 V3/V5。
+4. **仍然不能出画面。** `encoder_begin_render_pass` 现在能创建完整 render pass（显式附件的
+   format/samples/initial+final layout、subpass 与两道 dependency，framebuffer 尺寸由附件推导），
+   默认帧缓冲分支也接上了 `init_swapchain` 缓存的 render pass/framebuffer；但 acquire（V3-2）
+   尚未接线，默认帧缓冲在未 acquire 时被明确拒绝。此外绑定组/描述符集、管线布局、完整管线状态、
+   `pass_set_bind_group`、顶点/索引绑定、draw、`queue_submit`、`present` 仍缺失；新 RHI 也不在
+   任何一帧的渲染路径中（`RenderingServer` 与 `Application` 仍走旧 `RenderingDevice`）。
+   直接补 `pass_draw` 依然无效，必须先完成 V3/V5。
 5. **接口实现数量统计**（判据见 §3）：
 
    | 状态 | 数量 | 占比 |
    |---|---|---|
-   | ✅ 可用 | 28 | 64% |
-   | ⚠️ 有代码但当前不可用 / 违反契约 | 3 | 7% |
+   | ✅ 可用 | 29 | 66% |
+   | ⚠️ 有代码但当前不可用 / 违反契约 | 2 | 5% |
    | ❌ 未实现 | 13 | 30% |
 
    > 变化：`create_shader_module`（I-09）经 V4 修复后转为 ✅（25/5/14 → 26/4/14）；
    > `init_swapchain`（I-03）经 V3-1 补齐交换链依赖资源后转为 ✅（26/4/14 → 27/3/14）；
-   > `resize_swapchain`（I-04）经本轮实现后转为 ✅（27/3/14 → 28/3/13）。
+   > `resize_swapchain`（I-04）经上一轮实现后转为 ✅（27/3/14 → 28/3/13）；
+   > `encoder_begin_render_pass`（I-31）经本轮补齐 render pass 创建后转为 ✅（28/3/13 → 29/2/13）。
 
-6. **推进顺序**：V3-2/V3-3/V3-4/V3-5（acquire、默认帧缓冲接线、present、平台 resize
-   事件转发）→ V5（descriptor set/pipeline layout/完整管线）→ V6（draw/submit/同步/延迟销毁）→
-   V7（GPU 验收与接入 `RenderingServer`）。V4 与 I-04 已完成，不再阻塞后续阶段。
+6. **推进顺序**：V3-2/V3-4/V3-5（acquire、present、平台 resize 事件转发）→ V5（descriptor
+   set/pipeline layout/完整管线）→ V6（draw/submit/同步/延迟销毁）→ V7（GPU 验收与接入
+   `RenderingServer`）。V4、I-04 与 I-31 已完成，不再阻塞后续阶段。
 
 ### 1.1 下一批任务（按依赖排序）
 
@@ -64,8 +70,9 @@
 - [ ] **V3-2** acquire/present 接线：同步对象已随 `init_swapchain` 创建，仍需在
       `queue_submit`/`present` 路径中调用 `vkAcquireNextImageKHR`、等待帧 fence 并
       消费 semaphore（D-16/D-24）。
-- [ ] **V3-3** `encoder_begin_render_pass` 支持默认帧缓冲：无效 color view → 当前交换链图像，
-      无效 depth view → 内部深度缓冲，`width/height == 0` 由附件推导（D-07）。
+- [x] **V3-3** `encoder_begin_render_pass` 支持默认帧缓冲：无效 color view → 当前交换链图像，
+      无效 depth view → 内部深度缓冲，`width/height == 0` 由附件推导（D-07/D-19）。
+      代码路径已完成（I-31）；实际录制出画面仍需 V3-2 的 acquire（未 acquire 时明确拒绝）。
 - [ ] **V3-4** `present` → `vkQueuePresentKHR`（D-17/D-25）；`resize_swapchain` 的重建部分已完成（I-04）。
 - [ ] **V5-1** descriptor set layout / pool / set 与 pipeline layout（D-06）。
 - [ ] **V5-2** 补全 `create_render_pipeline`（顶点输入、renderPass 兼容、颜色混合、深度、MSAA、
@@ -82,7 +89,7 @@
 
 | 配置 | 构建 | 单元测试 | `orca-vulkan-init-test` 冒烟 |
 |---|---|---|---|
-| Vulkan + GL（`ORCA_RENDERER_OPENGL=ON`、`VULKAN=ON`） | ✅ `orca-tests` + `orca-vulkan-init-test` 构建通过（仅一编译警告，见 D-38） | ✅ `ctest` 通过 | ✅ 退出码 0，交换链依赖资源（view/深度/framebuffer/同步）、`resize_swapchain`（800x600 → 640x480）+ 纹理/视图/采样器/缓冲区全通过，validation 无 VUID |
+| Vulkan + GL（`ORCA_RENDERER_OPENGL=ON`、`VULKAN=ON`） | ✅ `orca-tests` + `orca-vulkan-init-test` 构建通过（仅一编译警告，见 D-38） | ✅ `ctest` 通过 | ✅ 退出码 0，交换链依赖资源（view/深度/framebuffer/同步）、`resize_swapchain`（800x600 → 640x480）+ render pass 录制（color+depth / depth-only）+ 纹理/视图/采样器/缓冲区全通过，validation 无 VUID |
 | Vulkan-only（`OPENGL=OFF`、`VULKAN=ON`） | ✅ `orca-tests` + `orca-vulkan-init-test` 构建通过 | ✅ `ctest` 通过 | ✅ 退出码 0 |
 | GL-only（`OPENGL=ON`、`VULKAN=OFF`，默认） | ✅ `orca-tests` + `orca-vulkan-init-test` 构建通过 | ✅ `ctest` 通过 | ✅ 输出 SKIP（stderr 一行“后端不可用”提示）、退出码 0 |
 
@@ -156,9 +163,16 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
   （`triangle/{vert,frag}`、`builtin-skybox/{vert,frag}`）；冒烟从 `.spv` 创建 4 个 shader
   模块并销毁，validation 无 VUID。错误路径也已覆盖：GLSL 文本被拒绝、入口点不存在被拒绝、
   fragment SPIR-V 装进 vertex 槽被拒绝。
-- **未覆盖**：任何 draw/submit/present、`encoder_begin_render_pass` 使用默认帧缓冲
-  （V3-3）、acquire/present 的实际调用（V3-2/V3-4）、绑定组、管线状态、validation
-  失败即红、GPU 读回比对（见 D-36）。
+- **I-31 证据**：冒烟用 128x96 的 `RGBA8UnormSrgb` 颜色纹理（`RENDER_ATTACHMENT|TEXTURE_BINDING`）
+  与 `D32Sfloat` 深度纹理各一张录制 `color+depth` pass（`desc.width/height = 0`），日志显示
+  `[INFO] Vulkan began render pass(smoke-pass): 1 color + 1 depth, framebuffer 128x96, area 128x96`
+  与 `[INFO] ... (smoke-depth-only): 0 color + 1 depth, framebuffer 128x96, area 128x96`，随后
+  `pass_end` + `encoder_finish` + `destroy_command_buffer`（render pass/framebuffer 随 command
+  buffer 释放）；validation 无 VUID。拒绝路径覆盖空附件、附件尺寸不一致（64x64 vs 128x96）、
+  render area 越界（200x96 > 128x96）、显式 color + 默认深度混用、cubemap 视图作附件，以及
+  尚未 acquire 的默认帧缓冲（错误信息明确指向 V3-2）。
+- **未覆盖**：任何 draw/submit/present、默认帧缓冲的实际录制（需 V3-2 acquire/V3-4 present）、
+  绑定组、管线状态、validation 失败即红、GPU 读回比对（见 D-36）。
 
 ---
 
@@ -180,7 +194,7 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 |---|---|---|---|---|
 | I-01 | `init` | ✅ | `vulkan/vk_rendering_device_init.cpp:291` | instance + debug messenger（仅 validation 开启时创建并链入实例 `pNext`）、surface 主流程；异常被捕获并打印。 |
 | I-02 | `init_device` | ✅ | `vk_rendering_device_init.cpp:310` | 物理设备选择 + 逻辑设备 + 双队列；缓存 `memory_properties` 供显存分配；异常被捕获。评分函数仍是死代码（D-33）。 |
-| I-03 | `init_swapchain` | ✅ | `vulkan/vk_swapchain.cpp:459`（辅助函数 `:159/:200/:311/:408/:438`） | 使用实际 surface 格式/extent；创建 swapchain 与 `vk::Image` 数组、每图像 color image view、每图像深度 image/view（`D32Sfloat`，独占显存）、默认 render pass（color `Undefined→PresentSrcKHR`、depth `Undefined→DepthStencilAttachmentOptimal`，含 subpass 与两道 dependency）与每图像 framebuffer、2 组 acquire/present semaphore + signaled fence；重复调用释放旧依赖并传 `oldSwapchain`。默认帧缓冲尚未接进 `encoder_begin_render_pass`（V3-3/I-31），acquire/present 尚未调用（V3-2/V3-4）。 |
+| I-03 | `init_swapchain` | ✅ | `vulkan/vk_swapchain.cpp:459`（辅助函数 `:159/:200/:311/:408/:438`） | 使用实际 surface 格式/extent；创建 swapchain 与 `vk::Image` 数组、每图像 color image view、每图像深度 image/view（`D32Sfloat`，独占显存）、默认 render pass（color `Undefined→PresentSrcKHR`、depth `Undefined→DepthStencilAttachmentOptimal`，含 subpass 与两道 dependency）与每图像 framebuffer、2 组 acquire/present semaphore + signaled fence；重复调用释放旧依赖并传 `oldSwapchain`。默认帧缓冲分支已在 `encoder_begin_render_pass` 接上这些缓存对象（I-31），实际录制依赖 V3-2 acquire；present 尚未调用（V3-4）。 |
 | I-04 | `resize_swapchain` | ✅ | `vulkan/vk_swapchain.cpp:603` | 更新 `window_info`；零尺寸（最小化）只记录并推迟重建；以 surface 实际 extent 为目标，与当前一致且依赖资源完整时不重建；否则调用 `init_swapchain()` 的 oldSwapchain 路径重建 image view/深度/render pass/framebuffer/同步对象。平台 resize 事件转发仍缺（V3-5/D-25）。 |
 | I-05 | `get_swapchain_format` | ✅ | `vk_swapchain.cpp:5` | 用 `vk_format_from_vulkan` 把实际 `swapchain_image_format` 翻译成接口 `Format`，不可表达时告警。 |
 | I-06 | `get_swapchain_size` | ✅ | `vk_swapchain.cpp:16` | 返回 `swapchain_image_extent`；未初始化时回退 `window_info`。 |
@@ -237,16 +251,16 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 
 | ID | 接口 | 状态 | 证据 | 现状 |
 |---|---|---|---|---|
-| I-30 | `create_command_encoder` | ✅ | `vulkan/vk_command.cpp:46` | queue-family 命令池 + 单个 primary command buffer，并已 `begin()`；唯一 handle；失败路径释放 data。 |
-| I-31 | `encoder_begin_render_pass` | ⚠️ | `vk_command.cpp:89` | 能创建 render pass + framebuffer 并 `beginRenderPass`，但：attachment 没设 format/samples/initialLayout/finalLayout；没设 subpass/dependency；不支持默认帧缓冲（无效 view 被 `continue` 跳过，附件为空时会创建 0 subpass 的非法 render pass）；`desc.width/height == 0` 未由附件推导；render pass/framebuffer 每个 pass 新建且无销毁路径（D-07/D-15/D-19）。 |
-| I-32 | `pass_set_pipeline` | ✅ | `vk_command.cpp:182` | 正确调用 `vkCmdBindPipeline`（前提是管线本身可用）。 |
-| I-33 | `pass_set_bind_group` | ❌ | `vk_command.cpp:194` | 空实现；无 `vkCmdBindDescriptorSets`/动态偏移。 |
-| I-34 | `pass_set_vertex_buffer` | ❌ | `vk_command.cpp:204` | 空实现。 |
-| I-35 | `pass_set_index_buffer` | ❌ | `vk_command.cpp:213` | 空实现。 |
-| I-36 | `pass_set_viewport` | ⚠️ | `vk_command.cpp:222` | 设了 `VkViewport`；但管线把 scissor 设为 dynamic，却没有任何 `vkCmdSetScissor` → 绘制时 scissor 状态未定义（D-20/G-04）。 |
-| I-37 | `pass_draw_indexed` | ❌ | `vk_command.cpp:232` | 空实现。 |
-| I-38 | `pass_draw` | ❌ | `vk_command.cpp:242` | 空实现。 |
-| I-39 | `pass_end` | ✅ | `vk_command.cpp:251` | 调用 `vkCmdEndRenderPass`。资源释放不在本接口职责内（泄漏见 D-15）。 |
+| I-30 | `create_command_encoder` | ✅ | `vulkan/vk_command.cpp:143` | queue-family 命令池 + 单个 primary command buffer，并已 `begin()`；唯一 handle；失败路径释放 data。 |
+| I-31 | `encoder_begin_render_pass` | ✅ | `vulkan/vk_command.cpp:186`（`pass_end:587`、`destroy_command_buffer:649`） | 显式附件：从视图解析格式/尺寸/父纹理实际布局，填全 `VkAttachmentDescription`（format/samples/load-store/initial+final layout），创建 subpass（color refs + depth ref）与两道 dependency；framebuffer 尺寸由附件推导（要求同尺寸），render area 取 `desc.width/height`（0→附件尺寸）并校验不越界；空附件/多深度/尺寸不一致/越界/非单层 2D 视图/混用默认帧缓冲均在创建 driver 对象前拒绝。默认帧缓冲分支使用 `init_swapchain` 缓存的 render pass/framebuffer，未 acquire 时明确报错（V3-2）。render pass/framebuffer 归 command buffer 所有，`destroy_command_buffer` 统一释放（D-15 仅剩延迟销毁）。 |
+| I-32 | `pass_set_pipeline` | ✅ | `vk_command.cpp:514` | 正确调用 `vkCmdBindPipeline`（前提是管线本身可用）。 |
+| I-33 | `pass_set_bind_group` | ❌ | `vk_command.cpp:528` | 空实现；无 `vkCmdBindDescriptorSets`/动态偏移。 |
+| I-34 | `pass_set_vertex_buffer` | ❌ | `vk_command.cpp:538` | 空实现。 |
+| I-35 | `pass_set_index_buffer` | ❌ | `vk_command.cpp:547` | 空实现。 |
+| I-36 | `pass_set_viewport` | ⚠️ | `vk_command.cpp:556` | 设了 `VkViewport`；但管线把 scissor 设为 dynamic，却没有任何 `vkCmdSetScissor` → 绘制时 scissor 状态未定义（D-20/G-04）。 |
+| I-37 | `pass_draw_indexed` | ❌ | `vk_command.cpp:568` | 空实现。 |
+| I-38 | `pass_draw` | ❌ | `vk_command.cpp:578` | 空实现。 |
+| I-39 | `pass_end` | ✅ | `vk_command.cpp:587` | 调用 `vkCmdEndRenderPass`，并把附件 `finalLayout` 写回父纹理的 `current_layout`；render pass/framebuffer 由 `destroy_command_buffer` 统一释放。延迟销毁（帧 fence 后）仍见 D-15。 |
 | I-40 | `encoder_finish` | ✅ | `vk_command.cpp:260` | `end()` 后把命令池 + command buffer 一起 move 到 `VkCommandBufferHandleData`，删除 encoder data。 |
 | I-41 | `destroy_command_buffer` | ✅ | `vk_command.cpp:291` | `memdelete` 释放命令池与 command buffer。 |
 
@@ -254,7 +268,7 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 
 | ID | 接口 | 状态 | 证据 | 现状 |
 |---|---|---|---|---|
-| I-42 | `queue_submit` | ❌ | `vk_command.cpp:357` | TODO(V6) 空实现；无 `vkQueueSubmit`、无 acquire/present semaphore、无 fence。 |
+| I-42 | `queue_submit` | ❌ | `vk_command.cpp:722` | TODO(V6) 空实现；无 `vkQueueSubmit`、无 acquire/present semaphore、无 fence。 |
 | I-43 | `queue_wait_idle` | ✅ | `vk_rendering_device.cpp:57` | `device.waitIdle()`，异常被捕获。 |
 | I-44 | `submit_frame` | ✅ | `vk_rendering_device.cpp:70` | 返回递增计数；但没有任何 fence/帧资源使用它（D-24）。 |
 
@@ -270,9 +284,8 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 | ID | 位置 | 问题 | 影响 / 修复方向 |
 |---|---|---|---|
 | D-06（剩余） | `vulkan/vk_rendering_device.cpp:24-55`；`vk_internal.h` | 仅剩绑定组/管线布局部分：`create_bind_group_layout`、`create_bind_group`、`create_pipeline_layout` 及三个 destroy 仍是空桩；`vk_internal.h` 没有 descriptor set layout/pool/set、pipeline layout 结构。（缓冲区与纹理上传已完成。） | 引擎 shader 依赖 UBO + 6 张纹理（纹理槽契约见 `AGENTS.md` 5.3-5），没有绑定组就传不了参数。需先实现 descriptor layout/pool/set 与 pipeline layout（V5）。 |
-| D-07 | `vk_command.cpp:89` | render pass 附件没有 format/samples/initial/final layout，create info 没有 subpass 与 dependency；无效 color view（默认帧缓冲）被跳过；`width/height=0` 不推导；render pass/framebuffer 每 pass 新建且不销毁。 | 默认帧缓冲的 render pass/framebuffer 已在 `init_swapchain` 创建（V3-1），但 `encoder_begin_render_pass` 还没接上它们，且自建 render pass 仍无 format/subpass/dependency。需要 V3-3 完成默认帧缓冲分支与附件模板；pass 缓存/销毁见 D-15/V6。 |
-| D-08 | `vk_command.cpp:194-249` | `pass_set_bind_group`、`pass_set_vertex_buffer`、`pass_set_index_buffer`、`pass_draw`、`pass_draw_indexed` 全为空。 | 没有任何几何/参数被提交，画面一定为空（V6）。 |
-| D-09 | `vk_command.cpp:357`；`vk_rendering_device.cpp:6` | `queue_submit` 与 `present` 为空。 | 不提交、不 acquire、不 present；窗口只会显示未定义内容（V3/V6）。 |
+| D-08 | `vk_command.cpp:528-585` | `pass_set_bind_group`、`pass_set_vertex_buffer`、`pass_set_index_buffer`、`pass_draw`、`pass_draw_indexed` 全为空。 | 没有任何几何/参数被提交，画面一定为空（V6）。 |
+| D-09 | `vk_command.cpp:722`；`vk_rendering_device.cpp:6` | `queue_submit` 与 `present` 为空。 | 不提交、不 acquire、不 present；窗口只会显示未定义内容（V3/V6）。 |
 | D-10 | `vk_pipeline.cpp:55-240` | stage 的 `stage`/`pName` 已随 V4 补上并做模块类型检查；仍缺：顶点输入为空；`renderPass` 为 null（未启用 dynamic rendering）；颜色混合状态未挂上；忽略 `desc.pipeline_layout`、`desc.depth_stencil` 与颜色目标 write mask；MSAA 硬编码 1。 | 管线创建会被 validation 拒绝，或创建后发现不了颜色/顶点状态。需按 `RenderPipelineDesc` 完整映射（V5）。 |
 | D-12 | `rendering_server.cpp`（全文走旧 `RenderingDevice::get_singleton()`）；`application.cpp:17-30` | 引擎渲染链路没有调用 `RenderingDeviceRefactor`；`Application` 用旧设备、按旧默认驱动建窗口。 | 即使 Vulkan 适配层修好也“没有调用方”。先手工测试，最后接 `RenderingServer`（V7，独立大任务）。 |
 | D-25 | `platform/glfw/glfw_window.cpp:282`；`application.cpp:116` | 平台已有 `FramebufferSize` 事件（`glfw_window.cpp:427`），但没有转发给设备；`resize_swapchain` 已实现（I-04）但仍无调用方；Vulkan 下 `swap_buffers` 不负责 present。 | Vulkan 下交换链永远不会被 present；平台 resize 后画面不会跟着重建（V3-4/V3-5）。 |
@@ -281,10 +294,9 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 
 | ID | 位置 | 问题 | 影响 / 修复方向 |
 |---|---|---|---|
-| D-15（剩余） | `vk_command.cpp:144`；`vk_internal.h:105` | `VkRenderPassHandleData`（render pass + framebuffer）没有销毁入口，每个 pass 新建即泄漏；`destroy_*` 仍是立即 `memdelete`，没有帧序号/延迟销毁队列（`submit_frame` 未被使用）。 | 长时间运行耗尽显存/句柄；提交后销毁在途资源是 UB。需要 fence + 延迟销毁表（V6/G-10）。 |
-| D-19（剩余） | `vk_command.cpp:128-141` | 深度纹理的创建/usage/aspect 已正确；交换链的每图像深度缓冲与 image view 也已由 V3-1 创建；但 `encoder_begin_render_pass` 的深度附件与默认帧缓冲接线仍缺 format/samples/layout，默认深度也从未 transition 到附件布局。 | 深度测试、阴影贴图、默认帧缓冲深度仍不可用（V3-3）。 |
-| D-20 | `vk_pipeline.cpp:166-189`；`vk_command.cpp:222` | 管线状态忽略 desc：MSAA 硬编码 `e1`；depth test 恒开、depth write 恒关、compare 默认 `eNever`；颜色目标/blend/write mask 全部忽略；动态 scissor 从未设置。 | 深度恒不通过 → 即便 draw 也全被裁掉；混合/写掩码失效。`pass_set_viewport` 应同时设 scissor（G-04）。 |
-| D-24（剩余） | `vk_rendering_device.cpp:70`；`vk_command.cpp:305` | 没有帧 fence / 多帧在飞；`submit_frame` 只自增；一次性上传用局部 fence 同步等待。 | 无法安全复用 command buffer/descriptor/上传内存，也无法延迟销毁（V6）。 |
+| D-15（剩余） | `vk_command.cpp:649`；`vk_internal.h:148` | render pass/framebuffer 已随 `destroy_command_buffer` 释放（I-31），但 `destroy_*` 仍是立即 `memdelete`，没有帧序号/延迟销毁队列（`submit_frame` 未被使用）；`destroy_command_buffer` 也要调用方保证提交已执行完。 | 提交后销毁在途资源是 UB；需要 fence + 延迟销毁表（V6/G-10）。 |
+| D-20 | `vk_pipeline.cpp:166-189`；`vk_command.cpp:556` | 管线状态忽略 desc：MSAA 硬编码 `e1`；depth test 恒开、depth write 恒关、compare 默认 `eNever`；颜色目标/blend/write mask 全部忽略；动态 scissor 从未设置。 | 深度恒不通过 → 即便 draw 也全被裁掉；混合/写掩码失效。`pass_set_viewport` 应同时设 scissor（G-04）。 |
+| D-24（剩余） | `vk_rendering_device.cpp:70`；`vk_command.cpp:670` | 没有帧 fence / 多帧在飞；`submit_frame` 只自增；一次性上传用局部 fence 同步等待。 | 无法安全复用 command buffer/descriptor/上传内存，也无法延迟销毁（V6）。 |
 | D-26（剩余） | `rendering_device_refactor.h:260-275` | 采样器 `compare_op` 与 lod 校验已完成；仍无 anisotropy 字段/设置（Vulkan 需 `samplerAnisotropy` 特性，GL 需 `EXT_texture_filter_anisotropic`）。 | 各向异性过滤不可用；接口扩展前不要只在后端加字段。 |
 | D-28（剩余） | `vk_pipeline.cpp:218-231` | 失败清理与 destroy 已修；仍自建 `pipeline_layout` 并忽略 `desc.pipeline_layout`（两者是不同的 `VkPipelineLayout`），且没有 pipeline cache。 | 绑定组无法与管线匹配；每次创建重复编译（V5）。 |
 
@@ -295,17 +307,21 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 | D-33 | `vk_rendering_device_init.cpp:200-256` | `rateDeviceSuitability` 是死代码；物理设备只取“第一个合适的”，没有按评分选；`device_features` 为空且从不开特性链（后续 anisotropy 等也依赖它）。 |
 | D-36 | `tests/CMakeLists.txt` | Vulkan 侧已有格式/布局/校验单测与初始化冒烟，但仍缺：validation error 即失败、资源/绘制 GPU 目标、泄漏计数、GPU 读回比对（无法验证写入内容）。 |
 | D-37（剩余） | `vulkan/vk_internal.h` | 数据结构已补 `VkBufferHandleData`，仍缺 bind group layout、bind group、pipeline layout、descriptor pool；显存分配器独立在 `vk_memory`（不再需要放这里）。 |
-| D-38 | `vk_command.cpp:347`（编译警告） | `device.waitForFences(...)` 标了 `nodiscard` 但返回值被忽略：超时/设备丢失时会被当成“上传成功”。应检查返回值并走失败路径。 |
+| D-38 | `vk_command.cpp:712`（编译警告） | `device.waitForFences(...)` 标了 `nodiscard` 但返回值被忽略：超时/设备丢失时会被当成“上传成功”。应检查返回值并走失败路径。 |
 
 ### 5.4 已关闭缺陷（保留 ID 便于追溯）
 
 D-01（CMake 漏 `vk_command.cpp`）、D-02（`vk_command.cpp` 编译错误）、D-03（纯 Vulkan 构建/旧工厂）、
 D-04（`VkImageCreateInfo` 非法字段）、D-05（`VkImageViewCreateInfo` 未填）、
+D-07（render pass 附件缺 format/samples/layout/subpass/dependency、无效 view 被跳过、尺寸不推导、
+pass/framebuffer 每 pass 新建即泄漏；I-31 补齐创建与释放）、
 D-11（GLSL 文本无法交 Vulkan、缺源类型与工具链；V4 补 `source_kind` + glslc `.spv` + 入口/stage 校验）、
 D-13（句柄恒为 1）、D-14（`destroy_shader_module` 错误 cast）、D-16（交换链缺 image view/深度/
 framebuffer/同步对象与 `oldSwapchain`；V3-1 在 `init_swapchain` 补齐，重复调用走 oldSwapchain 重建）、
 D-17（交换链格式硬编码/无 BGRA 表示）、
-D-18（格式映射与 usage 位运算错误）、D-21（缺少描述校验）、D-22（异常未捕获）、
+D-18（格式映射与 usage 位运算错误）、D-19（深度附件缺 format/samples/layout、默认深度未 transition；
+I-31 补齐附件模板，默认帧缓冲的深度 transition 由缓存的默认 render pass 承担）、
+D-21（缺少描述校验）、D-22（异常未捕获）、
 D-23（没有显存分配器/staging）、D-27（shader 模块 stage 与管线槽位不匹配；V4 增加类型校验与 pName）、
 D-29（枚举 switch 无 `default`）、D-30（类注释与实现脱节；V3-1/I-04 更新注释后关闭）、
 D-31（`NODEBUG` 拼写）、D-32（debug messenger 无条件创建/未链 pNext）、
@@ -318,8 +334,7 @@ D-34（swapchain 缺 `eTransferSrc`）、D-35（`create_texture` 字段/校验�
 | ID | 缺口 | 现状 | 建议 |
 |---|---|---|---|
 | G-04 | 裁剪矩形 | 接口只有 `pass_set_viewport`，没有 scissor 命令；管线把 scissor 设为 dynamic。 | 约定 `pass_set_viewport` 同时设置 scissor，或在 `encoder_begin_render_pass` 按 pass 尺寸设默认 scissor。 |
-| G-07 | 默认帧缓冲深度 | 接口注释说“深度附件由后端提供的交换链深度缓冲承担”，但没有暴露“默认深度视图”的途径。 | V3-1 已在 `init_swapchain` 创建每图像深度 image + view；`encoder_begin_render_pass` 在 depth view 无效时自动使用它（V3-3）。 |
-| G-08 | 图像 acquire / present 归属 | `present()` 无返回值，也没有“当前图像索引”入口。 | V3-1 已创建 semaphore/fence；后端内部在 `queue_submit` 前或 begin pass 时 acquire（V3-2），`present()` 负责 present 并推进帧（V3-4）；在头文件注释写清帧边界由后端维护。 |
+| G-08 | 图像 acquire / present 归属 | `present()` 无返回值，也没有“当前图像索引”入口。 | V3-1 已创建 semaphore/fence；后端内部在 `queue_submit` 前或 begin pass 时 acquire（V3-2），`present()` 负责 present 并推进帧（V3-4）；在头文件注释写清帧边界由后端维护。默认帧缓冲在未 acquire 时明确报错（I-31）。 |
 | G-09 | render pass 对象 vs dynamic rendering | `encoder_begin_render_pass` 创建 `VkRenderPass` 对象，但 `create_render_pipeline` 既没传 renderPass、也没启用 dynamic rendering，两者矛盾。 | 二选一并写清：经典 render pass 对象（与现有代码一致，推荐先落地），或 `VK_KHR_dynamic_rendering` + `VkPipelineRenderingCreateInfo`。 |
 | G-10 | 多帧在飞与延迟销毁 | 接口约定“destroy 任意时刻可调、Vulkan 延迟到 fence 之后”，但帧同步对象不存在；`submit_frame` 未使用。 | 设计 `frame_index + max_frames_in_flight(2~3) + per-frame fence/command buffer/descriptor pool + deferred destroy list`。 |
 
@@ -329,6 +344,8 @@ D-34（swapchain 缺 `eTransferSrc`）、D-35（`create_texture` 字段/校验�
 shader 不再手工 `linear_to_srgb()`；GL 变体保持原约定，见 `shaders-vulkan/*/frag.glsl` 注释）、
 **G-05**（`SamplerDesc.compare_op` 已落地并映射两端）、**G-06**（显存策略定为
 “自建、每资源独占 allocation”，实现于 `vulkan/vk_memory.*`，纹理与缓冲区均已接入）、
+**G-07**（默认帧缓冲深度：`RenderingDeviceRefactor::DepthAttachmentDesc` 的无效 view 表示内部深度，
+I-31 在默认帧缓冲分支使用缓存的深度 view；实际录制依赖 V3-2）、
 **G-11**（`alloc_handle_id()` 统一分配唯一句柄）、**G-12**（校验抽到 `rhi_validation.*`，Vulkan 统一调用）。
 
 ---
@@ -372,7 +389,7 @@ shader 不再手工 `linear_to_srgb()`；GL 变体保持原约定，见 `shaders
 **验收（已通过）**：颜色/深度/cubemap 纹理与视图、上传、mipmap、缓冲区创建/写入、sampler 全部
 冒烟通过；validation 无 VUID；销毁走 RAII。
 
-### V3 交换链 / 默认帧缓冲 / 呈现（V3-1 已完成，其余待做）
+### V3 交换链 / 默认帧缓冲 / 呈现（V3-1 / V3-3 已完成，其余待做）
 
 - [x] **V3-1** `init_swapchain` 补 image view、深度 image/view（G-07）、每 swapchain image 的 framebuffer/render pass 缓存，并创建 acquire/present 同步对象。（D-16）
   - 实现：`vk_swapchain.cpp` 的 `create_swapchain_image_views` / `create_swapchain_depth_buffers` /
@@ -384,7 +401,14 @@ shader 不再手工 `linear_to_srgb()`；GL 变体保持原约定，见 `shaders
   - 验收：冒烟中 3 image view / 3 depth image / 3 framebuffer / 2 frame sync 创建成功，
     重复 `init_swapchain` 走 oldSwapchain 重建且尺寸不变，validation 无 VUID。
 - [ ] **V3-2** acquire/present：`vkAcquireNextImageKHR`、image-available/render-finished semaphore、每帧 fence 的**接线**（同步对象已由 V3-1 创建）。（D-16/D-24）
-- [ ] **V3-3** `encoder_begin_render_pass` 支持默认帧缓冲：无效 color view → 当前交换链 image；无效 depth view → 内部深度；`width/height=0` → 由附件推导；完整 attachment（format/samples/initial/final layout）+ subpass/dependency。（D-07/D-19/G-09）
+- [x] **V3-3** `encoder_begin_render_pass` 支持默认帧缓冲：无效 color view → 当前交换链 image；无效 depth view → 内部深度；`width/height=0` → 由附件推导；完整 attachment（format/samples/initial/final layout）+ subpass/dependency。（D-07/D-19/G-09）
+  - 实现：显式附件路径在 `vk_command.cpp` 解析视图格式/尺寸/父纹理实际布局，填全附件描述与
+    subpass/dependency；framebuffer 由附件尺寸决定、render area 由 `desc.width/height` 决定；
+    无效 color/depth view 走默认帧缓冲分支，复用 `init_swapchain` 缓存的 render pass/framebuffer。
+  - 未 acquire 时默认帧缓冲明确返回失败（`current_swapchain_image == UINT32_MAX`），不创建非法
+    render pass；端到端验收依赖 V3-2 acquire 与 V3-4 present。
+  - 验收：冒烟录制 color+depth 与 depth-only 两个 pass（128x96，尺寸由附件推导）并随 command
+    buffer 释放，validation 无 VUID；6 条拒绝路径（空附件/尺寸不一致/越界/混用/cubemap/未 acquire）。
 - [ ] **V3-4** `present()` → `vkQueuePresentKHR`；`resize_swapchain` 已实现（I-04）；`get_swapchain_format/size` 保持真实值。（D-17/D-25）
   - `resize_swapchain` 复用 `init_swapchain` 的 oldSwapchain 路径，零尺寸推迟、extent 未变时不重建；
     平台 resize 事件转发仍未接（V3-5）。
@@ -450,8 +474,8 @@ descriptor 内容与 shader 声明匹配。
    - `test_vk_image_layout.cpp`（Vulkan 构建）：aspect/resting layout/barrier/mip 尺寸映射。
 3. **设备测试**（需要 Vulkan runtime）
    - `orca-vulkan-init-test`（已有）：instance/device/swapchain + 交换链依赖资源 +
-     `resize_swapchain`（含零尺寸推迟）+ 纹理/视图/采样器/缓冲区 +
-     SPIR-V shader 模块（triangle + builtin-skybox）冒烟。
+     `resize_swapchain`（含零尺寸推迟）+ render pass 录制（color+depth / depth-only，含 6 条
+     拒绝路径）+ 纹理/视图/采样器/缓冲区 + SPIR-V shader 模块（triangle + builtin-skybox）冒烟。
    - 待新增 `orca-vulkan-resources-test`：创建 bind group/pipeline 并销毁，validation 全绿。
    - 待新增 `orca-vulkan-draw-test`：清屏 → 三角形 → 纹理四边形 → 深度 → present。
 4. **Validation layer**
@@ -478,7 +502,7 @@ descriptor 内容与 shader 声明匹配。
 | `vk_resource.cpp` | shader（SPIR-V 校验/对齐拷贝）、texture（显存/上传/mipmap）、image view、sampler 与对应 destroy | ✅ 均可用 |
 | `vk_buffer.cpp` | buffer 创建/写入/销毁 + 设备级 staging 池 | ✅ 可用 |
 | `vk_pipeline.cpp` | graphics pipeline 创建/销毁 | ⚠️ 骨架缺关键状态 |
-| `vk_command.cpp` | encoder/render pass/命令绑定/一次性提交/队列桩 | ⚠️ 录制骨架可跑，绑定与 draw 仍空 |
+| `vk_command.cpp` | encoder/render pass（完整附件/subpass/dependency/尺寸推导/默认帧缓冲）、命令绑定、一次性提交、队列桩 | ⚠️ render pass 创建与释放可用；绑定与 draw 仍空 |
 | `vk_internal.h` | 资源对象数据结构 | ⚠️ 缺 bind group/layout、pipeline layout、descriptor pool |
 | `vk_format.h/.cpp` | Format↔vk::Format、image/buffer usage、CompareOp 映射 | ✅ 纯逻辑，已单测 |
 | `vk_memory.h/.cpp` | 显存类型选择 + 独占 `vkAllocateMemory` | ✅ 可用 |
@@ -519,9 +543,14 @@ sRGB 交换链约定）；构建时由 `orca-shader-spirv` 目标用 `glslc` 编
     dynamic rendering），但录制走 `VkRenderPass` 对象；V5 必须二选一并写清。
 12. **句柄与销毁。** 所有 handle 由 `alloc_handle_id()` 分配且唯一；`destroy_*` 目前立即 `memdelete`，
     在 V6 引入帧 fence 前是安全的，之后必须改为延迟销毁（D-15）。
-13. **encoder 里的 render pass/framebuffer 仍是每 pass 新建且无销毁入口。** 默认帧缓冲的
-    render pass/framebuffer 已由 `init_swapchain` 缓存（V3-1），但 `encoder_begin_render_pass`
-    的自建路径仍会泄漏；V3-3/V6 必须补缓存或释放（D-15/D-07）。
+13. **render pass 的附件、布局与释放都有固定约定（I-31）。** 显式附件必须是单层 2D 视图且同尺寸；
+    附件描述必须填全 format/samples/load-store/initial+final layout，并配一道 subpass 与
+    external→subpass / subpass→external 两道 dependency。`initialLayout` 取父纹理的
+    `current_layout`（不要硬编码 Undefined），`finalLayout` 固定为 `ColorAttachmentOptimal` /
+    `DepthStencilAttachmentOptimal`，由 `pass_end` 写回父纹理——因此**录制顺序决定布局簿记**，
+    录制后丢弃命令缓冲会让簿记失真。framebuffer 尺寸由附件决定，`desc.width/height` 只是
+    render area（0 表示取附件尺寸）。render pass/framebuffer 归 command buffer 所有，
+    `destroy_command_buffer` 统一释放（仍在 V6 之前是立即销毁，D-15）。
 14. **`waitForFences` 返回值被忽略（D-38）。** 一次性提交的失败（超时/设备丢失）会被当成成功。
 15. **`init_swapchain` 前必须先有 surface。** 离屏（`create_vulkan_surface` 为空）会直接返回 false；
     `findQueueFamilies` 依赖 surface 做 present 支持查询。
@@ -540,7 +569,8 @@ sRGB 交换链约定）；构建时由 `orca-shader-spirv` 目标用 `glslc` 编
 18. **默认帧缓冲 render pass 的 load/store 是固定的。** 目前统一 color `Clear+Store`、
     depth `Clear+DontCare`（`finalLayout` 分别为 `PresentSrcKHR` 与
     `DepthStencilAttachmentOptimal`）。load/store 不能像 clear value 那样在 begin 时覆盖；
-    V3-3 若要让默认帧缓冲支持 `Load`，必须按 load/store 组合缓存 render pass + framebuffer，
+    `encoder_begin_render_pass` 的默认帧缓冲分支只接受 color `Clear`/`DontCare`，请求 `Load`
+    会被拒绝。要支持 `Load` 必须按 load/store 组合缓存 render pass + framebuffer，
     不能直接复用这一个。
 19. **`resize_swapchain` 的尺寸以 surface 为准，零尺寸必须推迟。** 更新 `window_info`
     只是为 `choose_swap_extent` 的 `UINT32_MAX` 回退分支提供输入；Windows 下
@@ -548,3 +578,10 @@ sRGB 交换链约定）；构建时由 `orca-shader-spirv` 目标用 `glslc` 编
     （会违反 `VUID-VkSwapchainCreateInfoKHR-imageExtent-01274`）。窗口最小化时目标 extent 为 0，
     调用只记录尺寸并返回，等下一次非零 resize 再重建。重建成功前不要消费
     `get_swapchain_size` 作为 viewport（它返回的仍是旧 extent）。
+20. **默认帧缓冲的 render pass/framebuffer 归交换链所有，且录制顺序即布局顺序。**
+    `encoder_begin_render_pass` 默认帧缓冲分支使用 `current_swapchain_image` 对应的缓存
+    framebuffer，因此必须先 acquire（`current_swapchain_image != UINT32_MAX`，V3-2 接线前直接
+    拒绝）。重建交换链（`init_swapchain`/`resize_swapchain`）会销毁这些缓存对象，而
+    `device.waitIdle()` 只等待已提交的命令：引用它们的命令缓冲必须在重建前提交并执行完，
+    否则留下悬空的 render pass/framebuffer 引用。`TextureViewHandleData` 还持有父纹理的非拥有
+    指针（读 `current_layout`），销毁顺序必须是视图先于父纹理。
