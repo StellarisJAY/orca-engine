@@ -102,10 +102,73 @@ struct VkSamplerHandleData
     SamplerDesc desc;
 };
 
+/// @brief 创建 bind group layout 时缓存的布局项（供 create_bind_group 校验）。
+struct VkBindGroupLayoutEntryData
+{
+    uint32_t binding = 0;
+    BindingType type = BindingType::UniformBuffer;
+    uint8_t visibility = ShaderStage::FRAGMENT;
+    uint64_t min_binding_size = 0;
+    bool has_dynamic_offset = false;
+};
+
+struct VkBindGroupLayoutHandleData
+{
+    vk::raii::DescriptorSetLayout descriptor_set_layout { nullptr };
+    /// @brief 创建时校验过的布局项；create_bind_group / create_pipeline_layout 复用
+    std::vector<VkBindGroupLayoutEntryData> entries;
+    std::string label;
+};
+
+/// @brief bind group 的一项已绑定资源。
+///
+/// `pass_set_bind_group`（V6）需要用这些信息校验动态偏移并记录 descriptor set 的
+/// 可见性/布局状态，因此 bind group 必须保留资源的非拥有指针。
+struct VkBindGroupBindingData
+{
+    uint32_t binding = 0;
+    BindingType type = BindingType::UniformBuffer;
+    /// @brief UniformBuffer：缓冲区（非拥有指针）
+    VkBufferHandleData *buffer = nullptr;
+    /// @brief UniformBuffer：已解析的 [offset, offset + size)，size 不再是 0
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    /// @brief UniformBuffer：是否允许动态偏移（来自布局项）
+    bool has_dynamic_offset = false;
+    /// @brief 纹理绑定：纹理视图（非拥有指针）
+    VkTextureViewHandleData *view = nullptr;
+    /// @brief 纹理绑定：descriptor 使用的 image layout（采样时纹理必须已 transition 到它）
+    vk::ImageLayout image_layout { vk::ImageLayout::eUndefined };
+    /// @brief 纹理绑定 / Sampler 绑定：采样器（非拥有指针）
+    VkSamplerHandleData *sampler = nullptr;
+};
+
+struct VkBindGroupHandleData
+{
+    // 声明顺序保证逆序析构：descriptor set 先于它所属的 pool 释放。
+    vk::raii::DescriptorPool descriptor_pool { nullptr };
+    vk::raii::DescriptorSet descriptor_set { nullptr };
+    /// @brief 创建时使用的布局（非拥有指针）；布局必须先于 bind group 销毁。
+    VkBindGroupLayoutHandleData *layout = nullptr;
+    /// @brief 每个 binding 对应的资源与已解析区间
+    std::vector<VkBindGroupBindingData> bindings;
+    std::string label;
+};
+
+struct VkPipelineLayoutHandleData
+{
+    vk::raii::PipelineLayout pipeline_layout { nullptr };
+    /// @brief 按 group index 对应的 bind group layout（非拥有指针）。
+    ///        布局必须先于管线布局销毁。
+    std::vector<VkBindGroupLayoutHandleData *> bind_group_layouts;
+    std::string label;
+};
+
 struct VkGraphicsPipelineHandleData
 {
     vk::raii::Pipeline pipeline { nullptr };
-    vk::raii::PipelineLayout pipeline_layout { nullptr };
+    /// @brief 创建管线时传入的 pipeline layout（非拥有；由调用方保证生命周期）
+    VkPipelineLayoutHandleData *pipeline_layout = nullptr;
 };
 
 /// @brief render pass 结束后需要把父纹理切换到的新布局。

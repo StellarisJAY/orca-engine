@@ -496,6 +496,351 @@ int main()
         std::printf("[TEST] SPIR-V shader modules OK (triangle + builtin-skybox).\n");
     }
 
+    // V5：绑定组 / 管线布局。descriptor set layout、descriptor set（每个 bind group 独占
+    // 一个 pool）与 pipeline layout 必须能创建，且非法布局/资源在入口被拒绝。
+    {
+        GPUBufferDesc uniform_desc;
+        uniform_desc.label = "smoke-bg-uniform";
+        uniform_desc.size = 256;
+        uniform_desc.usage = GPUBufferUsage::UNIFORM | GPUBufferUsage::COPY_DST;
+        GPUBufferHandle uniform_buffer = device->create_buffer(uniform_desc);
+        if (!uniform_buffer.is_valid())
+        {
+            std::printf("[TEST] create_buffer(bind group uniform) failed.\n");
+            return 1;
+        }
+        const float ubo_data[16] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                                    0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+        device->queue_write_buffer(uniform_buffer, 0, ubo_data, sizeof(ubo_data));
+
+        GPUBufferDesc vertex_desc;
+        vertex_desc.label = "smoke-bg-vertex";
+        vertex_desc.size = 256;
+        vertex_desc.usage = GPUBufferUsage::VERTEX | GPUBufferUsage::COPY_DST;
+        GPUBufferHandle vertex_buffer = device->create_buffer(vertex_desc);
+        if (!vertex_buffer.is_valid())
+        {
+            std::printf("[TEST] create_buffer(bind group vertex) failed.\n");
+            return 1;
+        }
+
+        TextureDescRefactor color_desc;
+        color_desc.label = "smoke-bg-color";
+        color_desc.format = Format::RGBA8Unorm;
+        color_desc.width = 8;
+        color_desc.height = 8;
+        color_desc.mip_levels = 1;
+        color_desc.usage = TextureUsage::TEXTURE_BINDING;
+        TextureHandle color_texture = device->create_texture(color_desc);
+        if (!color_texture.is_valid())
+        {
+            std::printf("[TEST] create_texture(bind group color) failed.\n");
+            return 1;
+        }
+        TextureViewDesc color_view_desc;
+        TextureViewHandle color_view = device->create_texture_view(color_texture, color_view_desc);
+        if (!color_view.is_valid())
+        {
+            std::printf("[TEST] create_texture_view(bind group color) failed.\n");
+            return 1;
+        }
+
+        TextureDescRefactor depth_desc;
+        depth_desc.label = "smoke-bg-depth";
+        depth_desc.format = Format::Depth32Float;
+        depth_desc.width = 8;
+        depth_desc.height = 8;
+        depth_desc.mip_levels = 1;
+        depth_desc.usage = TextureUsage::TEXTURE_BINDING;
+        TextureHandle depth_texture = device->create_texture(depth_desc);
+        if (!depth_texture.is_valid())
+        {
+            std::printf("[TEST] create_texture(bind group depth) failed.\n");
+            return 1;
+        }
+        TextureViewDesc depth_view_desc;
+        depth_view_desc.aspect = TextureAspect::DepthOnly;
+        TextureViewHandle depth_view = device->create_texture_view(depth_texture, depth_view_desc);
+        if (!depth_view.is_valid())
+        {
+            std::printf("[TEST] create_texture_view(bind group depth) failed.\n");
+            return 1;
+        }
+
+        TextureDescRefactor cube_desc;
+        cube_desc.label = "smoke-bg-cube";
+        cube_desc.dim = TextureDimension::Cube;
+        cube_desc.format = Format::R8Unorm;
+        cube_desc.width = 8;
+        cube_desc.height = 8;
+        cube_desc.mip_levels = 1;
+        cube_desc.usage = TextureUsage::TEXTURE_BINDING;
+        TextureHandle cube_texture = device->create_texture(cube_desc);
+        if (!cube_texture.is_valid())
+        {
+            std::printf("[TEST] create_texture(bind group cube) failed.\n");
+            return 1;
+        }
+        TextureViewDesc cube_view_desc;
+        cube_view_desc.dim = TextureViewDimension::Cube;
+        TextureViewHandle cube_view = device->create_texture_view(cube_texture, cube_view_desc);
+        if (!cube_view.is_valid())
+        {
+            std::printf("[TEST] create_texture_view(bind group cube) failed.\n");
+            return 1;
+        }
+
+        SamplerHandle sampler = device->create_sampler(SamplerDesc{});
+        if (!sampler.is_valid())
+        {
+            std::printf("[TEST] create_sampler(bind group) failed.\n");
+            return 1;
+        }
+
+        // 阴影 PCF 用的 compare 采样器：只能绑定到深度纹理。
+        SamplerDesc compare_sampler_desc;
+        compare_sampler_desc.compare_enable = true;
+        compare_sampler_desc.compare_op = CompareFunction::LessEqual;
+        SamplerHandle compare_sampler = device->create_sampler(compare_sampler_desc);
+        if (!compare_sampler.is_valid())
+        {
+            std::printf("[TEST] create_sampler(bind group compare) failed.\n");
+            return 1;
+        }
+
+        // 布局：0 静态 UBO、1 2D 纹理、2 独立 sampler、3 深度纹理、4 cubemap、
+        // 5 动态 UBO（has_dynamic_offset）。
+        BindGroupLayoutDesc layout_desc;
+        layout_desc.label = "smoke-bgl";
+        auto add_layout_entry = [](BindGroupLayoutDesc &layout, uint32_t binding, BindingType type,
+                                   uint8_t visibility, uint64_t min_binding_size = 0,
+                                   bool has_dynamic_offset = false) {
+            BindGroupLayoutEntry entry;
+            entry.binding = binding;
+            entry.type = type;
+            entry.visibility = visibility;
+            entry.min_binding_size = min_binding_size;
+            entry.has_dynamic_offset = has_dynamic_offset;
+            layout.entries.push_back(entry);
+        };
+        const uint8_t fragment_stage = static_cast<uint8_t>(ShaderStage::FRAGMENT);
+        const uint8_t vertex_fragment_stage =
+            static_cast<uint8_t>(ShaderStage::VERTEX | ShaderStage::FRAGMENT);
+        add_layout_entry(layout_desc, 0, BindingType::UniformBuffer, vertex_fragment_stage, 64);
+        add_layout_entry(layout_desc, 1, BindingType::Texture2D, fragment_stage);
+        add_layout_entry(layout_desc, 2, BindingType::Sampler, fragment_stage);
+        add_layout_entry(layout_desc, 3, BindingType::DepthTexture, fragment_stage);
+        add_layout_entry(layout_desc, 4, BindingType::TextureCube, fragment_stage);
+        add_layout_entry(layout_desc, 5, BindingType::UniformBuffer, static_cast<uint8_t>(ShaderStage::VERTEX),
+                         64, true);
+
+        BindGroupLayoutHandle bind_group_layout = device->create_bind_group_layout(layout_desc);
+        if (!bind_group_layout.is_valid())
+        {
+            std::printf("[TEST] create_bind_group_layout failed.\n");
+            return 1;
+        }
+
+        PipelineLayoutDesc pipeline_layout_desc;
+        pipeline_layout_desc.label = "smoke-pipeline-layout";
+        pipeline_layout_desc.bind_group_layouts.push_back(bind_group_layout);
+        PipelineLayoutHandle pipeline_layout = device->create_pipeline_layout(pipeline_layout_desc);
+        if (!pipeline_layout.is_valid())
+        {
+            std::printf("[TEST] create_pipeline_layout failed.\n");
+            return 1;
+        }
+
+        BindGroupDesc bind_group_desc;
+        bind_group_desc.label = "smoke-bind-group";
+        bind_group_desc.layout = bind_group_layout;
+        auto add_bind_group_entry = [](BindGroupDesc &group, uint32_t binding, BindingType type,
+                                       GPUBufferHandle buffer, TextureViewHandle view, SamplerHandle sampler_handle,
+                                       uint64_t offset = 0, uint64_t size = 0) {
+            BindGroupEntry entry;
+            entry.binding = binding;
+            entry.resource.type = type;
+            entry.resource.buffer = buffer;
+            entry.resource.texture_view = view;
+            entry.resource.sampler = sampler_handle;
+            entry.resource.offset = offset;
+            entry.resource.size = size;
+            group.entries.push_back(entry);
+        };
+        const SamplerHandle no_sampler;
+        const TextureViewHandle no_view;
+        const GPUBufferHandle no_buffer;
+        add_bind_group_entry(bind_group_desc, 0, BindingType::UniformBuffer, uniform_buffer, no_view, no_sampler,
+                             0, 64);
+        add_bind_group_entry(bind_group_desc, 1, BindingType::Texture2D, no_buffer, color_view, sampler);
+        add_bind_group_entry(bind_group_desc, 2, BindingType::Sampler, no_buffer, no_view, sampler);
+        add_bind_group_entry(bind_group_desc, 3, BindingType::DepthTexture, no_buffer, depth_view, sampler);
+        add_bind_group_entry(bind_group_desc, 4, BindingType::TextureCube, no_buffer, cube_view, sampler);
+        add_bind_group_entry(bind_group_desc, 5, BindingType::UniformBuffer, uniform_buffer, no_view, no_sampler,
+                             0, 64);
+
+        BindGroupHandle bind_group = device->create_bind_group(bind_group_desc);
+        if (!bind_group.is_valid())
+        {
+            std::printf("[TEST] create_bind_group failed.\n");
+            return 1;
+        }
+        std::printf("[TEST] bind group layout/pipeline layout/bind group create OK "
+                    "(2 UBO + 2D + depth + cube + sampler).\n");
+
+        // 深度纹理 + compare 采样器是合法组合（阴影 PCF）。
+        BindGroupDesc depth_compare_desc = bind_group_desc;
+        depth_compare_desc.label = "smoke-bg-depth-compare";
+        depth_compare_desc.entries[3].resource.sampler = compare_sampler;
+        BindGroupHandle depth_compare_bind_group = device->create_bind_group(depth_compare_desc);
+        if (!depth_compare_bind_group.is_valid())
+        {
+            std::printf("[TEST] create_bind_group(depth + compare sampler) failed.\n");
+            return 1;
+        }
+        std::printf("[TEST] bind group with depth texture + compare sampler OK.\n");
+
+        // 拒绝路径：非法布局描述（重复 binding / 空 visibility / 纹理上的动态偏移）。
+        BindGroupLayoutDesc duplicate_layout = layout_desc;
+        duplicate_layout.label = "reject-bgl-duplicate";
+        duplicate_layout.entries.push_back(layout_desc.entries[0]);
+        if (device->create_bind_group_layout(duplicate_layout).is_valid())
+        {
+            std::printf("[TEST] create_bind_group_layout accepted a duplicate binding.\n");
+            return 1;
+        }
+
+        BindGroupLayoutDesc empty_visibility_layout = layout_desc;
+        empty_visibility_layout.label = "reject-bgl-visibility";
+        empty_visibility_layout.entries[0].visibility = 0;
+        if (device->create_bind_group_layout(empty_visibility_layout).is_valid())
+        {
+            std::printf("[TEST] create_bind_group_layout accepted an empty visibility.\n");
+            return 1;
+        }
+
+        BindGroupLayoutDesc dynamic_texture_layout = layout_desc;
+        dynamic_texture_layout.label = "reject-bgl-dynamic-texture";
+        dynamic_texture_layout.entries[1].has_dynamic_offset = true;
+        if (device->create_bind_group_layout(dynamic_texture_layout).is_valid())
+        {
+            std::printf("[TEST] create_bind_group_layout accepted a dynamic texture binding.\n");
+            return 1;
+        }
+
+        // 拒绝路径：绑定组与布局/资源不匹配。
+        BindGroupDesc missing_binding = bind_group_desc;
+        missing_binding.label = "reject-bg-missing";
+        missing_binding.entries.pop_back(); // 缺绑定 5
+        if (device->create_bind_group(missing_binding).is_valid())
+        {
+            std::printf("[TEST] create_bind_group accepted a missing binding.\n");
+            return 1;
+        }
+
+        BindGroupDesc extra_binding = bind_group_desc;
+        extra_binding.label = "reject-bg-extra";
+        add_bind_group_entry(extra_binding, 9, BindingType::UniformBuffer, uniform_buffer, no_view, no_sampler, 0,
+                             64);
+        if (device->create_bind_group(extra_binding).is_valid())
+        {
+            std::printf("[TEST] create_bind_group accepted an undeclared binding.\n");
+            return 1;
+        }
+
+        BindGroupDesc wrong_dimension = bind_group_desc;
+        wrong_dimension.label = "reject-bg-dimension";
+        wrong_dimension.entries[1].resource.texture_view = cube_view; // Texture2D 绑定给 cube 视图
+        if (device->create_bind_group(wrong_dimension).is_valid())
+        {
+            std::printf("[TEST] create_bind_group accepted a cube view for a Texture2D binding.\n");
+            return 1;
+        }
+
+        BindGroupDesc wrong_usage = bind_group_desc;
+        wrong_usage.label = "reject-bg-usage";
+        wrong_usage.entries[0].resource.buffer = vertex_buffer; // 没有 UNIFORM 用途
+        if (device->create_bind_group(wrong_usage).is_valid())
+        {
+            std::printf("[TEST] create_bind_group accepted a buffer without UNIFORM usage.\n");
+            return 1;
+        }
+
+        BindGroupDesc out_of_range = bind_group_desc;
+        out_of_range.label = "reject-bg-range";
+        out_of_range.entries[0].resource.offset = uniform_desc.size; // offset == size，size == 0 → 空区间
+        out_of_range.entries[0].resource.size = 0;
+        if (device->create_bind_group(out_of_range).is_valid())
+        {
+            std::printf("[TEST] create_bind_group accepted an out-of-range buffer binding.\n");
+            return 1;
+        }
+
+        BindGroupDesc too_small = bind_group_desc;
+        too_small.label = "reject-bg-min-size";
+        too_small.entries[0].resource.size = 32; // 小于 min_binding_size == 64
+        if (device->create_bind_group(too_small).is_valid())
+        {
+            std::printf("[TEST] create_bind_group accepted a range below min_binding_size.\n");
+            return 1;
+        }
+
+        BindGroupDesc wrong_aspect = bind_group_desc;
+        wrong_aspect.label = "reject-bg-aspect";
+        wrong_aspect.entries[3].resource.texture_view = color_view; // DepthTexture 绑定给颜色视图
+        if (device->create_bind_group(wrong_aspect).is_valid())
+        {
+            std::printf("[TEST] create_bind_group accepted a color view for a DepthTexture binding.\n");
+            return 1;
+        }
+
+        BindGroupDesc compare_on_color = bind_group_desc;
+        compare_on_color.label = "reject-bg-compare-color";
+        compare_on_color.entries[1].resource.sampler = compare_sampler; // 颜色纹理 + 比较采样器
+        if (device->create_bind_group(compare_on_color).is_valid())
+        {
+            std::printf("[TEST] create_bind_group accepted a comparison sampler on a color texture.\n");
+            return 1;
+        }
+
+        BindGroupDesc invalid_layout_handle;
+        invalid_layout_handle.label = "reject-bg-layout";
+        if (device->create_bind_group(invalid_layout_handle).is_valid())
+        {
+            std::printf("[TEST] create_bind_group accepted an invalid layout handle.\n");
+            return 1;
+        }
+
+        PipelineLayoutDesc invalid_pipeline_layout;
+        invalid_pipeline_layout.label = "reject-pipeline-layout";
+        invalid_pipeline_layout.bind_group_layouts.push_back(BindGroupLayoutHandle{});
+        if (device->create_pipeline_layout(invalid_pipeline_layout).is_valid())
+        {
+            std::printf("[TEST] create_pipeline_layout accepted an invalid layout handle.\n");
+            return 1;
+        }
+
+        std::printf("[TEST] bind group/layout rejection paths OK "
+                    "(duplicate/visibility/dynamic-texture/missing/extra/type/usage/range/min-size/aspect/"
+                    "compare-color/invalid).\n");
+
+        device->destroy_bind_group(depth_compare_bind_group);
+        device->destroy_bind_group(bind_group);
+        device->destroy_pipeline_layout(pipeline_layout);
+        device->destroy_bind_group_layout(bind_group_layout);
+        device->destroy_sampler(compare_sampler);
+        device->destroy_sampler(sampler);
+        device->destroy_texture_view(cube_view);
+        device->destroy_texture(cube_texture);
+        device->destroy_texture_view(depth_view);
+        device->destroy_texture(depth_texture);
+        device->destroy_texture_view(color_view);
+        device->destroy_texture(color_texture);
+        device->destroy_buffer(vertex_buffer);
+        device->destroy_buffer(uniform_buffer);
+        std::printf("[TEST] bind group/layout destroy OK.\n");
+    }
+
     // V1：采样器映射（含 compare_op）+ destroy 链路。
     {
         SamplerHandle sampler = device->create_sampler(SamplerDesc{});

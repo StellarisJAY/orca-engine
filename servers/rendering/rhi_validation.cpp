@@ -12,6 +12,109 @@ namespace
         return false;
     }
 
+    /// @brief 当前接口允许的可见阶段位。
+    constexpr uint8_t SUPPORTED_SHADER_STAGES = ShaderStage::VERTEX | ShaderStage::FRAGMENT;
+
+    /// @brief 在布局项集合里查找 binding；找不到返回 nullptr。
+    const RhiBindGroupLayoutEntry *find_layout_entry(const RhiBindGroupLayoutInfo &layout, uint32_t binding)
+    {
+        for (const RhiBindGroupLayoutEntry &entry : layout.entries)
+        {
+            if (entry.binding == binding)
+                return &entry;
+        }
+        return nullptr;
+    }
+
+    /// @brief 解析 UniformBuffer 的绑定区间（size == 0 表示到缓冲区末尾）。
+    bool resolve_buffer_binding_range(uint64_t buffer_size, uint64_t offset, uint64_t size,
+                                      uint64_t &resolved_size, std::string &error)
+    {
+        if (offset > buffer_size)
+            return fail(error, "the binding offset is beyond the buffer size");
+        const uint64_t available = buffer_size - offset;
+        resolved_size = size == 0 ? available : size;
+        if (resolved_size > available)
+            return fail(error, "the binding range exceeds the buffer size");
+        if (resolved_size == 0)
+            return fail(error, "the binding range resolves to 0 bytes");
+        return true;
+    }
+
+    /// @brief 判断绑定资源是否与布局项的类型匹配（不含 UniformBuffer 区间检查）。
+    bool validate_binding_resource(const RhiBindGroupLayoutEntry &layout_entry,
+                                   const RhiBindingResourceInfo &resource, std::string &error)
+    {
+        const std::string prefix = "binding " + std::to_string(layout_entry.binding) + ": ";
+
+        switch (layout_entry.type)
+        {
+        case BindingType::UniformBuffer:
+        {
+            if (!resource.has_buffer)
+                return fail(error, prefix + "a UniformBuffer binding requires a buffer");
+            if (resource.has_view || resource.has_sampler)
+                return fail(error, prefix + "a UniformBuffer binding must not carry a texture view or sampler");
+            if ((resource.buffer_usage & GPUBufferUsage::UNIFORM) == 0)
+                return fail(error, prefix + "the buffer does not have UNIFORM usage");
+            break;
+        }
+        case BindingType::Texture2D:
+        case BindingType::TextureCube:
+        case BindingType::DepthTexture:
+        {
+            if (!resource.has_view)
+                return fail(error, prefix + "a texture binding requires a texture view");
+            if (!resource.has_sampler)
+                return fail(error, prefix + "a texture binding requires a sampler (combined image sampler)");
+            if (resource.has_buffer)
+                return fail(error, prefix + "a texture binding must not carry a buffer");
+
+            if (layout_entry.type == BindingType::Texture2D)
+            {
+                if (resource.view_dim != TextureViewDimension::Texture2D)
+                    return fail(error, prefix + "a Texture2D binding requires a 2D view");
+                if (resource.view_aspect != TextureAspect::Color)
+                    return fail(error, prefix + "a Texture2D binding requires the Color aspect");
+                if (rhi_format_is_depth(resource.view_format))
+                    return fail(error, prefix + "a Texture2D binding cannot use a depth format");
+            }
+            else if (layout_entry.type == BindingType::TextureCube)
+            {
+                if (resource.view_dim != TextureViewDimension::Cube)
+                    return fail(error, prefix + "a TextureCube binding requires a cube view");
+                if (resource.view_aspect != TextureAspect::Color)
+                    return fail(error, prefix + "a TextureCube binding requires the Color aspect");
+                if (rhi_format_is_depth(resource.view_format))
+                    return fail(error, prefix + "a TextureCube binding cannot use a depth format");
+            }
+            else
+            {
+                if (resource.view_dim != TextureViewDimension::Texture2D)
+                    return fail(error, prefix + "a DepthTexture binding requires a 2D view");
+                if (resource.view_aspect != TextureAspect::DepthOnly)
+                    return fail(error, prefix + "a DepthTexture binding requires the DepthOnly aspect");
+                if (!rhi_format_is_depth(resource.view_format))
+                    return fail(error, prefix + "a DepthTexture binding requires a depth format");
+            }
+
+            // 比较采样器只能用于带深度分量的视图（阴影 PCF 是唯一用途）。
+            if (resource.sampler_compare_enable && !rhi_format_is_depth(resource.view_format))
+                return fail(error, prefix + "a comparison sampler requires a depth format");
+            break;
+        }
+        case BindingType::Sampler:
+        {
+            if (!resource.has_sampler)
+                return fail(error, prefix + "a Sampler binding requires a sampler");
+            if (resource.has_view || resource.has_buffer)
+                return fail(error, prefix + "a Sampler binding must not carry a texture view or buffer");
+            break;
+        }
+        }
+        return true;
+    }
+
     /// @brief 尺寸允许的最大 mip 层数（含第 0 层）。
     uint32_t max_mip_levels(uint32_t width, uint32_t height)
     {
@@ -275,6 +378,123 @@ bool rhi_validate_sampler_desc(const SamplerDesc &desc, std::string &error)
     // VK_LOD_CLAMP_NONE == 1000.0：Vulkan 要求 maxLod 不超过它（VUID-VkSamplerCreateInfo-maxLod-01973）。
     if (desc.lod_max_clamp > 1000.0f)
         return fail(error, "lod_max_clamp must not exceed 1000.0");
+    return true;
+}
+
+bool rhi_validate_bind_group_layout_desc(const BindGroupLayoutDesc &desc, std::string &error)
+{
+    for (size_t i = 0; i < desc.entries.size(); ++i)
+    {
+        const BindGroupLayoutEntry &entry = desc.entries[i];
+        const std::string prefix = "binding " + std::to_string(entry.binding) + ": ";
+
+        if (entry.visibility == 0)
+            return fail(error, prefix + "visibility must not be empty");
+        if ((entry.visibility & ~SUPPORTED_SHADER_STAGES) != 0)
+            return fail(error, prefix + "visibility contains unknown stage bits");
+
+        switch (entry.type)
+        {
+        case BindingType::UniformBuffer:
+            break;
+        case BindingType::Texture2D:
+        case BindingType::TextureCube:
+        case BindingType::DepthTexture:
+        case BindingType::Sampler:
+            if (entry.has_dynamic_offset)
+                return fail(error, prefix + "has_dynamic_offset is only valid for UniformBuffer");
+            if (entry.min_binding_size != 0)
+                return fail(error, prefix + "min_binding_size is only valid for UniformBuffer");
+            break;
+        default:
+            return fail(error, prefix + "unknown binding type");
+        }
+
+        // 重复的 binding 会让后端的 descriptor set layout 静默合并/失败，必须提前拒绝。
+        for (size_t previous = 0; previous < i; ++previous)
+        {
+            if (desc.entries[previous].binding == entry.binding)
+                return fail(error, prefix + "the binding number is declared more than once");
+        }
+    }
+    return true;
+}
+
+bool rhi_resolve_bind_group_desc(const RhiBindGroupLayoutInfo &layout,
+                                 const std::vector<RhiBindGroupEntryInfo> &entries,
+                                 std::vector<RhiResolvedBinding> &bindings, std::string &error)
+{
+    // 1) 每个提供的 entry 都必须声明在布局里，且 binding 不能重复。
+    for (size_t i = 0; i < entries.size(); ++i)
+    {
+        const RhiBindGroupEntryInfo &entry = entries[i];
+        const std::string prefix = "binding " + std::to_string(entry.binding) + ": ";
+        if (find_layout_entry(layout, entry.binding) == nullptr)
+            return fail(error, prefix + "is not declared by the bind group layout");
+        for (size_t previous = 0; previous < i; ++previous)
+        {
+            if (entries[previous].binding == entry.binding)
+                return fail(error, prefix + "is provided more than once");
+        }
+    }
+
+    // 2) 布局里的每一项都必须提供资源（缺项会让 shader 读到未写入的 descriptor）。
+    bindings.clear();
+    bindings.reserve(layout.entries.size());
+    for (const RhiBindGroupLayoutEntry &layout_entry : layout.entries)
+    {
+        const std::string prefix = "binding " + std::to_string(layout_entry.binding) + ": ";
+        const RhiBindGroupEntryInfo *provided = nullptr;
+        for (const RhiBindGroupEntryInfo &entry : entries)
+        {
+            if (entry.binding == layout_entry.binding)
+            {
+                provided = &entry;
+                break;
+            }
+        }
+        if (provided == nullptr)
+            return fail(error, prefix + "is missing from the bind group");
+
+        const RhiBindingResourceInfo &resource = provided->resource;
+        if (resource.type != layout_entry.type)
+            return fail(error, prefix + "the resource type does not match the layout entry");
+
+        if (!validate_binding_resource(layout_entry, resource, error))
+            return false;
+
+        RhiResolvedBinding resolved;
+        resolved.binding = layout_entry.binding;
+        resolved.type = layout_entry.type;
+        resolved.has_dynamic_offset = layout_entry.has_dynamic_offset;
+        if (layout_entry.type == BindingType::UniformBuffer)
+        {
+            uint64_t resolved_size = 0;
+            std::string range_error;
+            if (!resolve_buffer_binding_range(resource.buffer_size, resource.offset, resource.size,
+                                              resolved_size, range_error))
+                return fail(error, prefix + range_error);
+            if (layout_entry.min_binding_size != 0 && resolved_size < layout_entry.min_binding_size)
+            {
+                return fail(error, prefix + "the binding range is smaller than min_binding_size (" +
+                                       std::to_string(resolved_size) + " < " +
+                                       std::to_string(layout_entry.min_binding_size) + ")");
+            }
+            resolved.offset = resource.offset;
+            resolved.size = resolved_size;
+        }
+        bindings.push_back(resolved);
+    }
+    return true;
+}
+
+bool rhi_validate_pipeline_layout_desc(const PipelineLayoutDesc &desc, std::string &error)
+{
+    for (size_t i = 0; i < desc.bind_group_layouts.size(); ++i)
+    {
+        if (!desc.bind_group_layouts[i].is_valid())
+            return fail(error, "bind_group_layouts[" + std::to_string(i) + "] handle is invalid");
+    }
     return true;
 }
 

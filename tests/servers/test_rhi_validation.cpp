@@ -363,6 +363,256 @@ TEST_CASE("RHI validation: sampler desc")
     CHECK(rhi_validate_sampler_desc(desc, error));
 }
 
+TEST_CASE("RHI validation: bind group layout desc")
+{
+    std::string error;
+
+    BindGroupLayoutDesc layout;
+    BindGroupLayoutEntry ubo;
+    ubo.binding = 0;
+    ubo.type = BindingType::UniformBuffer;
+    ubo.visibility = static_cast<uint8_t>(ShaderStage::VERTEX | ShaderStage::FRAGMENT);
+    ubo.min_binding_size = 64;
+    layout.entries.push_back(ubo);
+
+    BindGroupLayoutEntry texture;
+    texture.binding = 1;
+    texture.type = BindingType::Texture2D;
+    layout.entries.push_back(texture);
+
+    BindGroupLayoutEntry sampler;
+    sampler.binding = 2;
+    sampler.type = BindingType::Sampler;
+    layout.entries.push_back(sampler);
+
+    CHECK(rhi_validate_bind_group_layout_desc(layout, error));
+
+    // 重复 binding：后端的 descriptor set layout 会静默合并或创建失败
+    BindGroupLayoutDesc duplicate = layout;
+    duplicate.entries.push_back(ubo);
+    CHECK_FALSE(rhi_validate_bind_group_layout_desc(duplicate, error));
+    CHECK(error.find("more than once") != std::string::npos);
+
+    // 空 visibility / 未知 stage 位
+    BindGroupLayoutDesc empty_visibility = layout;
+    empty_visibility.entries[0].visibility = 0;
+    CHECK_FALSE(rhi_validate_bind_group_layout_desc(empty_visibility, error));
+
+    BindGroupLayoutDesc unknown_stage = layout;
+    unknown_stage.entries[0].visibility = static_cast<uint8_t>(0x80);
+    CHECK_FALSE(rhi_validate_bind_group_layout_desc(unknown_stage, error));
+
+    // 动态偏移 / min_binding_size 只对 UniformBuffer 有意义
+    BindGroupLayoutDesc dynamic_texture = layout;
+    dynamic_texture.entries[1].has_dynamic_offset = true;
+    CHECK_FALSE(rhi_validate_bind_group_layout_desc(dynamic_texture, error));
+
+    BindGroupLayoutDesc min_size_sampler = layout;
+    min_size_sampler.entries[2].min_binding_size = 16;
+    CHECK_FALSE(rhi_validate_bind_group_layout_desc(min_size_sampler, error));
+
+    // 空布局合法（对应空绑定组）
+    CHECK(rhi_validate_bind_group_layout_desc(BindGroupLayoutDesc{}, error));
+}
+
+namespace
+{
+    RhiBindGroupLayoutInfo make_bind_group_layout_info()
+    {
+        RhiBindGroupLayoutInfo layout;
+        RhiBindGroupLayoutEntry ubo;
+        ubo.binding = 0;
+        ubo.type = BindingType::UniformBuffer;
+        ubo.visibility = static_cast<uint8_t>(ShaderStage::VERTEX | ShaderStage::FRAGMENT);
+        ubo.min_binding_size = 64;
+        layout.entries.push_back(ubo);
+
+        RhiBindGroupLayoutEntry texture;
+        texture.binding = 1;
+        texture.type = BindingType::Texture2D;
+        layout.entries.push_back(texture);
+
+        RhiBindGroupLayoutEntry sampler;
+        sampler.binding = 2;
+        sampler.type = BindingType::Sampler;
+        layout.entries.push_back(sampler);
+        return layout;
+    }
+
+    RhiBindGroupEntryInfo make_ubo_binding(uint32_t binding, uint64_t buffer_size, uint64_t offset,
+                                           uint64_t size, uint8_t usage = GPUBufferUsage::UNIFORM)
+    {
+        RhiBindGroupEntryInfo info;
+        info.binding = binding;
+        info.resource.type = BindingType::UniformBuffer;
+        info.resource.has_buffer = true;
+        info.resource.buffer_usage = usage;
+        info.resource.buffer_size = buffer_size;
+        info.resource.offset = offset;
+        info.resource.size = size;
+        return info;
+    }
+
+    RhiBindGroupEntryInfo make_texture_binding(uint32_t binding, BindingType type, TextureViewDimension dim,
+                                               TextureAspect aspect, Format format)
+    {
+        RhiBindGroupEntryInfo info;
+        info.binding = binding;
+        info.resource.type = type;
+        info.resource.has_view = true;
+        info.resource.has_sampler = true;
+        info.resource.view_dim = dim;
+        info.resource.view_aspect = aspect;
+        info.resource.view_format = format;
+        return info;
+    }
+
+    RhiBindGroupEntryInfo make_sampler_binding(uint32_t binding)
+    {
+        RhiBindGroupEntryInfo info;
+        info.binding = binding;
+        info.resource.type = BindingType::Sampler;
+        info.resource.has_sampler = true;
+        return info;
+    }
+} // namespace
+
+TEST_CASE("RHI validation: bind group desc")
+{
+    const RhiBindGroupLayoutInfo layout = make_bind_group_layout_info();
+    std::string error;
+    std::vector<RhiResolvedBinding> resolved;
+
+    std::vector<RhiBindGroupEntryInfo> entries;
+    entries.push_back(make_ubo_binding(0, 256, 32, 0)); // size == 0 解析到缓冲区末尾
+    entries.push_back(make_texture_binding(1, BindingType::Texture2D, TextureViewDimension::Texture2D,
+                                           TextureAspect::Color, Format::RGBA8Unorm));
+    entries.push_back(make_sampler_binding(2));
+    CHECK(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+    REQUIRE(resolved.size() == 3);
+    CHECK(resolved[0].binding == 0);
+    CHECK(resolved[0].offset == 32);
+    CHECK(resolved[0].size == 224);
+    CHECK_FALSE(resolved[0].has_dynamic_offset);
+
+    // 显式 size 保留原值
+    entries[0] = make_ubo_binding(0, 256, 0, 64);
+    CHECK(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+    REQUIRE(resolved.size() == 3);
+    CHECK(resolved[0].size == 64);
+
+    // 缺项 / 多项 / 重复项
+    entries.clear();
+    entries.push_back(make_ubo_binding(0, 256, 0, 64));
+    entries.push_back(make_sampler_binding(2));
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+    CHECK(error.find("missing") != std::string::npos);
+
+    entries = {make_ubo_binding(0, 256, 0, 64),
+               make_texture_binding(1, BindingType::Texture2D, TextureViewDimension::Texture2D,
+                                    TextureAspect::Color, Format::RGBA8Unorm),
+               make_sampler_binding(2), make_sampler_binding(9)};
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+    CHECK(error.find("not declared") != std::string::npos);
+
+    entries = {make_ubo_binding(0, 256, 0, 64),
+               make_texture_binding(1, BindingType::Texture2D, TextureViewDimension::Texture2D,
+                                    TextureAspect::Color, Format::RGBA8Unorm),
+               make_sampler_binding(2), make_ubo_binding(0, 256, 0, 64)};
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+    CHECK(error.find("more than once") != std::string::npos);
+
+    // 资源类型与布局项不一致
+    entries = {make_texture_binding(0, BindingType::Texture2D, TextureViewDimension::Texture2D,
+                                    TextureAspect::Color, Format::RGBA8Unorm),
+               make_texture_binding(1, BindingType::Texture2D, TextureViewDimension::Texture2D,
+                                    TextureAspect::Color, Format::RGBA8Unorm),
+               make_sampler_binding(2)};
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+    CHECK(error.find("does not match") != std::string::npos);
+
+    // UniformBuffer 的用途 / 区间 / min_binding_size
+    entries = {make_ubo_binding(0, 256, 0, 64, GPUBufferUsage::VERTEX),
+               make_texture_binding(1, BindingType::Texture2D, TextureViewDimension::Texture2D,
+                                    TextureAspect::Color, Format::RGBA8Unorm),
+               make_sampler_binding(2)};
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+    CHECK(error.find("UNIFORM") != std::string::npos);
+
+    entries = {make_ubo_binding(0, 256, 256, 0),
+               make_texture_binding(1, BindingType::Texture2D, TextureViewDimension::Texture2D,
+                                    TextureAspect::Color, Format::RGBA8Unorm),
+               make_sampler_binding(2)};
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+
+    entries[0] = make_ubo_binding(0, 256, 0, 512);
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+
+    entries[0] = make_ubo_binding(0, 256, 0, 32); // 小于 min_binding_size == 64
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+    CHECK(error.find("min_binding_size") != std::string::npos);
+
+    // 纹理维度 / aspect / 格式 / 采样器
+    entries = {make_ubo_binding(0, 256, 0, 64),
+               make_texture_binding(1, BindingType::TextureCube, TextureViewDimension::Cube,
+                                    TextureAspect::Color, Format::RGBA8Unorm),
+               make_sampler_binding(2)};
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+
+    entries[1] = make_texture_binding(1, BindingType::Texture2D, TextureViewDimension::Texture2D,
+                                      TextureAspect::DepthOnly, Format::Depth32Float);
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+
+    entries[1] = make_texture_binding(1, BindingType::Texture2D, TextureViewDimension::Texture2D,
+                                      TextureAspect::Color, Format::Depth32Float);
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+
+    entries[1] = make_texture_binding(1, BindingType::Texture2D, TextureViewDimension::Texture2D,
+                                      TextureAspect::Color, Format::RGBA8Unorm);
+    entries[1].resource.has_sampler = false;
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+    CHECK(error.find("sampler") != std::string::npos);
+
+    // 比较采样器只能用于带深度分量的视图（VUID-VkDescriptorImageInfo-sampler-01082）
+    entries[1] = make_texture_binding(1, BindingType::Texture2D, TextureViewDimension::Texture2D,
+                                      TextureAspect::Color, Format::RGBA8Unorm);
+    entries[1].resource.sampler_compare_enable = true;
+    CHECK_FALSE(rhi_resolve_bind_group_desc(layout, entries, resolved, error));
+    CHECK(error.find("comparison") != std::string::npos);
+
+    // DepthTexture 必须使用深度格式的 DepthOnly 视图；比较采样器在这里合法
+    RhiBindGroupLayoutInfo depth_layout;
+    RhiBindGroupLayoutEntry depth_entry;
+    depth_entry.binding = 3;
+    depth_entry.type = BindingType::DepthTexture;
+    depth_layout.entries.push_back(depth_entry);
+    entries = {make_texture_binding(3, BindingType::DepthTexture, TextureViewDimension::Texture2D,
+                                    TextureAspect::DepthOnly, Format::Depth32Float)};
+    CHECK(rhi_resolve_bind_group_desc(depth_layout, entries, resolved, error));
+    entries[0].resource.sampler_compare_enable = true;
+    CHECK(rhi_resolve_bind_group_desc(depth_layout, entries, resolved, error));
+    entries[0].resource.view_aspect = TextureAspect::Color;
+    CHECK_FALSE(rhi_resolve_bind_group_desc(depth_layout, entries, resolved, error));
+}
+
+TEST_CASE("RHI validation: pipeline layout desc")
+{
+    std::string error;
+
+    // 空布局合法（无描述符的管线）
+    CHECK(rhi_validate_pipeline_layout_desc(PipelineLayoutDesc{}, error));
+
+    PipelineLayoutDesc pipeline_layout;
+    BindGroupLayoutHandle valid_layout;
+    valid_layout.handle = 1;
+    pipeline_layout.bind_group_layouts.push_back(valid_layout);
+    CHECK(rhi_validate_pipeline_layout_desc(pipeline_layout, error));
+
+    pipeline_layout.bind_group_layouts.push_back(BindGroupLayoutHandle{});
+    CHECK_FALSE(rhi_validate_pipeline_layout_desc(pipeline_layout, error));
+    CHECK(error.find("invalid") != std::string::npos);
+}
+
 TEST_CASE("RHI validation: render pipeline desc")
 {
     std::string error;

@@ -92,6 +92,7 @@ if(ORCA_RENDERER_VULKAN)
         vulkan/vk_memory.cpp
         vulkan/vk_image_layout.cpp
         vulkan/vk_pipeline.cpp
+        vulkan/vk_bind_group.cpp
         vulkan/vk_command.cpp
         vulkan/vk_swapchain.cpp
     )

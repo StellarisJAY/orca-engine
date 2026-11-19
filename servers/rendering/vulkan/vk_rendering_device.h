@@ -32,8 +32,11 @@ struct SwapChainSupportDetails {
 /// image view、每图像深度、默认 render pass/framebuffer、acquire/present 同步对象）；
 /// I-04 完成（`resize_swapchain` 用 oldSwapchain 重建全部依赖资源）；I-31 完成
 /// `encoder_begin_render_pass` 的 render pass 创建（完整附件/subpass/dependency、
-/// 尺寸推导、默认帧缓冲分支，pass 内部对象随 command buffer 释放）。
-/// 绑定组、完整管线、draw/submit/present 仍未实现。进度见 docs/vulkan_rhi_checklist_v2.md。
+/// 尺寸推导、默认帧缓冲分支，pass 内部对象随 command buffer 释放）；V5-1/V5-2 完成
+/// 绑定组布局、绑定组（独占 descriptor pool + descriptor set）与管线布局，
+/// `create_render_pipeline` 改为使用调用方传入的 `pipeline_layout`。
+/// `pass_set_bind_group`、完整管线状态、draw/submit/present 仍未实现。
+/// 进度见 docs/vulkan_rhi_checklist_v2.md。
 class VkRenderingDevice : public RenderingDeviceRefactor
 {
 private:

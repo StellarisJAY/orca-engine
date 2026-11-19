@@ -88,7 +88,22 @@ RenderPipelineHandle VkRenderingDevice::create_render_pipeline(const RenderPipel
     VkGraphicsPipelineHandleData *data = nullptr;
     try
     {
+        // ================================================================
+        // 管线布局
+        // ================================================================
+        // D-28：不再自建空的 pipeline layout。绑定组按 desc.pipeline_layout 的 set 顺序
+        // 绑定，管线必须与它完全一致；pipeline layout 的所有权归调用方。
+        if (!desc.pipeline_layout.is_valid() || desc.pipeline_layout.data == nullptr)
+        {
+            std::printf("[ERROR] Vulkan create graphics pipeline failed, invalid pipeline layout handle\n");
+            return result;
+        }
+        const auto pipeline_layout_data =
+            static_cast<VkPipelineLayoutHandleData *>(desc.pipeline_layout.data);
+
         vk::GraphicsPipelineCreateInfo create_info;
+        create_info.setLayout(*pipeline_layout_data->pipeline_layout);
+
         // ================================================================
         // Shader Stages
         // ================================================================
@@ -214,14 +229,8 @@ RenderPipelineHandle VkRenderingDevice::create_render_pipeline(const RenderPipel
                                                  vk::ColorComponentFlagBits::eA);
 
         data = memnew(VkGraphicsPipelineHandleData);
+        data->pipeline_layout = pipeline_layout_data;
 
-        // ================================================================
-        // 管线布局
-        // ================================================================
-        vk::PipelineLayoutCreateInfo pipeline_layout_info;
-        data->pipeline_layout = device.createPipelineLayout(pipeline_layout_info);
-
-        create_info.setLayout(data->pipeline_layout);
         create_info.basePipelineHandle = nullptr;
         create_info.basePipelineIndex = -1;
 

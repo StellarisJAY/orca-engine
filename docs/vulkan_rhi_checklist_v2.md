@@ -1,7 +1,7 @@
 # Vulkan 适配层清单（RenderingDeviceRefactor）
 
-> 版本：**2026-11-19 复核版 + V3-1 / I-04 / I-31 完成**（代码基线 `b8af876`，工作区含 V4、V3-1、
-> I-04 与 I-31 改动）
+> 版本：**2026-11-19 复核版 + V3-1 / I-04 / I-31 / V5-1/V5-2 完成**（代码基线 `b8af876`，工作区含 V4、V3-1、
+> I-04、I-31 与 V5-1/V5-2 的绑定组/管线布局改动）
 > 审计对象：`servers/rendering/rendering_device_refactor.h`（WebGPU 风格接口，44 个纯虚函数）
 > 与 `servers/rendering/vulkan/*`（Vulkan 适配层）。
 > 复核方式：全量重读 Vulkan 适配层源码并逐接口对照，配合三配置构建、`ctest`、
@@ -12,7 +12,11 @@
 > **I-04 `resize_swapchain` 已完成**（oldSwapchain 重建交换链与全部依赖资源，零尺寸推迟）；
 > **I-31 `encoder_begin_render_pass` 的 render pass 创建已完成**（完整附件描述/subpass/
 > dependency、尺寸推导、默认帧缓冲分支、pass 内部对象随 command buffer 释放）。
-> **V3-2 的 acquire 接线、V3-4 的 `present`、V3-5（平台 resize 事件转发）与 V5 / V6 / V7
+> **V5-1 / V5-2 已完成**：`create_bind_group_layout` → `VkDescriptorSetLayout`、
+> `create_bind_group` → 每个 bind group 独占 descriptor pool + descriptor set +
+> `vkUpdateDescriptorSets`、`create_pipeline_layout` → `VkPipelineLayout`（按 group 顺序），
+> 三个 destroy 与失败清理一并补齐；共享校验覆盖布局项、资源匹配与 buffer 区间解析。
+> **V3-2 的 acquire 接线、V3-4 的 `present`、V3-5（平台 resize 事件转发）与 V5-3 / V6 / V7
 > 尚未完成**，适配层仍不能渲染任何内容。
 > 本次整理原则：已完成项直接标记完成；原先按提交批次记录的逐条修复细节不再保留
 > （已体现在代码中）；只留下当前状态、未完成项、仍开放缺陷、待决策缺口与后续计划。
@@ -41,27 +45,29 @@
    先走共享校验（长度/对齐/magic/版本/入口点/stage 一致性），再复制到对齐缓冲创建模块。
 4. **仍然不能出画面。** `encoder_begin_render_pass` 现在能创建完整 render pass（显式附件的
    format/samples/initial+final layout、subpass 与两道 dependency，framebuffer 尺寸由附件推导），
-   默认帧缓冲分支也接上了 `init_swapchain` 缓存的 render pass/framebuffer；但 acquire（V3-2）
-   尚未接线，默认帧缓冲在未 acquire 时被明确拒绝。此外绑定组/描述符集、管线布局、完整管线状态、
-   `pass_set_bind_group`、顶点/索引绑定、draw、`queue_submit`、`present` 仍缺失；新 RHI 也不在
+   默认帧缓冲分支也接上了 `init_swapchain` 缓存的 render pass/framebuffer；绑定组布局、绑定组与
+   管线布局已能创建（V5-1/V5-2），`create_render_pipeline` 也改为使用传入的 `pipeline_layout`。
+   但 acquire（V3-2）尚未接线，默认帧缓冲在未 acquire 时被明确拒绝；`pass_set_bind_group`、
+   顶点/索引绑定、draw、完整管线状态（V5-3）、`queue_submit`、`present` 仍缺失；新 RHI 也不在
    任何一帧的渲染路径中（`RenderingServer` 与 `Application` 仍走旧 `RenderingDevice`）。
-   直接补 `pass_draw` 依然无效，必须先完成 V3/V5。
+   直接补 `pass_draw` 依然无效，必须先完成 V3-2 的 acquire 与 V5-3 的完整管线。
 5. **接口实现数量统计**（判据见 §3）：
 
    | 状态 | 数量 | 占比 |
    |---|---|---|
-   | ✅ 可用 | 29 | 66% |
+   | ✅ 可用 | 35 | 80% |
    | ⚠️ 有代码但当前不可用 / 违反契约 | 2 | 5% |
-   | ❌ 未实现 | 13 | 30% |
+   | ❌ 未实现 | 7 | 16% |
 
    > 变化：`create_shader_module`（I-09）经 V4 修复后转为 ✅（25/5/14 → 26/4/14）；
    > `init_swapchain`（I-03）经 V3-1 补齐交换链依赖资源后转为 ✅（26/4/14 → 27/3/14）；
    > `resize_swapchain`（I-04）经上一轮实现后转为 ✅（27/3/14 → 28/3/13）；
-   > `encoder_begin_render_pass`（I-31）经本轮补齐 render pass 创建后转为 ✅（28/3/13 → 29/2/13）。
+   > `encoder_begin_render_pass`（I-31）经上一轮补齐 render pass 创建后转为 ✅（28/3/13 → 29/2/13）；
+   > 绑定组/管线布局 6 项（I-22..I-27）经 V5-1/V5-2 实现后转为 ✅（29/2/13 → 35/2/7）。
 
-6. **推进顺序**：V3-2/V3-4/V3-5（acquire、present、平台 resize 事件转发）→ V5（descriptor
-   set/pipeline layout/完整管线）→ V6（draw/submit/同步/延迟销毁）→ V7（GPU 验收与接入
-   `RenderingServer`）。V4、I-04 与 I-31 已完成，不再阻塞后续阶段。
+6. **推进顺序**：V5-3（补全 `create_render_pipeline`）→ V3-2/V3-4/V3-5（acquire、present、
+   平台 resize 事件转发）→ V6（pass 绑定/draw/submit/同步/延迟销毁）→ V7（GPU 验收与接入
+   `RenderingServer`）。V4、I-04、I-31 与 V5-1/V5-2 已完成，不再阻塞后续阶段。
 
 ### 1.1 下一批任务（按依赖排序）
 
@@ -74,9 +80,13 @@
       无效 depth view → 内部深度缓冲，`width/height == 0` 由附件推导（D-07/D-19）。
       代码路径已完成（I-31）；实际录制出画面仍需 V3-2 的 acquire（未 acquire 时明确拒绝）。
 - [ ] **V3-4** `present` → `vkQueuePresentKHR`（D-17/D-25）；`resize_swapchain` 的重建部分已完成（I-04）。
-- [ ] **V5-1** descriptor set layout / pool / set 与 pipeline layout（D-06）。
-- [ ] **V5-2** 补全 `create_render_pipeline`（顶点输入、renderPass 兼容、颜色混合、深度、MSAA、
-      使用传入的 `pipeline_layout`）（D-10/G-09/D-20/D-28）。
+- [x] **V5-1** descriptor set layout / pipeline layout（D-06）：`create_bind_group_layout` →
+      `VkDescriptorSetLayout`，`create_pipeline_layout` → `VkPipelineLayout`（按 group 顺序）。
+- [x] **V5-2** descriptor pool / descriptor set（D-06）：`create_bind_group` 为每个 bind group
+      创建独占 pool + set 并 `vkUpdateDescriptorSets`，校验布局/资源/区间。
+- [ ] **V5-3** 补全 `create_render_pipeline`（顶点输入、renderPass 兼容、颜色混合、深度、MSAA；
+      使用传入的 `pipeline_layout` 已完成）（D-10/G-09/D-20/D-28）。
+- [x] **V5-4** 三个 `destroy_*` 与创建失败路径清理（D-15/D-28）。
 - [ ] **V6-1** pass 绑定与 draw（`vkCmdBindDescriptorSets`/顶点/索引/`vkCmdSetScissor`/draw）（D-08/G-04）。
 - [ ] **V6-2** `queue_submit`、`present`、帧 fence 与延迟销毁（D-09/D-15/G-10）。
 - [ ] **V7-1** 手工 GPU 测试目标：clear → 三角形 → 纹理四边形 → 深度 → cubemap（D-36）。
@@ -89,8 +99,8 @@
 
 | 配置 | 构建 | 单元测试 | `orca-vulkan-init-test` 冒烟 |
 |---|---|---|---|
-| Vulkan + GL（`ORCA_RENDERER_OPENGL=ON`、`VULKAN=ON`） | ✅ `orca-tests` + `orca-vulkan-init-test` 构建通过（仅一编译警告，见 D-38） | ✅ `ctest` 通过 | ✅ 退出码 0，交换链依赖资源（view/深度/framebuffer/同步）、`resize_swapchain`（800x600 → 640x480）+ render pass 录制（color+depth / depth-only）+ 纹理/视图/采样器/缓冲区全通过，validation 无 VUID |
-| Vulkan-only（`OPENGL=OFF`、`VULKAN=ON`） | ✅ `orca-tests` + `orca-vulkan-init-test` 构建通过 | ✅ `ctest` 通过 | ✅ 退出码 0 |
+| Vulkan + GL（`ORCA_RENDERER_OPENGL=ON`、`VULKAN=ON`） | ✅ `orca-tests` + `orca-vulkan-init-test` 构建通过（仅一编译警告，见 D-38） | ✅ `ctest` 通过 | ✅ 退出码 0，交换链依赖资源（view/深度/framebuffer/同步）、`resize_swapchain`（800x600 → 640x480）+ render pass 录制（color+depth / depth-only）+ 纹理/视图/采样器/缓冲区 + 绑定组布局/绑定组/管线布局全通过，validation 无 VUID |
+| Vulkan-only（`OPENGL=OFF`、`VULKAN=ON`） | ✅ `orca-tests` + `orca-vulkan-init-test` 构建通过 | ✅ `ctest` 通过 | ✅ 退出码 0，绑定组/管线布局用例通过，validation 无 VUID |
 | GL-only（`OPENGL=ON`、`VULKAN=OFF`，默认） | ✅ `orca-tests` + `orca-vulkan-init-test` 构建通过 | ✅ `ctest` 通过 | ✅ 输出 SKIP（stderr 一行“后端不可用”提示）、退出码 0 |
 
 > 表中是本轮实际重跑的结果（目标级构建 + `orca-tests`/冒烟）；上一轮审计另做过全目标构建，
@@ -147,7 +157,8 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
   **`resize_swapchain` 的 oldSwapchain 重建（零尺寸推迟 + 800x600 → 640x480）**、
   命令编码器往返、颜色/深度/cubemap 纹理与视图（含 cubemap mip 子范围与 6 类非法视图拒绝）、
   纹理整图/带行距部分区域上传、cubemap 逐面 + mipmap、缓冲区创建/偏移写入、
-  SPIR-V shader 模块（triangle + builtin-skybox）、非法描述拒绝。
+  SPIR-V shader 模块（triangle + builtin-skybox）、**绑定组布局/绑定组/管线布局
+  （6 项布局 + 静态/动态 UBO + 2D/深度/cubemap + 独立 sampler）**、非法描述拒绝。
 - **V3-1 证据**：`init_swapchain` 创建 3 个 color image view、3 个 `D32Sfloat` 深度
   image/view（各带独占显存）、1 个默认 render pass（color `Undefined → PresentSrcKHR`、
   depth `Undefined → DepthStencilAttachmentOptimal`）与 3 个 framebuffer、2 组
@@ -171,8 +182,18 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
   buffer 释放）；validation 无 VUID。拒绝路径覆盖空附件、附件尺寸不一致（64x64 vs 128x96）、
   render area 越界（200x96 > 128x96）、显式 color + 默认深度混用、cubemap 视图作附件，以及
   尚未 acquire 的默认帧缓冲（错误信息明确指向 V3-2）。
+- **V5 证据**：冒烟创建一个 6 项布局（binding 0 静态 UBO、1 2D、2 独立 sampler、3 深度、
+  4 cubemap、5 动态 UBO），随后创建 `pipeline layout`（引用该布局）与 `bind group`
+  （一个 buffer 同时供静态/动态 UBO，颜色/深度/cubemap 视图共用一个 sampler）；日志显示
+  `[INFO] Vulkan created bind group layout(smoke-bgl): 6 binding(s)`、
+  `[INFO] Vulkan created pipeline layout(smoke-pipeline-layout): 1 bind group layout(s)`、
+  `[INFO] Vulkan created bind group(smoke-bind-group): 6 binding(s), layout(smoke-bgl)`；
+  销毁顺序为 bind group → pipeline layout → 布局 → 资源，validation 无 VUID。拒绝路径覆盖
+  重复 binding、空 visibility、纹理项上的动态偏移、缺项、未声明 binding、维度和 aspect 不匹配、
+  非 UNIFORM 缓冲区、越界/过小区间、比较采样器配颜色纹理、无效布局句柄共 12 条；另外单独验证
+  了「深度纹理 + compare 采样器」这一合法组合。
 - **未覆盖**：任何 draw/submit/present、默认帧缓冲的实际录制（需 V3-2 acquire/V3-4 present）、
-  绑定组、管线状态、validation 失败即红、GPU 读回比对（见 D-36）。
+  `pass_set_bind_group`（V6）、完整管线状态（V5-3）、validation 失败即红、GPU 读回比对（见 D-36）。
 
 ---
 
@@ -233,19 +254,19 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 
 | ID | 接口 | 状态 | 证据 | 现状 |
 |---|---|---|---|---|
-| I-22 | `create_bind_group_layout` | ❌ | `vulkan/vk_rendering_device.cpp:24` | 返回空句柄；`vk_internal.h` 也没有对应 `Vk...Data` 结构。 |
-| I-23 | `create_bind_group` | ❌ | `vk_rendering_device.cpp:30` | 返回空句柄。 |
-| I-24 | `create_pipeline_layout` | ❌ | `vk_rendering_device.cpp:36` | 返回空句柄。 |
-| I-25 | `destroy_bind_group` | ❌ | `vk_rendering_device.cpp:42` | 空实现。 |
-| I-26 | `destroy_bind_group_layout` | ❌ | `vk_rendering_device.cpp:47` | 空实现。 |
-| I-27 | `destroy_pipeline_layout` | ❌ | `vk_rendering_device.cpp:52` | 空实现。 |
+| I-22 | `create_bind_group_layout` | ✅ | `vulkan/vk_bind_group.cpp:123`；`rhi_validation.cpp:384` | 共享校验（binding 唯一、visibility 合法、动态偏移/min_binding_size 仅限 UBO）→ 设备每 set 数量上限检查 → `vk::DescriptorSetLayoutBinding`/`VkDescriptorSetLayout`；布局项缓存供 bind group 复用。空布局合法。 |
+| I-23 | `create_bind_group` | ✅ | `vk_bind_group.cpp:239` | 共享校验布局匹配、资源类型、buffer offset/size/`min_binding_size`、view 维度/aspect/格式、compare 采样器只能配深度视图；后端补 uniform offset 对齐；每个 bind group 独占 descriptor pool（`maxSets=1` + `FREE_DESCRIPTOR_SET_BIT`）并分配 1 个 descriptor set，`vkUpdateDescriptorSets` 写入 UBO/组合图像采样器/独立 sampler。 |
+| I-24 | `create_pipeline_layout` | ✅ | `vk_bind_group.cpp:476` | 按 `PipelineLayoutDesc::bind_group_layouts` 顺序创建 `VkPipelineLayout`；校验句柄/后端 data 与 `maxBoundDescriptorSets`；空布局合法。`create_render_pipeline` 改为使用它（D-28）。 |
+| I-25 | `destroy_bind_group` | ✅ | `vk_bind_group.cpp:541` | `memdelete` 释放 pool（descriptor set 析构走 `vkFreeDescriptorSets`）与绑定的非拥有指针记录。 |
+| I-26 | `destroy_bind_group_layout` | ✅ | `vk_bind_group.cpp:549` | `memdelete`；调用方须先销毁引用它的 bind group/pipeline layout。 |
+| I-27 | `destroy_pipeline_layout` | ✅ | `vk_bind_group.cpp:557` | `memdelete`；调用方须先销毁使用它的 pipeline。 |
 
 ### 4.6 渲染管线（2 项）
 
 | ID | 接口 | 状态 | 证据 | 现状 |
 |---|---|---|---|---|
-| I-28 | `create_render_pipeline` | ⚠️ | `vulkan/vk_pipeline.cpp:55` | 有骨架且入口走共享校验、失败路径清理正确，但关键字段仍缺失/写错：两个 shader stage 都没设 `stage` 与 `pName`；顶点输入为空；未设 `renderPass` 也未启用 dynamic rendering；颜色混合状态没挂到 `vk::PipelineColorBlendStateCreateInfo`（`color_blend_attachment` 是死变量）；忽略 `desc.pipeline_layout`；深度状态硬编码（depth test 开、write 关、compare `eNever`）；MSAA 硬编码 `e1`。 |
-| I-29 | `destroy_render_pipeline` | ✅ | `vk_pipeline.cpp:217` | `memdelete` 释放 `VkGraphicsPipelineHandleData`（pipeline + 内部 layout 均由 RAII 释放）。 |
+| I-28 | `create_render_pipeline` | ⚠️ | `vulkan/vk_pipeline.cpp:55` | 有骨架且入口走共享校验、失败路径清理正确；V4 已补 stage 的 `stage`/`pName` 与模块类型校验，V5-1 已改为使用传入的 `pipeline_layout` 并校验后端 data。仍缺：顶点输入为空；未设 `renderPass` 也未启用 dynamic rendering；颜色混合状态没挂到 `vk::PipelineColorBlendStateCreateInfo`（`color_blend_attachment` 是死变量）；深度状态硬编码（depth test 开、write 关、compare `eNever`）；MSAA 硬编码 `e1`；忽略颜色目标 write mask。 |
+| I-29 | `destroy_render_pipeline` | ✅ | `vk_pipeline.cpp:251` | `memdelete` 释放 `VkGraphicsPipelineHandleData`（pipeline 由 RAII 释放，pipeline layout 归调用方）。 |
 
 ### 4.7 命令录制（12 项）
 
@@ -283,10 +304,9 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 
 | ID | 位置 | 问题 | 影响 / 修复方向 |
 |---|---|---|---|
-| D-06（剩余） | `vulkan/vk_rendering_device.cpp:24-55`；`vk_internal.h` | 仅剩绑定组/管线布局部分：`create_bind_group_layout`、`create_bind_group`、`create_pipeline_layout` 及三个 destroy 仍是空桩；`vk_internal.h` 没有 descriptor set layout/pool/set、pipeline layout 结构。（缓冲区与纹理上传已完成。） | 引擎 shader 依赖 UBO + 6 张纹理（纹理槽契约见 `AGENTS.md` 5.3-5），没有绑定组就传不了参数。需先实现 descriptor layout/pool/set 与 pipeline layout（V5）。 |
 | D-08 | `vk_command.cpp:528-585` | `pass_set_bind_group`、`pass_set_vertex_buffer`、`pass_set_index_buffer`、`pass_draw`、`pass_draw_indexed` 全为空。 | 没有任何几何/参数被提交，画面一定为空（V6）。 |
 | D-09 | `vk_command.cpp:722`；`vk_rendering_device.cpp:6` | `queue_submit` 与 `present` 为空。 | 不提交、不 acquire、不 present；窗口只会显示未定义内容（V3/V6）。 |
-| D-10 | `vk_pipeline.cpp:55-240` | stage 的 `stage`/`pName` 已随 V4 补上并做模块类型检查；仍缺：顶点输入为空；`renderPass` 为 null（未启用 dynamic rendering）；颜色混合状态未挂上；忽略 `desc.pipeline_layout`、`desc.depth_stencil` 与颜色目标 write mask；MSAA 硬编码 1。 | 管线创建会被 validation 拒绝，或创建后发现不了颜色/顶点状态。需按 `RenderPipelineDesc` 完整映射（V5）。 |
+| D-10 | `vk_pipeline.cpp:55-250` | stage 的 `stage`/`pName` 已随 V4 补上并做模块类型检查；V5-1 已改为使用传入的 `pipeline_layout`。仍缺：顶点输入为空；`renderPass` 为 null（未启用 dynamic rendering）；颜色混合状态未挂上；忽略 `desc.depth_stencil` 与颜色目标 write mask；MSAA 硬编码 1。 | 管线创建会被 validation 拒绝，或创建后发现不了颜色/顶点状态。需按 `RenderPipelineDesc` 完整映射（V5-3）。 |
 | D-12 | `rendering_server.cpp`（全文走旧 `RenderingDevice::get_singleton()`）；`application.cpp:17-30` | 引擎渲染链路没有调用 `RenderingDeviceRefactor`；`Application` 用旧设备、按旧默认驱动建窗口。 | 即使 Vulkan 适配层修好也“没有调用方”。先手工测试，最后接 `RenderingServer`（V7，独立大任务）。 |
 | D-25 | `platform/glfw/glfw_window.cpp:282`；`application.cpp:116` | 平台已有 `FramebufferSize` 事件（`glfw_window.cpp:427`），但没有转发给设备；`resize_swapchain` 已实现（I-04）但仍无调用方；Vulkan 下 `swap_buffers` 不负责 present。 | Vulkan 下交换链永远不会被 present；平台 resize 后画面不会跟着重建（V3-4/V3-5）。 |
 
@@ -294,11 +314,11 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 
 | ID | 位置 | 问题 | 影响 / 修复方向 |
 |---|---|---|---|
-| D-15（剩余） | `vk_command.cpp:649`；`vk_internal.h:148` | render pass/framebuffer 已随 `destroy_command_buffer` 释放（I-31），但 `destroy_*` 仍是立即 `memdelete`，没有帧序号/延迟销毁队列（`submit_frame` 未被使用）；`destroy_command_buffer` 也要调用方保证提交已执行完。 | 提交后销毁在途资源是 UB；需要 fence + 延迟销毁表（V6/G-10）。 |
-| D-20 | `vk_pipeline.cpp:166-189`；`vk_command.cpp:556` | 管线状态忽略 desc：MSAA 硬编码 `e1`；depth test 恒开、depth write 恒关、compare 默认 `eNever`；颜色目标/blend/write mask 全部忽略；动态 scissor 从未设置。 | 深度恒不通过 → 即便 draw 也全被裁掉；混合/写掩码失效。`pass_set_viewport` 应同时设 scissor（G-04）。 |
+| D-15（剩余） | `vk_command.cpp:649`；`vk_internal.h:211` | render pass/framebuffer 已随 `destroy_command_buffer` 释放（I-31），但 `destroy_*` 仍是立即 `memdelete`，没有帧序号/延迟销毁队列（`submit_frame` 未被使用）；`destroy_command_buffer` 也要调用方保证提交已执行完。 | 提交后销毁在途资源是 UB；需要 fence + 延迟销毁表（V6/G-10）。 |
+| D-20 | `vk_pipeline.cpp:204-223`；`vk_command.cpp:556` | 管线状态忽略 desc：MSAA 硬编码 `e1`；depth test 恒开、depth write 恒关、compare 默认 `eNever`；颜色目标/blend/write mask 全部忽略；动态 scissor 从未设置。 | 深度恒不通过 → 即便 draw 也全被裁掉；混合/写掩码失效。`pass_set_viewport` 应同时设 scissor（G-04）。 |
 | D-24（剩余） | `vk_rendering_device.cpp:70`；`vk_command.cpp:670` | 没有帧 fence / 多帧在飞；`submit_frame` 只自增；一次性上传用局部 fence 同步等待。 | 无法安全复用 command buffer/descriptor/上传内存，也无法延迟销毁（V6）。 |
 | D-26（剩余） | `rendering_device_refactor.h:260-275` | 采样器 `compare_op` 与 lod 校验已完成；仍无 anisotropy 字段/设置（Vulkan 需 `samplerAnisotropy` 特性，GL 需 `EXT_texture_filter_anisotropic`）。 | 各向异性过滤不可用；接口扩展前不要只在后端加字段。 |
-| D-28（剩余） | `vk_pipeline.cpp:218-231` | 失败清理与 destroy 已修；仍自建 `pipeline_layout` 并忽略 `desc.pipeline_layout`（两者是不同的 `VkPipelineLayout`），且没有 pipeline cache。 | 绑定组无法与管线匹配；每次创建重复编译（V5）。 |
+| D-28（剩余） | `vk_pipeline.cpp:105` | 已改为使用传入的 `desc.pipeline_layout` 并校验后端 data（V5-1）；仍没有 pipeline cache，每次创建都会重复编译。 | 管线创建性能问题，留到 V5-3 之后处理。 |
 
 ### 5.3 P2：代码质量 / 可维护性
 
@@ -306,13 +326,14 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 |---|---|---|
 | D-33 | `vk_rendering_device_init.cpp:200-256` | `rateDeviceSuitability` 是死代码；物理设备只取“第一个合适的”，没有按评分选；`device_features` 为空且从不开特性链（后续 anisotropy 等也依赖它）。 |
 | D-36 | `tests/CMakeLists.txt` | Vulkan 侧已有格式/布局/校验单测与初始化冒烟，但仍缺：validation error 即失败、资源/绘制 GPU 目标、泄漏计数、GPU 读回比对（无法验证写入内容）。 |
-| D-37（剩余） | `vulkan/vk_internal.h` | 数据结构已补 `VkBufferHandleData`，仍缺 bind group layout、bind group、pipeline layout、descriptor pool；显存分配器独立在 `vk_memory`（不再需要放这里）。 |
 | D-38 | `vk_command.cpp:712`（编译警告） | `device.waitForFences(...)` 标了 `nodiscard` 但返回值被忽略：超时/设备丢失时会被当成“上传成功”。应检查返回值并走失败路径。 |
 
 ### 5.4 已关闭缺陷（保留 ID 便于追溯）
 
 D-01（CMake 漏 `vk_command.cpp`）、D-02（`vk_command.cpp` 编译错误）、D-03（纯 Vulkan 构建/旧工厂）、
 D-04（`VkImageCreateInfo` 非法字段）、D-05（`VkImageViewCreateInfo` 未填）、
+D-06（绑定组/管线布局空桩、`vk_internal.h` 缺 descriptor 结构；V5-1/V5-2 补齐 layout/pool/set 与
+pipeline layout）、
 D-07（render pass 附件缺 format/samples/layout/subpass/dependency、无效 view 被跳过、尺寸不推导、
 pass/framebuffer 每 pass 新建即泄漏；I-31 补齐创建与释放）、
 D-11（GLSL 文本无法交 Vulkan、缺源类型与工具链；V4 补 `source_kind` + glslc `.spv` + 入口/stage 校验）、
@@ -325,7 +346,9 @@ D-21（缺少描述校验）、D-22（异常未捕获）、
 D-23（没有显存分配器/staging）、D-27（shader 模块 stage 与管线槽位不匹配；V4 增加类型校验与 pName）、
 D-29（枚举 switch 无 `default`）、D-30（类注释与实现脱节；V3-1/I-04 更新注释后关闭）、
 D-31（`NODEBUG` 拼写）、D-32（debug messenger 无条件创建/未链 pNext）、
-D-34（swapchain 缺 `eTransferSrc`）、D-35（`create_texture` 字段/校验缺失）。
+D-34（swapchain 缺 `eTransferSrc`）、D-35（`create_texture` 字段/校验缺失）、
+D-37（`vk_internal.h` 缺 bind group layout/bind group/pipeline layout/descriptor pool 结构；
+V5-1/V5-2 已补 `Vk...HandleData`）。
 
 ---
 
@@ -434,15 +457,21 @@ validation 全绿。
 错误入口名、stage 不匹配均在入口被拒绝。**未完成部分**：为“简单 shader 生成完整管线”
 依赖 V5（render pass 兼容性/管线状态），届时才能验收整条管线。
 
-### V5 管线与绑定（约 2–3 天）
+### V5 管线与绑定（V5-1 / V5-2 / V5-4 已完成，V5-3 待做）
 
-- [ ] **V5-1** `create_bind_group_layout` → `VkDescriptorSetLayout`；`create_pipeline_layout` → `VkPipelineLayout`（按 group 顺序）。（D-06）
-- [ ] **V5-2** `create_bind_group` → descriptor pool（按帧/按组策略）+ `vkUpdateDescriptorSets`；校验 layout 匹配、buffer offset/size、view 类型。（D-06）
-- [ ] **V5-3** 补全 `create_render_pipeline`：vertex input binding/attribute（`VertexFormat` → `vk::Format`）；renderPass 对象（G-09）；color blend state（targets/blend/write mask）；depth state（format/write/compare）；multisample；使用传入的 `pipeline_layout`。（stage/`pName` 已在 V4 完成；D-10/D-20/D-28）
-- [ ] **V5-4** destroy pipeline/layout/set layout；创建失败路径清理。（D-15/D-28）
+- [x] **V5-1** `create_bind_group_layout` → `VkDescriptorSetLayout`；`create_pipeline_layout` → `VkPipelineLayout`（按 group 顺序）。（D-06）
+  - 实现：`vulkan/vk_bind_group.cpp`；共享校验在 `rhi_validation.cpp`（布局项唯一性/visibility/
+    动态偏移约束、管线布局句柄），后端补每 set 描述符数量上限与 `maxBoundDescriptorSets`。
+- [x] **V5-2** `create_bind_group` → descriptor pool（每个 bind group 独占一个 maxSets=1 的 pool）+
+  `vkUpdateDescriptorSets`；校验 layout 匹配、buffer offset/size、view 维度/aspect/格式。（D-06）
+  - 实现：`rhi_resolve_bind_group_desc` 统一缺项/多项/类型/区间/`min_binding_size` 校验，
+    后端补 uniform buffer offset 对齐；image layout 按颜色/深度取 ShaderReadOnly/DepthStencilReadOnly。
+- [ ] **V5-3** 补全 `create_render_pipeline`：vertex input binding/attribute（`VertexFormat` → `vk::Format`）；renderPass 对象（G-09）；color blend state（targets/blend/write mask）；depth state（format/write/compare）；multisample。（`pipeline_layout` 已改为使用传入值，stage/`pName` 已在 V4 完成；D-10/D-20/D-28）
+- [x] **V5-4** destroy bind group/layout/pipeline layout；创建失败路径清理。（D-15/D-28）
 
-**验收**：创建 `pipeline layout + bind group layout + bind group + pipeline` 成功；validation 无错；
-descriptor 内容与 shader 声明匹配。
+**验收（已完成部分）**：创建 `bind group layout + bind group + pipeline layout` 成功并销毁，
+validation 无 VUID；12 条非法布局/绑定在入口被拒绝。仍缺 `create_render_pipeline` 的完整状态
+（V5-3），因此还不能把 bind group 绑到命令并 draw（V6）。
 
 ### V6 命令录制 / 提交 / 同步（约 1.5–2 天）
 
@@ -468,15 +497,18 @@ descriptor 内容与 shader 声明匹配。
    - `Vulkan+GL`：`orca-vulkan-init-test` 必须能链接、能跑。
    - `Vulkan-only`：必须能配置+构建。
 2. **纯逻辑单测**（已在 `orca-tests`）
-   - `test_rhi_validation.cpp`：纹理/视图（含范围解析）/采样器（含 lod/compare）/缓冲区（含写入区间）/管线描述校验，
+   - `test_rhi_validation.cpp`：纹理/视图（含范围解析）/采样器（含 lod/compare）/缓冲区（含写入区间）/
+     绑定组布局（唯一性/visibility/动态偏移约束）/绑定组解析（缺项、多项、类型、区间、
+     `min_binding_size`、view 维度/aspect/格式）/管线布局句柄校验/管线描述校验，
      以及 shader 模块（source_kind、SPIR-V 头/magic/版本、入口点与 stage 一致性、截断指令流）。
    - `test_vk_format.cpp`（Vulkan 构建）：Format↔vk::Format、ImageUsage/BufferUsage、CompareOp 映射。
    - `test_vk_image_layout.cpp`（Vulkan 构建）：aspect/resting layout/barrier/mip 尺寸映射。
 3. **设备测试**（需要 Vulkan runtime）
    - `orca-vulkan-init-test`（已有）：instance/device/swapchain + 交换链依赖资源 +
      `resize_swapchain`（含零尺寸推迟）+ render pass 录制（color+depth / depth-only，含 6 条
-     拒绝路径）+ 纹理/视图/采样器/缓冲区 + SPIR-V shader 模块（triangle + builtin-skybox）冒烟。
-   - 待新增 `orca-vulkan-resources-test`：创建 bind group/pipeline 并销毁，validation 全绿。
+     拒绝路径）+ 纹理/视图/采样器/缓冲区 + SPIR-V shader 模块（triangle + builtin-skybox）+
+     绑定组布局/绑定组/管线布局（含 12 条拒绝路径）冒烟。
+   - 待新增 `orca-vulkan-resources-test`：创建完整 pipeline（V5-3 后）并绑定 bind group，validation 全绿。
    - 待新增 `orca-vulkan-draw-test`：清屏 → 三角形 → 纹理四边形 → 深度 → present。
 4. **Validation layer**
    - Debug 默认开启 `VK_LAYER_KHRONOS_validation`；建议同时打开 sync validation 捕捉 barrier 缺失；
@@ -495,15 +527,16 @@ descriptor 内容与 shader 声明匹配。
 
 | 文件 | 内容 | 状态 |
 |---|---|---|
-| `vk_rendering_device.h` | `VkRenderingDevice` 类声明、`QueueFamilyIndices`、`SwapChainSupportDetails`、staging 池与一次性提交助手、交换链依赖资源 | ✅ 声明完整；仍缺 descriptor pool（V5） |
-| `vk_rendering_device.cpp` | present/shutdown、绑定组与管线布局桩、队列查询、`submit_frame` | ⚠️ present 与绑定组/layout 仍为桩 |
+| `vk_rendering_device.h` | `VkRenderingDevice` 类声明、`QueueFamilyIndices`、`SwapChainSupportDetails`、staging 池与一次性提交助手、交换链依赖资源 | ✅ 声明完整；bind group 的 descriptor pool 由每个 bind group 独占持有（`vk_internal.h`） |
+| `vk_rendering_device.cpp` | present/shutdown、队列查询、`submit_frame` | ⚠️ present 仍为桩（V3-4） |
 | `vk_rendering_device_init.cpp` | instance/debug/surface/物理设备/逻辑设备 | ✅ 初始化可用 |
 | `vk_swapchain.cpp` | 交换链创建、image view/每图像深度/默认 render pass+framebuffer/同步对象、格式/尺寸查询、surface format/present mode 选择、`resize_swapchain` 重建 | ✅ 交换链、默认帧缓冲资源与 resize 重建可用；`present` 仍缺（V3-4） |
 | `vk_resource.cpp` | shader（SPIR-V 校验/对齐拷贝）、texture（显存/上传/mipmap）、image view、sampler 与对应 destroy | ✅ 均可用 |
 | `vk_buffer.cpp` | buffer 创建/写入/销毁 + 设备级 staging 池 | ✅ 可用 |
-| `vk_pipeline.cpp` | graphics pipeline 创建/销毁 | ⚠️ 骨架缺关键状态 |
+| `vk_bind_group.cpp` | bind group layout / bind group（独占 descriptor pool + set + `vkUpdateDescriptorSets`）/ pipeline layout 与对应 destroy | ✅ 可用（V5-1/V5-2/V5-4） |
+| `vk_pipeline.cpp` | graphics pipeline 创建/销毁；使用调用方传入的 `pipeline_layout` | ⚠️ 骨架仍缺 renderPass/顶点/混合/深度状态（V5-3） |
 | `vk_command.cpp` | encoder/render pass（完整附件/subpass/dependency/尺寸推导/默认帧缓冲）、命令绑定、一次性提交、队列桩 | ⚠️ render pass 创建与释放可用；绑定与 draw 仍空 |
-| `vk_internal.h` | 资源对象数据结构 | ⚠️ 缺 bind group/layout、pipeline layout、descriptor pool |
+| `vk_internal.h` | 资源对象数据结构（含 `VkBindGroupLayoutHandleData` / `VkBindGroupHandleData` / `VkPipelineLayoutHandleData`） | ✅ bind group/layout/pipeline layout 结构已补；descriptor pool 随 bind group 持有 |
 | `vk_format.h/.cpp` | Format↔vk::Format、image/buffer usage、CompareOp 映射 | ✅ 纯逻辑，已单测 |
 | `vk_memory.h/.cpp` | 显存类型选择 + 独占 `vkAllocateMemory` | ✅ 可用 |
 | `vk_image_layout.h/.cpp` | aspect/resting layout/transition/mip 尺寸/layout barrier | ✅ 纯逻辑，已单测 |
@@ -532,8 +565,10 @@ sRGB 交换链约定）；构建时由 `orca-shader-spirv` 目标用 `glslc` 编
    不录制非法命令；过滤模式按 `eSampledImageFilterLinear` 选择。
 7. **视图不重解释格式。** `format` 固定取父纹理格式；aspect 由父格式推导（深度只能 DepthOnly），
    不按 desc 直接传；cubemap 的 `base_layer`/`layer_count` 必须是 6 的倍数（本项目固定 `0/6`）。
-8. **`compare_enable` 不校验父纹理是深度纹理。** 该约束只有到 descriptor 绑定（V5）才能判定，
-   采样器本身可以提前创建。
+8. **比较采样器只能用于深度纹理。** 采样器本身可以在没有纹理时提前创建（`compare_enable`
+   由 `SamplerDesc` 决定）；`create_bind_group` 的共享校验（`rhi_resolve_bind_group_desc`）
+   会在绑定到颜色/立方体视图时拒绝（对应 Vulkan 的 VUID-VkDescriptorImageInfo-sampler-01082），
+   深度纹理 + compare 采样器（阴影 PCF）是合法组合，冒烟已覆盖。
 9. **`rhi_validation.*` 是唯一校验入口。** 新增资源类型或格式约束时先改共享层，再让 Vulkan 的
    `create_*` 走同一路径；不要在 Vulkan 里另立分支。
 10. **交换链格式与颜色空间是端到端契约（G-03 已定）。** 本机实际格式是 `BGRA8UnormSrgb`；
@@ -585,3 +620,15 @@ sRGB 交换链约定）；构建时由 `orca-shader-spirv` 目标用 `glslc` 编
     `device.waitIdle()` 只等待已提交的命令：引用它们的命令缓冲必须在重建前提交并执行完，
     否则留下悬空的 render pass/framebuffer 引用。`TextureViewHandleData` 还持有父纹理的非拥有
     指针（读 `current_layout`），销毁顺序必须是视图先于父纹理。
+21. **绑定组/管线布局的所有权与生命周期。** `create_bind_group_layout` 缓存布局项；
+    bind group 持有布局、buffer、view、sampler 的非拥有指针，pipeline layout 持有布局的
+    非拥有指针，`VkGraphicsPipelineHandleData` 持有 pipeline layout 的非拥有指针。销毁顺序必须是
+    bind group / pipeline → pipeline layout → bind group layout → 资源，否则留下悬空指针。
+    每个 bind group 独占一个 descriptor pool（`maxSets = 1` + `FREE_DESCRIPTOR_SET_BIT`）：
+    `vk::raii::DescriptorSet` 析构会调用 `vkFreeDescriptorSets`，没有该 flag 会报
+    `VUID-vkFreeDescriptorSets-descriptorPool-00312`（冒烟已实测）。组合图像采样器要求
+    texture view + sampler 同时存在；descriptor 的 imageLayout 取 `ShaderReadOnlyOptimal`
+    （深度为 `DepthStencilReadOnlyOptimal`），但纹理仍可能被 render pass 切到附件布局，
+    真正的采样 barrier 必须由 V6 在提交前按 `current_layout` 补齐。UniformBuffer 的
+    `offset`（含动态偏移的基址）必须按 `minUniformBufferOffsetAlignment` 对齐；动态偏移在
+    `pass_set_bind_group`（V6）还要校验数量与每个偏移的对齐和区间。

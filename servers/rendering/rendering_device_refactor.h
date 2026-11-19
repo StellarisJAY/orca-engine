@@ -74,14 +74,20 @@ struct SamplerHandle : public BaseHandle
 
 struct BindGroupLayoutHandle : public BaseHandle
 {
+    // 后端会缓存布局项供 create_bind_group / create_pipeline_layout 使用。
+    // 销毁前必须先销毁引用它的 bind group 与 pipeline layout。
 };
 
 struct BindGroupHandle : public BaseHandle
 {
+    // Vulkan 后端持有布局与资源的非拥有指针；销毁 bind group 前不要销毁它们对应的
+    // 布局、buffer、view、sampler。
 };
 
 struct PipelineLayoutHandle : public BaseHandle
 {
+    // 后端持有 bind group layout 的非拥有指针；销毁 pipeline layout 前必须先销毁
+    // 引用这些布局的 bind group，并在销毁布局前销毁本对象。
 };
 
 struct RenderPipelineHandle : public BaseHandle

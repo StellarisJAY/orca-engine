@@ -21,39 +21,6 @@ void VkRenderingDevice::shutdown()
     }
 }
 
-BindGroupLayoutHandle VkRenderingDevice::create_bind_group_layout(const BindGroupLayoutDesc &desc)
-{
-    (void)desc;
-    return {};
-}
-
-BindGroupHandle VkRenderingDevice::create_bind_group(const BindGroupDesc &desc)
-{
-    (void)desc;
-    return {};
-}
-
-PipelineLayoutHandle VkRenderingDevice::create_pipeline_layout(const PipelineLayoutDesc &desc)
-{
-    (void)desc;
-    return {};
-}
-
-void VkRenderingDevice::destroy_bind_group(BindGroupHandle bind_group)
-{
-    (void)bind_group;
-}
-
-void VkRenderingDevice::destroy_bind_group_layout(BindGroupLayoutHandle layout)
-{
-    (void)layout;
-}
-
-void VkRenderingDevice::destroy_pipeline_layout(PipelineLayoutHandle layout)
-{
-    (void)layout;
-}
-
 void VkRenderingDevice::queue_wait_idle()
 {
     try

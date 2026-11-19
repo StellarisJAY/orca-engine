@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "rendering_device_refactor.h"
 
@@ -87,6 +88,98 @@ bool rhi_resolve_texture_view_range(const RhiTextureInfo &texture, const Texture
 
 /// @brief 校验采样器描述。
 bool rhi_validate_sampler_desc(const SamplerDesc &desc, std::string &error);
+
+// ------------------------- 绑定组 / 管线布局 ----------------------------------
+
+/// @brief 绑定组布局项的后端无关视图（Vulkan 创建 descriptor set layout 时缓存的字段）。
+struct RhiBindGroupLayoutEntry
+{
+    uint32_t binding = 0;
+    BindingType type = BindingType::UniformBuffer;
+    /// @brief 可见阶段位掩码，见 ShaderStage
+    uint8_t visibility = ShaderStage::FRAGMENT;
+    /// @brief UniformBuffer：单次绑定的最小字节数；0 表示不校验
+    uint64_t min_binding_size = 0;
+    /// @brief UniformBuffer：是否允许动态偏移
+    bool has_dynamic_offset = false;
+};
+
+/// @brief 已创建绑定组布局的条目集合（按创建顺序）。
+struct RhiBindGroupLayoutInfo
+{
+    std::vector<RhiBindGroupLayoutEntry> entries;
+};
+
+/// @brief 创建绑定组时一个 entry 的资源信息（后端从自己的资源对象填充，供共享校验）。
+///
+/// 共享层只判断"资源与布局项是否匹配"，不检查对齐、数量上限等后端能力；
+/// 这些由各后端在调用本校验之前/之后追加。
+struct RhiBindingResourceInfo
+{
+    BindingType type = BindingType::UniformBuffer;
+    /// @brief UniformBuffer：是否提供了有效的缓冲区
+    bool has_buffer = false;
+    /// @brief UniformBuffer：创建缓冲区时的用途位掩码（必须包含 UNIFORM）
+    uint8_t buffer_usage = 0;
+    uint64_t buffer_size = 0;
+    uint64_t offset = 0;
+    /// @brief 绑定字节数；0 表示从 offset 到缓冲区末尾
+    uint64_t size = 0;
+    /// @brief 纹理绑定：是否提供了有效的纹理视图
+    bool has_view = false;
+    TextureViewDimension view_dim = TextureViewDimension::Texture2D;
+    TextureAspect view_aspect = TextureAspect::Color;
+    Format view_format = Format::Undefined;
+    /// @brief 纹理绑定 / Sampler 绑定：是否提供了有效的采样器
+    bool has_sampler = false;
+    /// @brief 纹理绑定：采样器是否启用了深度比较（compare_enable）
+    bool sampler_compare_enable = false;
+};
+
+struct RhiBindGroupEntryInfo
+{
+    uint32_t binding = 0;
+    RhiBindingResourceInfo resource;
+};
+
+/// @brief 解析后的绑定组项；buffer 的 size == 0 已展开成实际字节数。
+struct RhiResolvedBinding
+{
+    uint32_t binding = 0;
+    BindingType type = BindingType::UniformBuffer;
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    bool has_dynamic_offset = false;
+};
+
+/// @brief 校验绑定组布局描述。
+///
+/// 约束：
+///   - binding 编号不能重复；
+///   - visibility 不能为空，且只能包含 ShaderStage 已定义的位；
+///   - has_dynamic_offset / min_binding_size 只对 UniformBuffer 有意义，其它类型必须为默认值。
+///
+/// 空条目集合合法（空布局可以对应空绑定组）。
+bool rhi_validate_bind_group_layout_desc(const BindGroupLayoutDesc &desc, std::string &error);
+
+/// @brief 校验 bind group 的 entry 与布局是否匹配，并解析 buffer 区间。
+///
+/// 规则：
+///   - 布局里的每个 binding 必须恰好出现一次，不能缺、不能多、不能重复；
+///   - entry 的资源类型必须与布局项一致；
+///   - UniformBuffer：必须提供带 UNIFORM 用途的缓冲区，offset/size 不越界，
+///     `size == 0` 解析为"到缓冲区末尾"，解析后不能为 0，且不小于 `min_binding_size`；
+///   - Texture2D / TextureCube：必须是颜色 aspect、非深度格式、维度匹配，且带采样器
+///     （组合图像采样器）；
+///   - DepthTexture：必须是 DepthOnly aspect 的深度格式 2D 视图，且带采样器；
+///   - Sampler：只提供采样器。
+bool rhi_resolve_bind_group_desc(const RhiBindGroupLayoutInfo &layout,
+                                 const std::vector<RhiBindGroupEntryInfo> &entries,
+                                 std::vector<RhiResolvedBinding> &bindings,
+                                 std::string &error);
+
+/// @brief 校验管线布局描述（只校验组布局句柄是否有效；空布局合法）。
+bool rhi_validate_pipeline_layout_desc(const PipelineLayoutDesc &desc, std::string &error);
 
 /// @brief 校验 shader 模块描述（后端无关部分）。
 ///
