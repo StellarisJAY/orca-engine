@@ -10,6 +10,16 @@
 #include <limits>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 int main()
 {
     // 输出可能被重定向到文件；关闭缓冲，避免进程被提前终止时丢失日志。
@@ -28,6 +38,7 @@ int main()
     d.height = 600;
     d.width = 800;
     d.visible = true;
+    d.resizable = true;
     d.driver = RenderingDriverType::Vulkan;
 
     // 创建窗口
@@ -61,6 +72,96 @@ int main()
     device->get_swapchain_size(width, height);
     std::printf("[TEST] Vulkan initialized: swapchain format=%d, size=%ux%u\n",
                 static_cast<int>(device->get_swapchain_format()), width, height);
+
+    // V3-1 / I-03：init_swapchain 现在同时创建 image view、每图像深度缓冲、
+    // 默认 render pass + framebuffer 与 acquire/present 同步对象。重复调用会走
+    // oldSwapchain 重建路径（释放旧依赖资源后重建），成功后尺寸必须保持不变。
+    {
+        if (!device->init_swapchain())
+        {
+            std::printf("[TEST] re-running init_swapchain failed.\n");
+            return 1;
+        }
+        uint32_t new_width = 0;
+        uint32_t new_height = 0;
+        device->get_swapchain_size(new_width, new_height);
+        if (new_width != width || new_height != height)
+        {
+            std::printf("[TEST] swapchain size changed after re-init: %ux%u -> %ux%u\n",
+                        width, height, new_width, new_height);
+            return 1;
+        }
+        std::printf("[TEST] swapchain re-init OK (image view/depth/framebuffer/sync recreated).\n");
+    }
+
+    // I-04：resize_swapchain 必须走 oldSwapchain 路径重建交换链与全部依赖资源。
+    // 先在零尺寸（模拟窗口最小化）下确认只记录、不重建，再改真实窗口大小验证新 extent。
+    {
+        device->resize_swapchain(0, 0);
+        uint32_t zero_width = 0;
+        uint32_t zero_height = 0;
+        device->get_swapchain_size(zero_width, zero_height);
+        if (zero_width != width || zero_height != height)
+        {
+            std::printf("[TEST] zero-sized resize changed the swapchain: %ux%u\n", zero_width, zero_height);
+            return 1;
+        }
+        std::printf("[TEST] zero-sized resize deferred OK.\n");
+
+#if defined(_WIN32)
+        // GLFW 在 Win32 下通过 RenderingWindowInfo::window 暴露 HWND；这里直接改客户区
+        // 尺寸来模拟平台窗口 resize。SDL3 不填该字段，跳过这段真实 resize 检查
+        // （交换链重建本身仍由上面的重复 init_swapchain 用例覆盖）。
+        if (window_info.window != nullptr)
+        {
+            HWND hwnd = static_cast<HWND>(window_info.window);
+            RECT window_rect {};
+            RECT client_rect {};
+            if (GetWindowRect(hwnd, &window_rect) && GetClientRect(hwnd, &client_rect))
+            {
+                const uint32_t target_width = 640;
+                const uint32_t target_height = 480;
+                const int frame_width =
+                    (window_rect.right - window_rect.left) - (client_rect.right - client_rect.left);
+                const int frame_height =
+                    (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
+                if (SetWindowPos(hwnd, nullptr, 0, 0, static_cast<int>(target_width) + frame_width,
+                                 static_cast<int>(target_height) + frame_height,
+                                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE))
+                {
+                    window->poll_event();
+                    int fb_width = 0;
+                    int fb_height = 0;
+                    window->get_frame_buffer_size(fb_width, fb_height);
+                    if (fb_width == static_cast<int>(width) && fb_height == static_cast<int>(height))
+                    {
+                        std::printf("[WARN] window resize was not applied; skipping live resize check.\n");
+                    }
+                    else
+                    {
+                        device->resize_swapchain(static_cast<uint32_t>(fb_width), static_cast<uint32_t>(fb_height));
+                        uint32_t resized_width = 0;
+                        uint32_t resized_height = 0;
+                        device->get_swapchain_size(resized_width, resized_height);
+                        if (resized_width != static_cast<uint32_t>(fb_width) ||
+                            resized_height != static_cast<uint32_t>(fb_height))
+                        {
+                            std::printf("[TEST] resize_swapchain produced %ux%u, expected %dx%d\n", resized_width,
+                                        resized_height, fb_width, fb_height);
+                            return 1;
+                        }
+                        std::printf("[TEST] swapchain resize OK: %ux%u -> %ux%u.\n", width, height, resized_width,
+                                    resized_height);
+                    }
+                }
+                else
+                {
+                    std::printf("[WARN] SetWindowPos failed; skipping live resize check.\n");
+                }
+            }
+        }
+#endif
+    }
 
     // V0：命令池 + command buffer 的创建/结束/释放链路必须自洽（不涉及绘制）。
     {

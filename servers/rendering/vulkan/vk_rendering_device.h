@@ -3,6 +3,7 @@
 #include "rendering_device_refactor.h"
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
+#include <cstdint>
 #include <functional>
 #include <optional>
 
@@ -26,9 +27,11 @@ struct SwapChainSupportDetails {
 
 /// @brief Vulkan 后端。
 ///
-/// 当前状态（2026-11）：V0/V1 已完成（构建、唯一句柄、异常处理、格式映射、描述校验），
-/// instance/device/swapchain 初始化可跑通；资源显存、绑定组、完整管线与命令提交仍在
-/// V2+ 实施中。进度见 docs/vulkan_rhi_checklist.md。
+/// 当前状态（2026-11）：V0/V1/V2/V4 已完成（构建、唯一句柄、异常处理、格式映射、
+/// 描述校验、显存/纹理/缓冲/视图/采样器、SPIR-V 工具链）；V3-1 完成（交换链
+/// image view、每图像深度、默认 render pass/framebuffer、acquire/present 同步对象）；
+/// I-04 完成（`resize_swapchain` 用 oldSwapchain 重建全部依赖资源）。
+/// 绑定组、完整管线、draw/submit/present 仍未实现。进度见 docs/vulkan_rhi_checklist_v2.md。
 class VkRenderingDevice : public RenderingDeviceRefactor
 {
 private:
@@ -52,6 +55,58 @@ private:
     vk::Format swapchain_image_format{};
     vk::Extent2D swapchain_image_extent{};
     std::vector<vk::Image> swapchain_images;
+
+    // ---- 交换链依赖资源 -------------
+    //
+    // 声明顺序约定：所有引用交换链 image 的对象（image view / 深度 / framebuffer）
+    // 必须声明在 swapchain 之后，这样逆序析构时它们先于 swapchain 释放
+    // （Vulkan 要求 view 先于 image、framebuffer 先于 render pass 销毁）。
+    static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+
+    /// @brief 每张交换链图像的 color image view（默认帧缓冲的颜色附件）。
+    std::vector<vk::raii::ImageView> swapchain_image_views;
+
+    /// @brief 每张交换链图像独占一份深度缓冲（G-07）。
+    ///
+    /// 按 image 而不是全局一份：多帧在飞时不同交换链图像的深度内容互不干扰，
+    /// framebuffer 也能与 render pass 一一配对。
+    struct SwapchainDepth
+    {
+        // 声明顺序保证逆序析构：view → image → memory。
+        vk::raii::DeviceMemory memory { nullptr };
+        vk::raii::Image image { nullptr };
+        vk::raii::ImageView view { nullptr };
+        vk::DeviceSize allocation_size = 0;
+    };
+    std::vector<SwapchainDepth> swapchain_depths;
+    /// @brief 内部深度缓冲实际使用的 Vulkan 格式（由设备支持能力选择）。
+    vk::Format swapchain_depth_format { vk::Format::eUndefined };
+
+    /// @brief 默认帧缓冲的 render pass：color = 交换链 image，depth = 内部深度。
+    ///
+    /// 经典 render pass 方案（G-09）；管线与 framebuffer 通过它配对。
+    vk::raii::RenderPass swapchain_render_pass { nullptr };
+    /// @brief 每张交换链图像一个 framebuffer。
+    std::vector<vk::raii::Framebuffer> swapchain_framebuffers;
+
+    /// @brief 每帧在飞的 acquire/present 同步对象（V3-2 / D-24 的基础设施）。
+    ///
+    /// `queue_submit` 目前仍是桩，V3-2/V6 接线后由它使用：
+    /// acquire 时 signal `image_available`、submit 时等待它并 signal
+    /// `render_finished`、present 时等待 `render_finished`；`in_flight` 初始为
+    /// signaled，用于限制 CPU 超前后复用同一组对象。
+    struct FrameSync
+    {
+        vk::raii::Semaphore image_available { nullptr };
+        vk::raii::Semaphore render_finished { nullptr };
+        vk::raii::Fence in_flight { nullptr };
+    };
+    std::vector<FrameSync> frame_syncs;
+
+    /// @brief 当前已 acquire 的交换链图像索引；`UINT32_MAX` 表示尚未 acquire。
+    uint32_t current_swapchain_image = UINT32_MAX;
+    /// @brief 当前使用的 `frame_syncs` 下标。
+    uint32_t current_frame = 0;
 private:
     void create_instance();
     void create_debug_messenger();
@@ -64,6 +119,22 @@ private:
     SwapChainSupportDetails query_swapchain_support(const vk::raii::PhysicalDevice& physicalDevice) const;
     vk::Extent2D choose_swap_extent(const vk::SurfaceCapabilitiesKHR &capabilities) const;
     uint64_t alloc_handle_id() { return next_handle_id++; }
+
+    // ---- 交换链依赖资源的创建/释放 ---------------------------
+
+    /// @brief 为每张交换链图像创建 color image view。
+    bool create_swapchain_image_views();
+    /// @brief 选择设备支持的深度格式，为每张交换链图像创建深度 image/view。
+    bool create_swapchain_depth_buffers();
+    /// @brief 创建默认帧缓冲的 render pass，并为每张交换链图像创建 framebuffer。
+    bool create_swapchain_render_pass_and_framebuffers();
+    /// @brief 创建 MAX_FRAMES_IN_FLIGHT 组 acquire/present 同步对象。
+    bool create_frame_sync_objects();
+    /// @brief 释放所有依赖交换链的资源（保留 swapchain 本身，供重建时传 oldSwapchain）。
+    ///
+    /// 释放顺序：framebuffer → render pass → 深度 view/image/memory → 颜色 view。
+    /// 这些对象必须先于 swapchain 释放，否则违反 Vulkan 的父子对象销毁约束。
+    void destroy_swapchain_dependents();
 
     /// @brief 复用的 host-visible staging buffer（缓冲区上传用）。
     ///
