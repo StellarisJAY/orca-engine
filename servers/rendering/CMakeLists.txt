@@ -36,6 +36,52 @@ add_dependencies(orca-rendering orca-shader-resources)
 # 新 RHI（RenderingDeviceRefactor）固定为 Vulkan，因此不再需要全局默认后端宏。
 
 if(ORCA_RENDERER_VULKAN)
+    # Vulkan 只接受 SPIR-V：把 shaders-vulkan/<name>/{vert,frag}.glsl 用 glslc
+    # 离线编译成 <build>/resources/shaders-vulkan/<name>/{vert,frag}.spv。
+    # 运行时由 ShaderLoader::load_spirv() 通过 res://shaders-vulkan/... 读取。
+    if(Vulkan_GLSLC_EXECUTABLE AND EXISTS "${Vulkan_GLSLC_EXECUTABLE}")
+        set(ORCA_GLSLC_EXECUTABLE "${Vulkan_GLSLC_EXECUTABLE}")
+    else()
+        find_program(ORCA_GLSLC_EXECUTABLE NAMES glslc glslc.exe
+            HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
+    endif()
+    if(NOT ORCA_GLSLC_EXECUTABLE)
+        message(FATAL_ERROR "Vulkan 后端需要 glslc（Vulkan SDK 的 Bin 目录）来编译 SPIR-V；"
+                            "未找到 glslc，请设置 VULKAN_SDK 或安装 Vulkan SDK")
+    endif()
+
+    file(GLOB_RECURSE ORCA_VK_SHADER_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders-vulkan/*.glsl")
+    set(ORCA_VK_SHADER_OUTPUTS)
+    foreach(shader_source IN LISTS ORCA_VK_SHADER_SOURCES)
+        file(RELATIVE_PATH shader_relative "${CMAKE_CURRENT_SOURCE_DIR}/shaders-vulkan" "${shader_source}")
+        string(REGEX REPLACE "\\.glsl$" ".spv" shader_output_relative "${shader_relative}")
+        set(shader_output "${CMAKE_BINARY_DIR}/resources/shaders-vulkan/${shader_output_relative}")
+
+        # 用文件名决定 stage：本目录约定只放 vert.glsl / frag.glsl。
+        get_filename_component(shader_file_name "${shader_source}" NAME)
+        if(shader_file_name MATCHES "^vert\\.")
+            set(shader_stage vert)
+        elseif(shader_file_name MATCHES "^frag\\.")
+            set(shader_stage frag)
+        else()
+            message(FATAL_ERROR "无法从文件名推断 shader stage: ${shader_source}")
+        endif()
+
+        get_filename_component(shader_output_dir "${shader_output}" DIRECTORY)
+        add_custom_command(OUTPUT "${shader_output}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${shader_output_dir}"
+            COMMAND "${ORCA_GLSLC_EXECUTABLE}" --target-env=vulkan1.1 -O
+                "-fshader-stage=${shader_stage}" "${shader_source}" -o "${shader_output}"
+            DEPENDS "${shader_source}"
+            COMMENT "Compiling Vulkan shader ${shader_relative} -> ${shader_output_relative}"
+            VERBATIM)
+        list(APPEND ORCA_VK_SHADER_OUTPUTS "${shader_output}")
+    endforeach()
+
+    add_custom_target(orca-shader-spirv ALL DEPENDS ${ORCA_VK_SHADER_OUTPUTS})
+    add_dependencies(orca-rendering orca-shader-spirv)
+
     # Vulkan 仅作为实现细节，头文件不对外暴露，使用 PRIVATE 链接。
     target_sources(orca-rendering PRIVATE 
         vulkan/vk_rendering_device.cpp 

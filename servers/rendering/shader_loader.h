@@ -1,12 +1,26 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 /// @brief 一份完整的 shader 源码（顶点 + 片元）
 struct ShaderSource
 {
     std::string vertex;
     std::string fragment;
+
+    bool is_valid() const { return !vertex.empty() && !fragment.empty(); }
+};
+
+/// @brief 一份已编译的 SPIR-V shader 二进制（顶点 + 片元）。
+///
+/// 由 CMake 的 `orca-shader-spirv` 目标用 glslc 从 `shaders-vulkan/` 编译而来，
+/// 输出到 `<build>/resources/shaders-vulkan/<name>/{vert,frag}.spv`。
+struct ShaderBinarySource
+{
+    std::vector<uint8_t> vertex;
+    std::vector<uint8_t> fragment;
 
     bool is_valid() const { return !vertex.empty() && !fragment.empty(); }
 };
@@ -23,10 +37,18 @@ public:
     /// @brief 加载 shaders/<name>/{vert,frag}.glsl，失败时返回的 ShaderSource 不合法
     static ShaderSource load(const std::string &shader_name);
 
+    /// @brief 加载 Vulkan 专用的已编译 shader：res://shaders-vulkan/<name>/{vert,frag}.spv。
+    ///
+    /// 该目录由构建生成（glslc），没有源码树回退；调用方必须从构建目录运行。
+    static ShaderBinarySource load_spirv(const std::string &shader_name);
+
     /// @brief 按 res:// 规则读取文本，文件不存在或读取失败返回空串
     static std::string read_text_file(const std::string &path);
 
 private:
     /// @brief 依次尝试所有候选根目录，返回第一个存在的文件内容
     static std::string resolve_and_read(const std::string &shader_name, const std::string &file_name);
+
+    /// @brief 读取 SPIR-V 二进制；失败返回空 vector 并打印尝试的路径
+    static std::vector<uint8_t> resolve_and_read_binary(const std::string &shader_name, const std::string &file_name);
 };

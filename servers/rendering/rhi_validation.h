@@ -88,5 +88,16 @@ bool rhi_resolve_texture_view_range(const RhiTextureInfo &texture, const Texture
 /// @brief 校验采样器描述。
 bool rhi_validate_sampler_desc(const SamplerDesc &desc, std::string &error);
 
+/// @brief 校验 shader 模块描述（后端无关部分）。
+///
+/// 规则：
+///   - `source` 不能为空，`entry_point` 不能为空；
+///   - `ShaderSourceKind::SPIRV`：字节数必须是 4 的倍数、至少 20 字节头部、
+///     magic / 版本合法、指令流不能越界，并且 `OpEntryPoint` 中必须存在
+///     `entry_point`，其 ExecutionModel 与 `desc.type` 一致；
+///   - `ShaderSourceKind::GLSL_TEXT`：只检查非空，能否编译由后端决定
+///     （Vulkan 会拒绝并提示先编译成 SPIR-V）。
+bool rhi_validate_shader_module_desc(const ShaderModuleDesc &desc, std::string &error);
+
 /// @brief 校验渲染管线描述（只校验描述层面，不检查 shader 里声明的名字/位置）。
 bool rhi_validate_render_pipeline_desc(const RenderPipelineDesc &desc, std::string &error);

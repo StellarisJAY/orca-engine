@@ -10,6 +10,7 @@
 #include <cstring>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -53,29 +54,48 @@ namespace
     }
 } // namespace
 
-/// @brief 创建 shader 模块。
+/// @brief 从预编译的 SPIR-V 二进制创建 shader 模块。
 ///
-/// 注意：当前仍按接口约定的 `ShaderModuleDesc.source` 解释为 SPIR-V 二进制。
-/// GLSL 文本 → SPIR-V 的编译链路见审计清单 D-11（V4 处理）。
+/// 修复内容（V4 / D-11 / D-27）：
+///   - 源类型必须显式声明为 SPIRV，GLSL 文本在这里明确拒绝（Vulkan 不编译 GLSL）；
+///   - 先用共享校验 `rhi_validate_shader_module_desc` 检查长度/对齐/magic/版本/
+///     入口点存在性与 stage 一致性；
+///   - `pCode` 指向本地 `std::vector<uint32_t>`，不再把 `std::string::data()`
+///     直接 reinterpret_cast（后者不保证 4 字节对齐，属未定义行为）。
 ShaderHandle VkRenderingDevice::create_shader_module(const ShaderModuleDesc &desc)
 {
     ShaderHandle handle;
-    if (desc.source.empty())
+
+    std::string validation_error;
+    if (!rhi_validate_shader_module_desc(desc, validation_error))
     {
-        std::printf("[WARN] Vulkan create shader module failed: empty shader source\n");
+        std::printf("[ERROR] Vulkan create_shader_module(%s): %s\n", desc.name.c_str(), validation_error.c_str());
         return handle;
     }
+
+    if (desc.source_kind != ShaderSourceKind::SPIRV)
+    {
+        std::printf("[ERROR] Vulkan create_shader_module(%s): GLSL source is not accepted; compile it to SPIR-V "
+                    "first (glslc --target-env=vulkan1.1) and set source_kind = ShaderSourceKind::SPIRV\n",
+                    desc.name.c_str());
+        return handle;
+    }
+
+    // 校验已保证 size 是 4 的倍数；vector 的数据地址天然满足 pCode 的对齐要求。
+    std::vector<uint32_t> code(desc.source.size() / sizeof(uint32_t));
+    std::memcpy(code.data(), desc.source.data(), desc.source.size());
 
     VkShaderModuleData *shader_module_data = nullptr;
     try
     {
         vk::ShaderModuleCreateInfo create_info;
         create_info.codeSize = desc.source.size();
-        create_info.pCode = reinterpret_cast<const uint32_t *>(desc.source.data());
+        create_info.pCode = code.data();
 
         shader_module_data = memnew(VkShaderModuleData);
         shader_module_data->module = device.createShaderModule(create_info);
         shader_module_data->type = desc.type;
+        shader_module_data->entry_point = desc.entry_point;
 
         handle.handle = alloc_handle_id();
         handle.data = shader_module_data;

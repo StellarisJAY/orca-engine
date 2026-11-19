@@ -560,10 +560,33 @@ enum class ShaderType
     FRAGMENT,
 };
 
+/// @brief ShaderModuleDesc::source 的解释方式。
+///
+/// 源类型必须由调用方显式给出，后端不允许猜测：Vulkan 只接受预编译的 SPIR-V，
+/// 现存的 `#version 330 core` 文本必须先经工具链（`shaders-vulkan/` + glslc）
+/// 编译成 `.spv`（见 docs/vulkan_rhi_checklist_v2.md 的 V4）。
+enum class ShaderSourceKind
+{
+    /// @brief UTF-8 GLSL 文本（不能直接交给 Vulkan）
+    GLSL_TEXT,
+    /// @brief SPIR-V 二进制指令流（小端、按 4 字节对齐的 word 序列）
+    SPIRV,
+};
+
 struct ShaderModuleDesc
 {
     std::string name;
+    /// @brief 源码内容；按 source_kind 解释为文本或二进制。
+    ///
+    /// 二进制用 std::string 承载是为了兼容既有接口；其中的 `\0` 不会被截断，
+    /// 但交给 Vulkan 前后端会复制到对齐的 `uint32_t` 缓冲（pCode 要求 4 字节对齐）。
     std::string source;
+    ShaderSourceKind source_kind = ShaderSourceKind::SPIRV;
+    /// @brief 入口函数名；SPIR-V 里必须真实存在（默认 "main"）。
+    ///
+    /// 该字段只用于校验模块本身；真正的管线入口名以
+    /// VertexStage::entry_point / FragmentStage::entry_point 为准。
+    std::string entry_point = "main";
     ShaderType type = ShaderType::VERTEX;
 };
 
@@ -617,7 +640,7 @@ public:
 
     // ------------------------- Shader ---------------------------------------
 
-    /// @brief 创建 shader 模块（顶点 + 片段源码）
+    /// @brief 创建 shader 模块（当前 Vulkan 只接受 ShaderSourceKind::SPIRV）
     virtual ShaderHandle create_shader_module(const ShaderModuleDesc &desc) = 0;
     virtual void destroy_shader_module(ShaderHandle handle) = 0;
 

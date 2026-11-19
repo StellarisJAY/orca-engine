@@ -1,12 +1,13 @@
 # Vulkan 适配层清单（RenderingDeviceRefactor）
 
-> 版本：**2026-11-18 复核版**（代码基线 `c49f58e`，工作区干净）
+> 版本：**2026-11-18 复核版 + V4 完成**（代码基线 `c49f58e`，工作区含 V4 改动）
 > 审计对象：`servers/rendering/rendering_device_refactor.h`（WebGPU 风格接口，44 个纯虚函数）
 > 与 `servers/rendering/vulkan/*`（Vulkan 适配层）。
 > 复核方式：全量重读 Vulkan 适配层源码并逐接口对照，配合三配置构建、`ctest`、
 > `orca-vulkan-init-test` 冒烟（证据见 §2）。
-> 当前阶段：**V0 / V1 / V2 已完成**（构建、句柄、格式映射、描述校验、纹理与缓冲区显存、
-> 内容上传、mipmap、纹理视图、采样器）。**V3 起尚未开始**，适配层仍不能渲染任何内容。
+> 当前阶段：**V0 / V1 / V2 / V4 已完成**（构建、句柄、格式映射、描述校验、纹理与缓冲区显存、
+> 内容上传、mipmap、纹理视图、采样器、SPIR-V 工具链与 shader 模块校验）。
+> **V3 / V5 / V6 / V7 尚未开始**，适配层仍不能渲染任何内容。
 > 本次整理原则：已完成项直接标记完成；原先按提交批次记录的逐条修复细节不再保留
 > （已体现在代码中）；只留下当前状态、未完成项、仍开放缺陷、待决策缺口与后续计划。
 > 历史审计基线（2026-11-16）保留在原文件 `docs/vulkan_rhi_checklist.md`，不再维护。
@@ -23,23 +24,28 @@
    可上传内容（含带行距的部分区域、逐 cubemap 面）、生成 mip 链；缓冲区可创建并写入；
    纹理视图（2D/深度/cubemap + mip 子范围）与采样器（含 `compare_op`）可创建；
    所有描述先经过后端无关的 `rhi_validation.*` 校验，非法描述在进入 driver 前被拒绝。
-3. **仍然不能出画面。** 绑定组/描述符集、管线布局、完整管线状态、`pass_set_bind_group`、
+3. **Shader 工具链（V4）可用。** `ShaderModuleDesc` 增加显式 `source_kind`
+   （`GLSL_TEXT` / `SPIRV`）与 `entry_point`；CMake 的 `orca-shader-spirv` 目标用
+   `glslc` 把 `servers/rendering/shaders-vulkan/` 下的 Vulkan GLSL 变体编译成
+   `.spv`（输出到 `<build>/resources/shaders-vulkan/`）；`create_shader_module`
+   先走共享校验（长度/对齐/magic/版本/入口点/stage 一致性），再复制到对齐缓冲创建模块。
+4. **仍然不能出画面。** 绑定组/描述符集、管线布局、完整管线状态、`pass_set_bind_group`、
    顶点/索引绑定、draw、`queue_submit`、`present`、交换链图像视图/深度缓冲/帧缓冲全部缺失；
    新 RHI 也不在任何一帧的渲染路径中（`RenderingServer` 与 `Application` 仍走旧 `RenderingDevice`）。
-   直接补 `pass_draw` 依然无效，必须先完成 V3/V4/V5。
-4. **接口实现数量统计**（判据见 §3）：
+   直接补 `pass_draw` 依然无效，必须先完成 V3/V5。
+5. **接口实现数量统计**（判据见 §3）：
 
    | 状态 | 数量 | 占比 |
    |---|---|---|
-   | ✅ 可用 | 25 | 57% |
-   | ⚠️ 有代码但当前不可用 / 违反契约 | 5 | 11% |
+   | ✅ 可用 | 26 | 59% |
+   | ⚠️ 有代码但当前不可用 / 违反契约 | 4 | 9% |
    | ❌ 未实现 | 14 | 32% |
 
-   > 变化：`destroy_render_pipeline`（I-29）已实现销毁，统计由上轮 24/5/15 变为 25/5/14。
+   > 变化：`create_shader_module`（I-09）经 V4 修复后转为 ✅；统计由 25/5/14 变为 26/4/14。
 
-5. **推进顺序**：V3（交换链图像视图/深度/帧缓冲/acquire-present）→ V4（SPIR-V 工具链）→
+6. **推进顺序**：V3（交换链图像视图/深度/帧缓冲/acquire-present）→
    V5（descriptor set/pipeline layout/完整管线）→ V6（draw/submit/同步/延迟销毁）→
-   V7（GPU 验收与接入 `RenderingServer`）。每个阶段都有前置依赖，不要跳步。
+   V7（GPU 验收与接入 `RenderingServer`）。V4 已完成，不再阻塞后续阶段。
 
 ### 1.1 下一批任务（按依赖排序）
 
@@ -48,10 +54,8 @@
 - [ ] **V3-3** `encoder_begin_render_pass` 支持默认帧缓冲：无效 color view → 当前交换链图像，
       无效 depth view → 内部深度缓冲，`width/height == 0` 由附件推导（D-07）。
 - [ ] **V3-4** `present` / `resize_swapchain` / 平台 resize 事件转发（D-25）。
-- [ ] **V4-1** 确定并落地 Shader 工具链（SPIR-V 来源类型 + Vulkan 专用 GLSL 变体 + `glslc`）（D-11/G-01/G-02）。
-- [ ] **V4-2** `create_shader_module` 按源类型处理 SPIR-V（长度/对齐/入口名/stage 一致性）（D-11/D-27）。
 - [ ] **V5-1** descriptor set layout / pool / set 与 pipeline layout（D-06）。
-- [ ] **V5-2** 补全 `create_render_pipeline`（stages、顶点输入、renderPass 兼容、颜色混合、深度、MSAA、
+- [ ] **V5-2** 补全 `create_render_pipeline`（顶点输入、renderPass 兼容、颜色混合、深度、MSAA、
       使用传入的 `pipeline_layout`）（D-10/G-09/D-20/D-28）。
 - [ ] **V6-1** pass 绑定与 draw（`vkCmdBindDescriptorSets`/顶点/索引/`vkCmdSetScissor`/draw）（D-08/G-04）。
 - [ ] **V6-2** `queue_submit`、`present`、帧 fence 与延迟销毁（D-09/D-15/G-10）。
@@ -113,7 +117,11 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 - validation 输出中**没有 VUID / validation error**（只有 loader/层的注册表与卸载日志）。
 - 冒烟覆盖：instance/device/swapchain、命令编码器往返、颜色/深度/cubemap 纹理与视图（含
   cubemap mip 子范围与 6 类非法视图拒绝）、纹理整图/带行距部分区域上传、cubemap 逐面 + mipmap、
-  缓冲区创建/偏移写入、非法描述拒绝。
+  缓冲区创建/偏移写入、SPIR-V shader 模块（triangle + builtin-skybox）、非法描述拒绝。
+- **V4 证据**：`orca-shader-spirv` 用 `glslc --target-env=vulkan1.1` 编译 4 个 `.spv`
+  （`triangle/{vert,frag}`、`builtin-skybox/{vert,frag}`）；冒烟从 `.spv` 创建 4 个 shader
+  模块并销毁，validation 无 VUID。错误路径也已覆盖：GLSL 文本被拒绝、入口点不存在被拒绝、
+  fragment SPIR-V 装进 vertex 槽被拒绝。
 - **未覆盖**：任何 draw/submit/present、render pass 录制、绑定组、管线状态、validation
   失败即红、GPU 读回比对（见 D-36）。
 
@@ -148,7 +156,7 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 
 | ID | 接口 | 状态 | 证据 | 现状 |
 |---|---|---|---|---|
-| I-09 | `create_shader_module` | ⚠️ | `vulkan/vk_resource.cpp:60` | 把 `desc.source` 直接当 SPIR-V（`codeSize = source.size()`、`reinterpret_cast<uint32_t*>`）；接口实际传的仍是 GLSL 文本，也没有 4 字节长度/对齐检查、没有入口名处理。属 D-11/G-01/G-02。 |
+| I-09 | `create_shader_module` | ✅ | `vulkan/vk_resource.cpp:65`；`rhi_validation.cpp:341` | 显式 `source_kind`（Vulkan 拒绝 GLSL 文本并提示用 glslc）；共享校验检查 SPIR-V 长度 4 字节倍数、20 字节头、magic、版本 1.0–1.6、指令流不越界、`OpEntryPoint` 存在且 ExecutionModel 与 `type` 一致；`pCode` 指向对齐的 `uint32_t` 拷贝；入口名存入模块供管线回退。 |
 | I-10 | `destroy_shader_module` | ✅ | `vk_resource.cpp:92` | 正确析构 `VkShaderModuleData`。 |
 
 ### 4.3 缓冲区（3 项）
@@ -230,8 +238,7 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 | D-07 | `vk_command.cpp:89` | render pass 附件没有 format/samples/initial/final layout，create info 没有 subpass 与 dependency；无效 color view（默认帧缓冲）被跳过；`width/height=0` 不推导；render pass/framebuffer 每 pass 新建且不销毁。 | 无法录制合法 pass，更无法渲染到窗口。需要完整 render pass（含 subpass/dependency）、交换链分支、pass 缓存与销毁（V3）。 |
 | D-08 | `vk_command.cpp:194-249` | `pass_set_bind_group`、`pass_set_vertex_buffer`、`pass_set_index_buffer`、`pass_draw`、`pass_draw_indexed` 全为空。 | 没有任何几何/参数被提交，画面一定为空（V6）。 |
 | D-09 | `vk_command.cpp:357`；`vk_rendering_device.cpp:6` | `queue_submit` 与 `present` 为空。 | 不提交、不 acquire、不 present；窗口只会显示未定义内容（V3/V6）。 |
-| D-10 | `vk_pipeline.cpp:55-215` | 管线描述大面积缺失：stage 的 `stage`/`pName` 未设（fragment 会被当作 vertex、入口名为 null）；顶点输入为空；`renderPass` 为 null（未启用 dynamic rendering）；颜色混合状态未挂上；忽略 `desc.pipeline_layout` 与 `desc.depth_stencil`；MSAA 硬编码 1。 | 管线创建会被 validation 拒绝，或创建后发现不了颜色/顶点状态。需按 `RenderPipelineDesc` 完整映射（V5）。 |
-| D-11 | `vk_resource.cpp:60`；`servers/rendering/shaders/*` | Vulkan 要求 SPIR-V，但 `ShaderModuleDesc.source` 传的是 GLSL 文本；现有 GLSL 是 `#version 330 core`，不能直接给 Vulkan；入口名被忽略；`pCode` 取自 `std::string::data()`，无 4 字节对齐保证。 | Shader 是整条链路的前置。必须决定：离屏 `glslc` 生成 `.spv`，或运行时 `glslang`；并补 Vulkan 专用 shader 变体（V4）。 |
+| D-10 | `vk_pipeline.cpp:55-240` | stage 的 `stage`/`pName` 已随 V4 补上并做模块类型检查；仍缺：顶点输入为空；`renderPass` 为 null（未启用 dynamic rendering）；颜色混合状态未挂上；忽略 `desc.pipeline_layout`、`desc.depth_stencil` 与颜色目标 write mask；MSAA 硬编码 1。 | 管线创建会被 validation 拒绝，或创建后发现不了颜色/顶点状态。需按 `RenderPipelineDesc` 完整映射（V5）。 |
 | D-12 | `rendering_server.cpp`（全文走旧 `RenderingDevice::get_singleton()`）；`application.cpp:17-30` | 引擎渲染链路没有调用 `RenderingDeviceRefactor`；`Application` 用旧设备、按旧默认驱动建窗口。 | 即使 Vulkan 适配层修好也“没有调用方”。先手工测试，最后接 `RenderingServer`（V7，独立大任务）。 |
 | D-16 | `vk_swapchain.cpp:109-190` | swapchain 只有 `vk::Image` 数组：没有 image view、没有深度缓冲、没有 per-image framebuffer、没有 `oldSwapchain`、没有 acquire/present 同步对象。 | 无法作为默认帧缓冲使用；窗口 resize 无法恢复；`present()` 无对象可呈现（V3）。 |
 | D-25 | `platform/glfw/glfw_window.cpp:282`；`application.cpp:116` | 平台已有 `FramebufferSize` 事件（`glfw_window.cpp:427`），但没有转发给设备；`resize_swapchain` 无调用方；Vulkan 下 `swap_buffers` 不负责 present。 | Vulkan 下交换链永远不会被 present；resize 后画面拉伸/崩溃（V3）。 |
@@ -245,8 +252,7 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 | D-20 | `vk_pipeline.cpp:166-189`；`vk_command.cpp:222` | 管线状态忽略 desc：MSAA 硬编码 `e1`；depth test 恒开、depth write 恒关、compare 默认 `eNever`；颜色目标/blend/write mask 全部忽略；动态 scissor 从未设置。 | 深度恒不通过 → 即便 draw 也全被裁掉；混合/写掩码失效。`pass_set_viewport` 应同时设 scissor（G-04）。 |
 | D-24（剩余） | `vk_rendering_device.cpp:70`；`vk_command.cpp:305` | 没有帧 fence / 多帧在飞；`submit_frame` 只自增；一次性上传用局部 fence 同步等待。 | 无法安全复用 command buffer/descriptor/上传内存，也无法延迟销毁（V6）。 |
 | D-26（剩余） | `rendering_device_refactor.h:260-275` | 采样器 `compare_op` 与 lod 校验已完成；仍无 anisotropy 字段/设置（Vulkan 需 `samplerAnisotropy` 特性，GL 需 `EXT_texture_filter_anisotropic`）。 | 各向异性过滤不可用；接口扩展前不要只在后端加字段。 |
-| D-27 | `vk_pipeline.cpp:97-116` | 不校验 `ShaderModuleDesc.type` 与 `VertexStage/FragmentStage` 是否匹配；`VkShaderModuleData::type` 存了但没用。 | 顶点/片段模块可能装反，validation 报 stage 不匹配（V4）。 |
-| D-28（剩余） | `vk_pipeline.cpp:191-204` | 失败清理与 destroy 已修；仍自建 `pipeline_layout` 并忽略 `desc.pipeline_layout`（两者是不同的 `VkPipelineLayout`），且没有 pipeline cache。 | 绑定组无法与管线匹配；每次创建重复编译（V5）。 |
+| D-28（剩余） | `vk_pipeline.cpp:218-231` | 失败清理与 destroy 已修；仍自建 `pipeline_layout` 并忽略 `desc.pipeline_layout`（两者是不同的 `VkPipelineLayout`），且没有 pipeline cache。 | 绑定组无法与管线匹配；每次创建重复编译（V5）。 |
 
 ### 5.3 P2：代码质量 / 可维护性
 
@@ -261,12 +267,13 @@ $env:ORCA_VULKAN_INIT_TEST_EXIT_AFTER_INIT = '1'
 ### 5.4 已关闭缺陷（保留 ID 便于追溯）
 
 D-01（CMake 漏 `vk_command.cpp`）、D-02（`vk_command.cpp` 编译错误）、D-03（纯 Vulkan 构建/旧工厂）、
-D-04（`VkImageCreateInfo` 非法字段）、D-05（`VkImageViewCreateInfo` 未填）、D-13（句柄恒为 1）、
-D-14（`destroy_shader_module` 错误 cast）、D-17（交换链格式硬编码/无 BGRA 表示）、
+D-04（`VkImageCreateInfo` 非法字段）、D-05（`VkImageViewCreateInfo` 未填）、
+D-11（GLSL 文本无法交 Vulkan、缺源类型与工具链；V4 补 `source_kind` + glslc `.spv` + 入口/stage 校验）、
+D-13（句柄恒为 1）、D-14（`destroy_shader_module` 错误 cast）、D-17（交换链格式硬编码/无 BGRA 表示）、
 D-18（格式映射与 usage 位运算错误）、D-21（缺少描述校验）、D-22（异常未捕获）、
-D-23（没有显存分配器/staging）、D-29（枚举 switch 无 `default`）、D-31（`NODEBUG` 拼写）、
-D-32（debug messenger 无条件创建/未链 pNext）、D-34（swapchain 缺 `eTransferSrc`）、
-D-35（`create_texture` 字段/校验缺失）。
+D-23（没有显存分配器/staging）、D-27（shader 模块 stage 与管线槽位不匹配；V4 增加类型校验与 pName）、
+D-29（枚举 switch 无 `default`）、D-31（`NODEBUG` 拼写）、D-32（debug messenger 无条件创建/未链 pNext）、
+D-34（swapchain 缺 `eTransferSrc`）、D-35（`create_texture` 字段/校验缺失）。
 
 ---
 
@@ -274,16 +281,17 @@ D-35（`create_texture` 字段/校验缺失）。
 
 | ID | 缺口 | 现状 | 建议 |
 |---|---|---|---|
-| G-01 | Shader 源类型 | `ShaderModuleDesc.source` 是 `std::string`；Vulkan 需要 SPIR-V，却没有源类型字段。 | 增加明确的 `source_kind`（GLSL 文本 / SPIR-V）或独立 `spirv` 字段，不要靠后端猜。 |
-| G-02 | Vulkan shader 变体与工具链 | 现有 shader 是 `#version 330 core`；缺少显式 binding/独立 sampler/`gl_VertexIndex` 等 Vulkan 约定；CMake 未接入 `glslc`。 | 优先离屏方案：CMake 自定义目标把 Vulkan 变体编译成 `.spv`（如 `resources/shaders-vk/`），加载器按后端选目录；运行时 `glslang` 作为备选。 |
-| G-03 | 交换链格式与颜色空间 | 已改为使用实际格式（sRGB 优先，BGRA 已可表达）；但颜色空间约定未统一：Vulkan sRGB 交换链由硬件编码，shader 不应再手工 `linear_to_srgb()`，而现有 GL 路径相反。 | 接入绘制前必须定死一条：UNORM 交换链 + shader 手工编码（与 GL 一致），或 sRGB 交换链 + 关闭手工编码（需 shader 变体/分支）。 |
 | G-04 | 裁剪矩形 | 接口只有 `pass_set_viewport`，没有 scissor 命令；管线把 scissor 设为 dynamic。 | 约定 `pass_set_viewport` 同时设置 scissor，或在 `encoder_begin_render_pass` 按 pass 尺寸设默认 scissor。 |
 | G-07 | 默认帧缓冲深度 | 接口注释说“深度附件由后端提供的交换链深度缓冲承担”，但没有暴露“默认深度视图”的途径。 | `init_swapchain` 创建每图像深度 image + view；`encoder_begin_render_pass` 在 depth view 无效时自动使用它。 |
 | G-08 | 图像 acquire / present 归属 | `present()` 无返回值，也没有“当前图像索引”入口。 | 后端内部在 `queue_submit` 前或 begin pass 时 acquire；`present()` 负责 present 并推进帧；在头文件注释写清帧边界由后端维护。 |
 | G-09 | render pass 对象 vs dynamic rendering | `encoder_begin_render_pass` 创建 `VkRenderPass` 对象，但 `create_render_pipeline` 既没传 renderPass、也没启用 dynamic rendering，两者矛盾。 | 二选一并写清：经典 render pass 对象（与现有代码一致，推荐先落地），或 `VK_KHR_dynamic_rendering` + `VkPipelineRenderingCreateInfo`。 |
 | G-10 | 多帧在飞与延迟销毁 | 接口约定“destroy 任意时刻可调、Vulkan 延迟到 fence 之后”，但帧同步对象不存在；`submit_frame` 未使用。 | 设计 `frame_index + max_frames_in_flight(2~3) + per-frame fence/command buffer/descriptor pool + deferred destroy list`。 |
 
-已关闭的缺口：**G-05**（`SamplerDesc.compare_op` 已落地并映射两端）、**G-06**（显存策略定为
+已关闭的缺口：**G-01**（`ShaderModuleDesc` 增加显式 `source_kind` 与 `entry_point`）、
+**G-02**（CMake `orca-shader-spirv` 用 glslc 把 `shaders-vulkan/` 变体编译成 `.spv`，
+`ShaderLoader::load_spirv` 读取）、**G-03**（Vulkan 变体按 sRGB 交换链 + 硬件编码，
+shader 不再手工 `linear_to_srgb()`；GL 变体保持原约定，见 `shaders-vulkan/*/frag.glsl` 注释）、
+**G-05**（`SamplerDesc.compare_op` 已落地并映射两端）、**G-06**（显存策略定为
 “自建、每资源独占 allocation”，实现于 `vulkan/vk_memory.*`，纹理与缓冲区均已接入）、
 **G-11**（`alloc_handle_id()` 统一分配唯一句柄）、**G-12**（校验抽到 `rhi_validation.*`，Vulkan 统一调用）。
 
@@ -291,8 +299,9 @@ D-35（`create_texture` 字段/校验缺失）。
 
 ## 7. 实施阶段
 
-> 依赖关系：V0 → V1 → V2 → V3 → V4 → V5 → V6 → V7。V3 依赖 V2 的纹理/视图；V5 依赖 V2 的
-> buffer/texture 与 V3 的 render pass 方案；不要在 V3 之前碰 draw。
+> 依赖关系：V0 → V1 → V2 →（V3、V4 可并行）→ V5 → V6 → V7。V3 依赖 V2 的纹理/视图；
+> V5 依赖 V2 的 buffer/texture 与 V3 的 render pass 方案；不要在 V3 之前碰 draw。
+> **V4 已完成**（SPIR-V 工具链与 shader 模块校验不依赖交换链）。
 
 ### V0 构建与骨架修复（已完成）
 
@@ -338,19 +347,28 @@ D-35（`create_texture` 字段/校验缺失）。
 **验收**：录一个 `BeginPass(clear) + EndPass` 并提交，窗口显示稳定单色；连续两帧、resize 后仍正确；
 validation 全绿。
 
-### V4 Shader 工具链（约 1–2 天，含决策）
+### V4 Shader 工具链（已完成）
 
-- [ ] **V4-1** 实现 G-01/G-02：`ShaderModuleDesc` 增加源类型；`builtin` 的 Vulkan GLSL 变体（450 + 显式 binding + 独立 sampler）编译为 `.spv` 并随资源拷贝。
-- [ ] **V4-2** `create_shader_module` 按源类型处理 SPIR-V：长度/对齐校验、`entry_point` 使用、`ShaderType` 与 stage 一致性校验。（D-11/D-27）
-- [ ] **V4-3** 同步更新 shader 加载路径（或先只给手工测试用）。
+- [x] **V4-1** G-01/G-02：`ShaderModuleDesc` 增加 `source_kind`（`GLSL_TEXT` / `SPIRV`）与
+  `entry_point`；新增 `servers/rendering/shaders-vulkan/`（triangle、builtin-skybox 的
+  `#version 450` 变体，显式 set/binding），CMake `orca-shader-spirv` 目标用 `glslc`
+  （`--target-env=vulkan1.1`）编译为 `<build>/resources/shaders-vulkan/<name>/{vert,frag}.spv`。
+- [x] **V4-2** `create_shader_module` 只接受 SPIR-V：共享校验检查 4 字节长度、20 字节头、
+  magic、版本 1.0–1.6、指令流边界、`OpEntryPoint` 入口名与 ExecutionModel/`ShaderType` 一致性；
+  `pCode` 使用对齐的 `uint32_t` 拷贝；入口名记录在模块上；管线阶段补 `stage`/`pName` 并校验
+  模块类型与槽位匹配（D-11/D-27）。
+- [x] **V4-3** `ShaderLoader::load_spirv()` 从 `res://shaders-vulkan/<name>/{vert,frag}.spv` 读二进制；
+  `orca-vulkan-init-test` 增加 triangle/builtin-skybox 模块创建与非法输入拒绝用例。
 
-**验收**：从 SPIR-V 创建 shader module，validation 无错；为一个简单 shader 生成管线通过。
+**验收（已完成）**：从 `.spv` 创建 shader 模块，validation 无 VUID；GLSL 文本、
+错误入口名、stage 不匹配均在入口被拒绝。**未完成部分**：为“简单 shader 生成完整管线”
+依赖 V5（render pass 兼容性/管线状态），届时才能验收整条管线。
 
 ### V5 管线与绑定（约 2–3 天）
 
 - [ ] **V5-1** `create_bind_group_layout` → `VkDescriptorSetLayout`；`create_pipeline_layout` → `VkPipelineLayout`（按 group 顺序）。（D-06）
 - [ ] **V5-2** `create_bind_group` → descriptor pool（按帧/按组策略）+ `vkUpdateDescriptorSets`；校验 layout 匹配、buffer offset/size、view 类型。（D-06）
-- [ ] **V5-3** 补全 `create_render_pipeline`：stage/`pName`；vertex input binding/attribute（`VertexFormat` → `vk::Format`）；renderPass 对象（G-09）；color blend state（targets/blend/write mask）；depth state（format/write/compare）；multisample；使用传入的 `pipeline_layout`。（D-10/D-20/D-28）
+- [ ] **V5-3** 补全 `create_render_pipeline`：vertex input binding/attribute（`VertexFormat` → `vk::Format`）；renderPass 对象（G-09）；color blend state（targets/blend/write mask）；depth state（format/write/compare）；multisample；使用传入的 `pipeline_layout`。（stage/`pName` 已在 V4 完成；D-10/D-20/D-28）
 - [ ] **V5-4** destroy pipeline/layout/set layout；创建失败路径清理。（D-15/D-28）
 
 **验收**：创建 `pipeline layout + bind group layout + bind group + pipeline` 成功；validation 无错；
@@ -380,11 +398,13 @@ descriptor 内容与 shader 声明匹配。
    - `Vulkan+GL`：`orca-vulkan-init-test` 必须能链接、能跑。
    - `Vulkan-only`：必须能配置+构建。
 2. **纯逻辑单测**（已在 `orca-tests`）
-   - `test_rhi_validation.cpp`：纹理/视图（含范围解析）/采样器（含 lod/compare）/缓冲区（含写入区间）/管线描述校验。
+   - `test_rhi_validation.cpp`：纹理/视图（含范围解析）/采样器（含 lod/compare）/缓冲区（含写入区间）/管线描述校验，
+     以及 shader 模块（source_kind、SPIR-V 头/magic/版本、入口点与 stage 一致性、截断指令流）。
    - `test_vk_format.cpp`（Vulkan 构建）：Format↔vk::Format、ImageUsage/BufferUsage、CompareOp 映射。
    - `test_vk_image_layout.cpp`（Vulkan 构建）：aspect/resting layout/barrier/mip 尺寸映射。
 3. **设备测试**（需要 Vulkan runtime）
-   - `orca-vulkan-init-test`（已有）：instance/device/swapchain + 纹理/视图/采样器/缓冲区冒烟。
+   - `orca-vulkan-init-test`（已有）：instance/device/swapchain + 纹理/视图/采样器/缓冲区 +
+     SPIR-V shader 模块（triangle + builtin-skybox）冒烟。
    - 待新增 `orca-vulkan-resources-test`：创建 bind group/pipeline 并销毁，validation 全绿。
    - 待新增 `orca-vulkan-draw-test`：清屏 → 三角形 → 纹理四边形 → 深度 → present。
 4. **Validation layer**
@@ -408,7 +428,7 @@ descriptor 内容与 shader 声明匹配。
 | `vk_rendering_device.cpp` | present/shutdown、绑定组与管线布局桩、队列查询、`submit_frame` | ⚠️ present 与绑定组/layout 仍为桩 |
 | `vk_rendering_device_init.cpp` | instance/debug/surface/物理设备/逻辑设备 | ✅ 初始化可用 |
 | `vk_swapchain.cpp` | 交换链创建、格式/尺寸查询、surface format/present mode 选择、resize 桩 | ⚠️ 缺视图/深度/同步；resize 未实现 |
-| `vk_resource.cpp` | shader、texture（显存/上传/mipmap）、image view、sampler 与对应 destroy | ✅ 除 shader 源类型外均可用 |
+| `vk_resource.cpp` | shader（SPIR-V 校验/对齐拷贝）、texture（显存/上传/mipmap）、image view、sampler 与对应 destroy | ✅ 均可用 |
 | `vk_buffer.cpp` | buffer 创建/写入/销毁 + 设备级 staging 池 | ✅ 可用 |
 | `vk_pipeline.cpp` | graphics pipeline 创建/销毁 | ⚠️ 骨架缺关键状态 |
 | `vk_command.cpp` | encoder/render pass/命令绑定/一次性提交/队列桩 | ⚠️ 录制骨架可跑，绑定与 draw 仍空 |
@@ -416,6 +436,10 @@ descriptor 内容与 shader 声明匹配。
 | `vk_format.h/.cpp` | Format↔vk::Format、image/buffer usage、CompareOp 映射 | ✅ 纯逻辑，已单测 |
 | `vk_memory.h/.cpp` | 显存类型选择 + 独占 `vkAllocateMemory` | ✅ 可用 |
 | `vk_image_layout.h/.cpp` | aspect/resting layout/transition/mip 尺寸/layout barrier | ✅ 纯逻辑，已单测 |
+
+`servers/rendering/shaders-vulkan/` 是 Vulkan 专用 GLSL 变体源码（`#version 450`、显式 set/binding、
+sRGB 交换链约定）；构建时由 `orca-shader-spirv` 目标用 `glslc` 编到
+`<build>/resources/shaders-vulkan/`，源码树里没有 `.spv`。GL 变体仍在 `shaders/`，两套文件不共用。
 
 ### 9.2 当前实现的边界与陷阱（后续阶段必须遵守）
 
@@ -441,8 +465,9 @@ descriptor 内容与 shader 声明匹配。
    采样器本身可以提前创建。
 9. **`rhi_validation.*` 是唯一校验入口。** 新增资源类型或格式约束时先改共享层，再让 Vulkan 的
    `create_*` 走同一路径；不要在 Vulkan 里另立分支。
-10. **交换链格式与颜色空间是端到端契约（G-03 未定）。** 本机实际格式是 `BGRA8UnormSrgb`；
-    Vulkan 会由硬件做 sRGB 编码，接入绘制时 shader 不能再手工 `linear_to_srgb()`（与旧 GL 路径相反）。
+10. **交换链格式与颜色空间是端到端契约（G-03 已定）。** 本机实际格式是 `BGRA8UnormSrgb`；
+    Vulkan 变体（`shaders-vulkan/`）按“sRGB 交换链 + 硬件编码”写，不要再手工 `linear_to_srgb()`；
+    旧 GL 路径的默认帧缓冲不是 sRGB，GL 变体仍必须手工编码。两套变体不要互相拷贝代码。
 11. **管线与 render pass 尚未对齐（G-09）。** `create_render_pipeline` 现在没有 renderPass（也未启用
     dynamic rendering），但录制走 `VkRenderPass` 对象；V5 必须二选一并写清。
 12. **句柄与销毁。** 所有 handle 由 `alloc_handle_id()` 分配且唯一；`destroy_*` 目前立即 `memdelete`，
@@ -452,3 +477,8 @@ descriptor 内容与 shader 声明匹配。
 14. **`waitForFences` 返回值被忽略（D-38）。** 一次性提交的失败（超时/设备丢失）会被当成成功。
 15. **`init_swapchain` 前必须先有 surface。** 离屏（`create_vulkan_surface` 为空）会直接返回 false；
     `findQueueFamilies` 依赖 surface 做 present 支持查询。
+16. **SPIR-V 由构建期 glslc 生成，不是运行时编译。** `ShaderModuleDesc.source` 必须配
+    `source_kind = ShaderSourceKind::SPIRV`；GLSL 文本会被 Vulkan 拒绝。`.spv` 位于
+    `<build>/resources/shaders-vulkan/`（`res://` 依赖当前工作目录），修改
+    `shaders-vulkan/*.glsl` 后重新构建即可；入口名由 `OpEntryPoint` 校验，模块 stage 与管线
+    槽位不一致会被 `create_render_pipeline` 拒绝。

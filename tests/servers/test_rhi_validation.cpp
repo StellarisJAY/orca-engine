@@ -1,8 +1,10 @@
 #include "doctest/doctest.h"
 #include "rhi_validation.h"
 
+#include <cstdint>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -425,4 +427,108 @@ TEST_CASE("RHI validation: render pipeline desc")
 
     desc.vertex.buffers.push_back(buffer); // 只支持一个顶点缓冲 slot
     CHECK_FALSE(rhi_validate_render_pipeline_desc(desc, error));
+}
+
+namespace
+{
+    void append_spirv_word(std::vector<uint8_t> &bytes, uint32_t word)
+    {
+        for (uint32_t byte_index = 0; byte_index < 4; ++byte_index)
+            bytes.push_back(static_cast<uint8_t>((word >> (byte_index * 8)) & 0xFFu));
+    }
+
+    /// @brief 构造只含 5 word 头 + 一条 OpEntryPoint 的最小 SPIR-V，用于校验逻辑测试。
+    std::string make_spirv(uint32_t execution_model, const std::string &entry_point,
+                           uint32_t version = 0x00010000u)
+    {
+        std::vector<uint8_t> bytes;
+        append_spirv_word(bytes, 0x07230203u); // magic
+        append_spirv_word(bytes, version);
+        append_spirv_word(bytes, 0);  // generator
+        append_spirv_word(bytes, 10); // bound
+        append_spirv_word(bytes, 0);  // schema
+
+        // OpEntryPoint: [opcode][ExecutionModel][EntryPoint id][name...]
+        const size_t name_words = (entry_point.size() + 1 + 3) / 4;
+        append_spirv_word(bytes, static_cast<uint32_t>(((3 + name_words) << 16) | 15));
+        append_spirv_word(bytes, execution_model);
+        append_spirv_word(bytes, 1);
+        for (size_t word_index = 0; word_index < name_words; ++word_index)
+        {
+            uint32_t word = 0;
+            for (size_t byte_index = 0; byte_index < 4; ++byte_index)
+            {
+                const size_t char_index = word_index * 4 + byte_index;
+                const uint8_t value =
+                    char_index < entry_point.size() ? static_cast<uint8_t>(entry_point[char_index]) : 0;
+                word |= static_cast<uint32_t>(value) << (byte_index * 8);
+            }
+            append_spirv_word(bytes, word);
+        }
+        return std::string(bytes.begin(), bytes.end());
+    }
+} // namespace
+
+TEST_CASE("RHI validation: shader module descriptor")
+{
+    std::string error;
+    ShaderModuleDesc desc;
+    desc.source = make_spirv(0, "main"); // 0 = Vertex
+    CHECK(rhi_validate_shader_module_desc(desc, error));
+
+    // 空源码 / 空入口名
+    desc.source.clear();
+    CHECK_FALSE(rhi_validate_shader_module_desc(desc, error));
+    desc.source = make_spirv(0, "main");
+    desc.entry_point.clear();
+    CHECK_FALSE(rhi_validate_shader_module_desc(desc, error));
+
+    // 长度必须是 4 的倍数，且不能短于 20 字节头
+    desc.entry_point = "main";
+    desc.source = make_spirv(0, "main");
+    desc.source.push_back('\0');
+    CHECK_FALSE(rhi_validate_shader_module_desc(desc, error));
+
+    desc.source.assign(20, 'x'); // 长度合法但 magic / 版本都不对
+    CHECK_FALSE(rhi_validate_shader_module_desc(desc, error));
+
+    // 版本范围：1.6 合法，1.7 未知
+    desc.source = make_spirv(0, "main", 0x00010600u);
+    CHECK(rhi_validate_shader_module_desc(desc, error));
+    desc.source = make_spirv(0, "main", 0x00010700u);
+    CHECK_FALSE(rhi_validate_shader_module_desc(desc, error));
+
+    // 入口点必须真实存在于 OpEntryPoint
+    desc.source = make_spirv(0, "vertex_main");
+    CHECK_FALSE(rhi_validate_shader_module_desc(desc, error)); // 默认入口是 main
+    desc.entry_point = "vertex_main";
+    CHECK(rhi_validate_shader_module_desc(desc, error));
+
+    // stage 一致性：顶点模块不能当 fragment 用，反之亦然
+    desc.type = ShaderType::FRAGMENT;
+    CHECK_FALSE(rhi_validate_shader_module_desc(desc, error));
+    desc.source = make_spirv(4, "main"); // 4 = Fragment
+    desc.entry_point = "main";
+    CHECK(rhi_validate_shader_module_desc(desc, error));
+    desc.type = ShaderType::VERTEX;
+    CHECK_FALSE(rhi_validate_shader_module_desc(desc, error));
+
+    // 指令流截断 / word count 为 0 必须被拒绝
+    std::string truncated = make_spirv(0, "main");
+    truncated.resize(truncated.size() - 4);
+    desc.source = truncated;
+    desc.type = ShaderType::VERTEX;
+    CHECK_FALSE(rhi_validate_shader_module_desc(desc, error));
+
+    std::string zero_word_count = make_spirv(0, "main");
+    zero_word_count.append(4, '\0');
+    desc.source = zero_word_count;
+    CHECK_FALSE(rhi_validate_shader_module_desc(desc, error));
+
+    // GLSL 文本由后端决定是否支持：共享校验只要求非空
+    desc.source = "#version 450\nvoid main() {}\n";
+    desc.source_kind = ShaderSourceKind::GLSL_TEXT;
+    CHECK(rhi_validate_shader_module_desc(desc, error));
+    desc.source.clear();
+    CHECK_FALSE(rhi_validate_shader_module_desc(desc, error));
 }

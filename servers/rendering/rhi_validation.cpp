@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace
 {
@@ -43,6 +44,50 @@ namespace
     /// @brief 一个缓冲区只能有一种"主用途"（接口层的保守约束，保持描述可移植）。
     constexpr uint8_t PRIMARY_BUFFER_USAGE =
         GPUBufferUsage::VERTEX | GPUBufferUsage::INDEX | GPUBufferUsage::UNIFORM | GPUBufferUsage::STORAGE;
+
+    // ---- SPIR-V 解析（只覆盖模块校验需要的最小集合） --------------------------
+    //
+    // 头部固定 5 个 word（magic / version / generator / bound / schema）；
+    // 之后是指令流：每个指令的第一个 word 高 16 位是 word count，低 16 位是 opcode。
+    // 这里按小端主机解释 word（项目只支持 Windows x86/x64），不做字节交换。
+    constexpr uint32_t SPIRV_MAGIC_NUMBER = 0x07230203u;
+    constexpr size_t SPIRV_HEADER_WORDS = 5;
+    constexpr uint16_t SPIRV_OP_ENTRY_POINT = 15;
+    constexpr uint32_t SPIRV_EXECUTION_MODEL_VERTEX = 0;
+    constexpr uint32_t SPIRV_EXECUTION_MODEL_FRAGMENT = 4;
+
+    uint32_t spirv_word(const std::string &source, size_t index)
+    {
+        uint32_t word = 0;
+        // 用 memcpy 而不是 reinterpret_cast：std::string 的数据不保证 4 字节对齐。
+        std::memcpy(&word, source.data() + index * sizeof(uint32_t), sizeof(word));
+        return word;
+    }
+
+    /// @brief 读取 SPIR-V 字面字符串（UTF-8，按 4 字节补齐，'\0' 结尾）。
+    std::string spirv_literal_string(const std::string &source, size_t first_word, size_t word_count)
+    {
+        std::string text;
+        for (size_t i = 0; i < word_count; ++i)
+        {
+            const uint32_t word = spirv_word(source, first_word + i);
+            for (uint32_t byte_index = 0; byte_index < sizeof(uint32_t); ++byte_index)
+            {
+                const char character = static_cast<char>((word >> (byte_index * 8)) & 0xFFu);
+                if (character == '\0')
+                    return text;
+                text.push_back(character);
+            }
+        }
+        return text;
+    }
+
+    bool spirv_execution_model_matches(ShaderType type, uint32_t execution_model)
+    {
+        if (type == ShaderType::VERTEX)
+            return execution_model == SPIRV_EXECUTION_MODEL_VERTEX;
+        return execution_model == SPIRV_EXECUTION_MODEL_FRAGMENT;
+    }
 } // namespace
 
 bool rhi_format_is_depth(Format format)
@@ -290,5 +335,66 @@ bool rhi_validate_render_pipeline_desc(const RenderPipelineDesc &desc, std::stri
         }
     }
 
+    return true;
+}
+
+bool rhi_validate_shader_module_desc(const ShaderModuleDesc &desc, std::string &error)
+{
+    if (desc.source.empty())
+        return fail(error, "source must not be empty");
+    if (desc.entry_point.empty())
+        return fail(error, "entry_point must not be empty");
+
+    // GLSL 文本能否编译由后端决定（Vulkan 只接受预编译的 SPIR-V）。
+    if (desc.source_kind != ShaderSourceKind::SPIRV)
+        return true;
+
+    if (desc.source.size() % sizeof(uint32_t) != 0)
+        return fail(error, "SPIR-V binary size must be a multiple of 4 bytes");
+    if (desc.source.size() < SPIRV_HEADER_WORDS * sizeof(uint32_t))
+        return fail(error, "SPIR-V binary is shorter than the 20-byte header");
+    if (spirv_word(desc.source, 0) != SPIRV_MAGIC_NUMBER)
+        return fail(error, "source is not a SPIR-V binary (bad magic number); set source_kind = GLSL_TEXT for "
+                           "text sources or precompile it with glslc");
+
+    const uint32_t version = spirv_word(desc.source, 1);
+    const uint32_t major = (version >> 16) & 0xFFu;
+    const uint32_t minor = (version >> 8) & 0xFFu;
+    if (major != 1 || minor > 6)
+        return fail(error, "unsupported SPIR-V version " + std::to_string(major) + "." + std::to_string(minor));
+
+    const size_t word_count = desc.source.size() / sizeof(uint32_t);
+    bool entry_point_found = false;
+    bool stage_matches = false;
+    for (size_t cursor = SPIRV_HEADER_WORDS; cursor < word_count;)
+    {
+        const uint32_t first_word = spirv_word(desc.source, cursor);
+        const uint16_t instruction_words = static_cast<uint16_t>(first_word >> 16);
+        const uint16_t opcode = static_cast<uint16_t>(first_word & 0xFFFFu);
+        // word count 为 0 或越界都说明指令流损坏，不能继续往后跳。
+        if (instruction_words == 0 || instruction_words > word_count - cursor)
+            return fail(error, "SPIR-V instruction stream is truncated at word " + std::to_string(cursor));
+
+        if (opcode == SPIRV_OP_ENTRY_POINT)
+        {
+            // OpEntryPoint: [opcode][ExecutionModel][EntryPoint id][name...]
+            if (instruction_words < 4)
+                return fail(error, "SPIR-V OpEntryPoint is too short");
+            const uint32_t execution_model = spirv_word(desc.source, cursor + 1);
+            const std::string name = spirv_literal_string(desc.source, cursor + 3, instruction_words - 3);
+            if (name == desc.entry_point)
+            {
+                entry_point_found = true;
+                if (spirv_execution_model_matches(desc.type, execution_model))
+                    stage_matches = true;
+            }
+        }
+        cursor += instruction_words;
+    }
+
+    if (!entry_point_found)
+        return fail(error, "entry point '" + desc.entry_point + "' is not declared by OpEntryPoint");
+    if (!stage_matches)
+        return fail(error, "entry point '" + desc.entry_point + "' does not match the requested shader stage");
     return true;
 }

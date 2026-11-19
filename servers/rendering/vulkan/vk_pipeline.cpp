@@ -104,14 +104,39 @@ RenderPipelineHandle VkRenderingDevice::create_render_pipeline(const RenderPipel
             std::printf("[ERROR] Vulkan create graphics pipeline failed, missing fragment shader\n");
             return result;
         }
-        const vk::raii::ShaderModule &vertex_shader_module =
-            (static_cast<VkShaderModuleData *>(vertex_stage.module.data))->module;
-        const vk::raii::ShaderModule &fragment_shader_module =
-            (static_cast<VkShaderModuleData *>(fragment_stage.module.data))->module;
+        const VkShaderModuleData *vertex_module_data =
+            static_cast<const VkShaderModuleData *>(vertex_stage.module.data);
+        const VkShaderModuleData *fragment_module_data =
+            static_cast<const VkShaderModuleData *>(fragment_stage.module.data);
+
+        // D-27：模块创建时记录的 stage 必须与管线槽位一致，避免把顶点模块装进
+        // fragment 槽（Vulkan 只在 validation 层报 stage 不匹配，release 下会静默出错）。
+        if (vertex_module_data->type != ShaderType::VERTEX)
+        {
+            std::printf("[ERROR] Vulkan create graphics pipeline failed, fragment shader module is used as vertex stage\n");
+            return result;
+        }
+        if (fragment_module_data->type != ShaderType::FRAGMENT)
+        {
+            std::printf("[ERROR] Vulkan create graphics pipeline failed, vertex shader module is used as fragment stage\n");
+            return result;
+        }
+
+        // 入口名以阶段级 entry_point 为准（一个模块可以带多个入口），为空时回退到
+        // 模块创建时已经校验过的入口名；两者都为空由共享校验拒绝。
+        const std::string &vertex_entry_point =
+            vertex_stage.entry_point.empty() ? vertex_module_data->entry_point : vertex_stage.entry_point;
+        const std::string &fragment_entry_point =
+            fragment_stage.entry_point.empty() ? fragment_module_data->entry_point : fragment_stage.entry_point;
+
         vk::PipelineShaderStageCreateInfo vk_vert_stage;
-        vk_vert_stage.setModule(vertex_shader_module);
+        vk_vert_stage.setStage(vk::ShaderStageFlagBits::eVertex);
+        vk_vert_stage.setModule(vertex_module_data->module);
+        vk_vert_stage.setPName(vertex_entry_point.c_str());
         vk::PipelineShaderStageCreateInfo vk_frag_stage;
-        vk_frag_stage.setModule(fragment_shader_module);
+        vk_frag_stage.setStage(vk::ShaderStageFlagBits::eFragment);
+        vk_frag_stage.setModule(fragment_module_data->module);
+        vk_frag_stage.setPName(fragment_entry_point.c_str());
         std::array<vk::PipelineShaderStageCreateInfo, 2> stages = {vk_vert_stage, vk_frag_stage};
         create_info.setStages(stages);
 

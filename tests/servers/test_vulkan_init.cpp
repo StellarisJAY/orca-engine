@@ -1,5 +1,6 @@
 #include "rendering_device_refactor.h"
 #include "rendering_device.h"
+#include "shader_loader.h"
 #include "os/memory.h"
 #include "window.h"
 
@@ -77,6 +78,85 @@ int main()
         }
         device->destroy_command_buffer(command_buffer);
         std::printf("[TEST] command encoder round-trip OK.\n");
+    }
+
+    // V4：SPIR-V 工具链。shaders-vulkan/<name>/{vert,frag}.glsl 由 CMake 的
+    // orca-shader-spirv 目标编译成 .spv；这里验证 create_shader_module 的
+    // 源类型/入口点/stage 校验与销毁链路。
+    {
+        ShaderBinarySource triangle = ShaderLoader::load_spirv("triangle");
+        ShaderBinarySource skybox = ShaderLoader::load_spirv("builtin-skybox");
+        if (!triangle.is_valid() || !skybox.is_valid())
+        {
+            std::printf("[TEST] SPIR-V shaders are missing; run from the build directory.\n");
+            return 1;
+        }
+
+        auto make_module_desc = [](const std::vector<uint8_t> &bytes, ShaderType type, const char *name) {
+            ShaderModuleDesc desc;
+            desc.name = name;
+            desc.source.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+            desc.source_kind = ShaderSourceKind::SPIRV;
+            desc.entry_point = "main";
+            desc.type = type;
+            return desc;
+        };
+
+        const ShaderModuleDesc triangle_vertex = make_module_desc(triangle.vertex, ShaderType::VERTEX, "triangle.vert");
+        const ShaderModuleDesc triangle_fragment =
+            make_module_desc(triangle.fragment, ShaderType::FRAGMENT, "triangle.frag");
+        const ShaderModuleDesc skybox_vertex =
+            make_module_desc(skybox.vertex, ShaderType::VERTEX, "builtin-skybox.vert");
+        const ShaderModuleDesc skybox_fragment =
+            make_module_desc(skybox.fragment, ShaderType::FRAGMENT, "builtin-skybox.frag");
+
+        ShaderHandle modules[4] = {
+            device->create_shader_module(triangle_vertex),
+            device->create_shader_module(triangle_fragment),
+            device->create_shader_module(skybox_vertex),
+            device->create_shader_module(skybox_fragment),
+        };
+        for (ShaderHandle module : modules)
+        {
+            if (!module.is_valid())
+            {
+                std::printf("[TEST] create_shader_module(SPIR-V) failed.\n");
+                return 1;
+            }
+        }
+
+        // 源类型/入口点/stage 不匹配必须在入口被拒绝（只打印 ERROR，不进入 driver）。
+        ShaderModuleDesc glsl_desc = triangle_vertex;
+        glsl_desc.name = "triangle.glsl-reject";
+        glsl_desc.source = "#version 450\nvoid main() {}\n";
+        glsl_desc.source_kind = ShaderSourceKind::GLSL_TEXT;
+        if (device->create_shader_module(glsl_desc).is_valid())
+        {
+            std::printf("[TEST] create_shader_module accepted GLSL text for Vulkan.\n");
+            return 1;
+        }
+
+        ShaderModuleDesc wrong_stage = triangle_fragment;
+        wrong_stage.name = "triangle.wrong-stage";
+        wrong_stage.type = ShaderType::VERTEX; // fragment SPIR-V 装进 vertex 槽
+        if (device->create_shader_module(wrong_stage).is_valid())
+        {
+            std::printf("[TEST] create_shader_module accepted a stage mismatch.\n");
+            return 1;
+        }
+
+        ShaderModuleDesc wrong_entry = triangle_vertex;
+        wrong_entry.name = "triangle.wrong-entry";
+        wrong_entry.entry_point = "not_an_entry_point";
+        if (device->create_shader_module(wrong_entry).is_valid())
+        {
+            std::printf("[TEST] create_shader_module accepted a missing entry point.\n");
+            return 1;
+        }
+
+        for (ShaderHandle module : modules)
+            device->destroy_shader_module(module);
+        std::printf("[TEST] SPIR-V shader modules OK (triangle + builtin-skybox).\n");
     }
 
     // V1：采样器映射（含 compare_op）+ destroy 链路。

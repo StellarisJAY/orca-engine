@@ -17,6 +17,8 @@ struct VkShaderModuleData
 {
     vk::raii::ShaderModule module { nullptr };
     ShaderType type = ShaderType::VERTEX;
+    /// @brief 创建时校验过的 SPIR-V 入口函数名（管线阶段可回退到它）
+    std::string entry_point = "main";
 };
 
 struct VkBufferHandleData
