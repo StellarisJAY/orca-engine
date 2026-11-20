@@ -166,9 +166,19 @@ struct VkPipelineLayoutHandleData
 
 struct VkGraphicsPipelineHandleData
 {
+    // 声明顺序保证逆序析构：pipeline 先于它创建时使用的兼容 render pass 释放。
+    //
+    // G-09 决策：录制侧走经典 VkRenderPass 对象（I-31），管线不能传 nullptr renderPass，
+    // 也不能依赖 dynamic rendering。每个管线创建并持有一个只用于"兼容性"的 render pass：
+    // 附件格式/采样数/subpass 引用与真正录制的 pass 一致，load/store 与 initial/final
+    // layout 不参与兼容性判定（Vulkan 规范把这四项排除在兼容性之外），因此它从不会
+    // 被真正 begin，只用于管线创建与更新 validation 的兼容性检查。
+    vk::raii::RenderPass compatibility_render_pass { nullptr };
     vk::raii::Pipeline pipeline { nullptr };
     /// @brief 创建管线时传入的 pipeline layout（非拥有；由调用方保证生命周期）
     VkPipelineLayoutHandleData *pipeline_layout = nullptr;
+    /// @brief 调试用标签（创建 desc.label 的副本）
+    std::string label;
 };
 
 /// @brief render pass 结束后需要把父纹理切换到的新布局。

@@ -506,8 +506,8 @@ bool rhi_validate_render_pipeline_desc(const RenderPipelineDesc &desc, std::stri
         return fail(error, "vertex shader module is missing");
     if (desc.fragment.targets.empty() && desc.depth_stencil.format == Format::Undefined)
         return fail(error, "the pipeline declares neither a color target nor a depth format");
-    if (!desc.fragment.targets.empty() && !desc.fragment.module.is_valid())
-        return fail(error, "fragment shader module is missing while color targets are declared");
+    if (!desc.fragment.module.is_valid())
+        return fail(error, "fragment shader module is missing");
     if (desc.samples_count != 1)
         return fail(error, "only samples_count == 1 is supported (no MSAA yet)");
 

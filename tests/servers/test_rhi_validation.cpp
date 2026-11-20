@@ -639,6 +639,11 @@ TEST_CASE("RHI validation: render pipeline desc")
     desc.depth_stencil.format = Format::Depth32Float;
     CHECK(rhi_validate_render_pipeline_desc(desc, error));
 
+    // 纯深度 pass 仍必须提供 fragment 模块：Vulkan 只有在 rasterizer discard 时才允许
+    // 没有片段着色阶段，本接口没有 discard 开关（也就是永远不能省略）。
+    desc.fragment.module.handle = 0;
+    CHECK_FALSE(rhi_validate_render_pipeline_desc(desc, error));
+
     desc = make_valid_pipeline();
     desc.depth_stencil.format = Format::RGBA8Unorm; // 深度格式不是深度格式
     CHECK_FALSE(rhi_validate_render_pipeline_desc(desc, error));

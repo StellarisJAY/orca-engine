@@ -484,6 +484,9 @@ struct ColorTargetState
 };
 
 /// @brief 片段着色阶段。targets 为空表示纯深度 pass（不输出颜色）。
+///
+/// 即使 targets 为空也必须提供 fragment 模块：只要管线没有启用 rasterizer discard，
+/// Vulkan 就要求完整的 fragment shader 状态（深度/模板测试属于片段操作）。
 struct FragmentStage
 {
     ShaderHandle module;

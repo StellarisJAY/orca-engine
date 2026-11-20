@@ -93,3 +93,77 @@ vk::CompareOp vk_compare_op_from_function(CompareFunction function)
     default: return vk::CompareOp::eLessOrEqual;
     }
 }
+
+bool vk_vertex_format_info(VertexFormat format, vk::Format &out)
+{
+    switch (format)
+    {
+    case VertexFormat::Float32: out = vk::Format::eR32Sfloat; return true;
+    case VertexFormat::Float32x2: out = vk::Format::eR32G32Sfloat; return true;
+    case VertexFormat::Float32x3: out = vk::Format::eR32G32B32Sfloat; return true;
+    case VertexFormat::Float32x4: out = vk::Format::eR32G32B32A32Sfloat; return true;
+    case VertexFormat::Uint32: out = vk::Format::eR32Uint; return true;
+    case VertexFormat::Uint8x4Normalized: out = vk::Format::eR8G8B8A8Unorm; return true;
+    default: return false;
+    }
+}
+
+vk::BlendFactor vk_blend_factor_from(BlendFactor factor)
+{
+    switch (factor)
+    {
+    case BlendFactor::Zero: return vk::BlendFactor::eZero;
+    case BlendFactor::One: return vk::BlendFactor::eOne;
+    case BlendFactor::SrcColor: return vk::BlendFactor::eSrcColor;
+    case BlendFactor::OneMinusSrcColor: return vk::BlendFactor::eOneMinusSrcColor;
+    case BlendFactor::SrcAlpha: return vk::BlendFactor::eSrcAlpha;
+    case BlendFactor::OneMinusSrcAlpha: return vk::BlendFactor::eOneMinusSrcAlpha;
+    case BlendFactor::DstColor: return vk::BlendFactor::eDstColor;
+    case BlendFactor::OneMinusDstColor: return vk::BlendFactor::eOneMinusDstColor;
+    case BlendFactor::DstAlpha: return vk::BlendFactor::eDstAlpha;
+    case BlendFactor::OneMinusDstAlpha: return vk::BlendFactor::eOneMinusDstAlpha;
+    default: return vk::BlendFactor::eOne;
+    }
+}
+
+vk::BlendOp vk_blend_op_from(BlendOperation operation)
+{
+    switch (operation)
+    {
+    case BlendOperation::Add: return vk::BlendOp::eAdd;
+    case BlendOperation::Subtract: return vk::BlendOp::eSubtract;
+    case BlendOperation::ReverseSubtract: return vk::BlendOp::eReverseSubtract;
+    case BlendOperation::Min: return vk::BlendOp::eMin;
+    case BlendOperation::Max: return vk::BlendOp::eMax;
+    default: return vk::BlendOp::eAdd;
+    }
+}
+
+vk::ColorComponentFlags vk_color_write_mask_from(uint8_t mask)
+{
+    vk::ColorComponentFlags flags;
+    if ((mask & ColorWriteMask::R) != 0)
+        flags |= vk::ColorComponentFlagBits::eR;
+    if ((mask & ColorWriteMask::G) != 0)
+        flags |= vk::ColorComponentFlagBits::eG;
+    if ((mask & ColorWriteMask::B) != 0)
+        flags |= vk::ColorComponentFlagBits::eB;
+    if ((mask & ColorWriteMask::A) != 0)
+        flags |= vk::ColorComponentFlagBits::eA;
+    return flags;
+}
+
+vk::SampleCountFlagBits vk_sample_count_from_bits(uint32_t samples)
+{
+    switch (samples)
+    {
+    case 1: return vk::SampleCountFlagBits::e1;
+    case 2: return vk::SampleCountFlagBits::e2;
+    case 4: return vk::SampleCountFlagBits::e4;
+    case 8: return vk::SampleCountFlagBits::e8;
+    case 16: return vk::SampleCountFlagBits::e16;
+    case 32: return vk::SampleCountFlagBits::e32;
+    case 64: return vk::SampleCountFlagBits::e64;
+    default: return vk::SampleCountFlagBits::e1;
+    }
+}

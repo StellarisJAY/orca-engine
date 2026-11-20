@@ -37,3 +37,25 @@ vk::BufferUsageFlags vk_buffer_usage_from_flags(uint8_t usage);
 /// 默认返回 `eLessOrEqual`：即使 `compare_enable` 为 false，Vulkan 也要求
 /// `compareOp` 是一个合法枚举值，用 WebGPU 的默认值最不容易引入行为差异。
 vk::CompareOp vk_compare_op_from_function(CompareFunction function);
+
+/// @brief 顶点属性格式 → vk::Format（管线 vertex input attribute 用）。
+///
+/// 未知格式返回 false；共享校验 `rhi_validate_render_pipeline_desc` 已在入口
+/// 拒绝未知格式，这里的失败分支只是 Defensive 处理。
+bool vk_vertex_format_info(VertexFormat format, vk::Format &out);
+
+/// @brief BlendFactor → vk::BlendFactor（管线颜色混合状态用）。
+vk::BlendFactor vk_blend_factor_from(BlendFactor factor);
+
+/// @brief BlendOperation → vk::BlendOp（管线颜色混合状态用）。
+vk::BlendOp vk_blend_op_from(BlendOperation operation);
+
+/// @brief ColorWriteMask 位掩码 → vk::ColorComponentFlags。
+///
+/// 未知位会被忽略；已关闭的颜色通道不会被写入。
+vk::ColorComponentFlags vk_color_write_mask_from(uint8_t mask);
+
+/// @brief 采样数 → vk::SampleCountFlagBits（管线 multisample 与 render pass 附件用）。
+///
+/// 接口当前只支持 1（共享校验拒绝其它值）；保留完整映射，后续开 MSAA 时不必改表。
+vk::SampleCountFlagBits vk_sample_count_from_bits(uint32_t samples);

@@ -110,3 +110,78 @@ TEST_CASE("VK format: sampler compare op mapping")
     // 默认 SamplerDesc 与 WebGPU 一致：compare 关闭时仍带 LessEqual
     CHECK(SamplerDesc{}.compare_op == CompareFunction::LessEqual);
 }
+
+TEST_CASE("VK format: vertex input mapping")
+{
+    // 管线 vertex input attribute 的格式映射；每一项都必须是合法的 VkFormat。
+    vk::Format format = vk::Format::eUndefined;
+    REQUIRE(vk_vertex_format_info(VertexFormat::Float32, format));
+    CHECK(format == vk::Format::eR32Sfloat);
+    REQUIRE(vk_vertex_format_info(VertexFormat::Float32x2, format));
+    CHECK(format == vk::Format::eR32G32Sfloat);
+    REQUIRE(vk_vertex_format_info(VertexFormat::Float32x3, format));
+    CHECK(format == vk::Format::eR32G32B32Sfloat);
+    REQUIRE(vk_vertex_format_info(VertexFormat::Float32x4, format));
+    CHECK(format == vk::Format::eR32G32B32A32Sfloat);
+    REQUIRE(vk_vertex_format_info(VertexFormat::Uint32, format));
+    CHECK(format == vk::Format::eR32Uint);
+    REQUIRE(vk_vertex_format_info(VertexFormat::Uint8x4Normalized, format));
+    CHECK(format == vk::Format::eR8G8B8A8Unorm);
+
+    // 非法枚举值不能被静默映射成某个格式。
+    CHECK_FALSE(vk_vertex_format_info(static_cast<VertexFormat>(999), format));
+}
+
+TEST_CASE("VK format: blend state mapping")
+{
+    CHECK(vk_blend_factor_from(BlendFactor::Zero) == vk::BlendFactor::eZero);
+    CHECK(vk_blend_factor_from(BlendFactor::One) == vk::BlendFactor::eOne);
+    CHECK(vk_blend_factor_from(BlendFactor::SrcColor) == vk::BlendFactor::eSrcColor);
+    CHECK(vk_blend_factor_from(BlendFactor::OneMinusSrcColor) == vk::BlendFactor::eOneMinusSrcColor);
+    CHECK(vk_blend_factor_from(BlendFactor::SrcAlpha) == vk::BlendFactor::eSrcAlpha);
+    CHECK(vk_blend_factor_from(BlendFactor::OneMinusSrcAlpha) == vk::BlendFactor::eOneMinusSrcAlpha);
+    CHECK(vk_blend_factor_from(BlendFactor::DstColor) == vk::BlendFactor::eDstColor);
+    CHECK(vk_blend_factor_from(BlendFactor::OneMinusDstColor) == vk::BlendFactor::eOneMinusDstColor);
+    CHECK(vk_blend_factor_from(BlendFactor::DstAlpha) == vk::BlendFactor::eDstAlpha);
+    CHECK(vk_blend_factor_from(BlendFactor::OneMinusDstAlpha) == vk::BlendFactor::eOneMinusDstAlpha);
+
+    CHECK(vk_blend_op_from(BlendOperation::Add) == vk::BlendOp::eAdd);
+    CHECK(vk_blend_op_from(BlendOperation::Subtract) == vk::BlendOp::eSubtract);
+    CHECK(vk_blend_op_from(BlendOperation::ReverseSubtract) == vk::BlendOp::eReverseSubtract);
+    CHECK(vk_blend_op_from(BlendOperation::Min) == vk::BlendOp::eMin);
+    CHECK(vk_blend_op_from(BlendOperation::Max) == vk::BlendOp::eMax);
+}
+
+TEST_CASE("VK format: color write mask mapping")
+{
+    const vk::ColorComponentFlags all = vk_color_write_mask_from(ColorWriteMask::ALL);
+    CHECK(bool(all & vk::ColorComponentFlagBits::eR));
+    CHECK(bool(all & vk::ColorComponentFlagBits::eG));
+    CHECK(bool(all & vk::ColorComponentFlagBits::eB));
+    CHECK(bool(all & vk::ColorComponentFlagBits::eA));
+
+    // 只写 RGB（alpha 保持目标值）是常见的透明混合配置。
+    const vk::ColorComponentFlags rgb =
+        vk_color_write_mask_from(ColorWriteMask::R | ColorWriteMask::G | ColorWriteMask::B);
+    CHECK(bool(rgb & vk::ColorComponentFlagBits::eR));
+    CHECK(bool(rgb & vk::ColorComponentFlagBits::eG));
+    CHECK(bool(rgb & vk::ColorComponentFlagBits::eB));
+    CHECK_FALSE(bool(rgb & vk::ColorComponentFlagBits::eA));
+
+    CHECK_FALSE(bool(vk_color_write_mask_from(0)));
+}
+
+TEST_CASE("VK format: sample count mapping")
+{
+    CHECK(vk_sample_count_from_bits(1) == vk::SampleCountFlagBits::e1);
+    CHECK(vk_sample_count_from_bits(2) == vk::SampleCountFlagBits::e2);
+    CHECK(vk_sample_count_from_bits(4) == vk::SampleCountFlagBits::e4);
+    CHECK(vk_sample_count_from_bits(8) == vk::SampleCountFlagBits::e8);
+    CHECK(vk_sample_count_from_bits(16) == vk::SampleCountFlagBits::e16);
+    CHECK(vk_sample_count_from_bits(32) == vk::SampleCountFlagBits::e32);
+    CHECK(vk_sample_count_from_bits(64) == vk::SampleCountFlagBits::e64);
+
+    // 非法数量回退到 1（共享校验已在入口拒绝非 1 值）。
+    CHECK(vk_sample_count_from_bits(3) == vk::SampleCountFlagBits::e1);
+    CHECK(vk_sample_count_from_bits(0) == vk::SampleCountFlagBits::e1);
+}

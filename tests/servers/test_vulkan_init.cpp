@@ -496,6 +496,233 @@ int main()
         std::printf("[TEST] SPIR-V shader modules OK (triangle + builtin-skybox).\n");
     }
 
+    // V5-3：完整 graphics pipeline。顶点输入、颜色混合、深度状态、多重采样与 render pass
+    // 兼容性全部按 RenderPipelineDesc 生成；管线必须能绑定到附件格式一致的显式 pass。
+    {
+        ShaderBinarySource triangle = ShaderLoader::load_spirv("triangle");
+        ShaderBinarySource skybox = ShaderLoader::load_spirv("builtin-skybox");
+        if (!triangle.is_valid() || !skybox.is_valid())
+        {
+            std::printf("[TEST] SPIR-V shaders are missing; run from the build directory.\n");
+            return 1;
+        }
+
+        auto make_module_desc = [](const std::vector<uint8_t> &bytes, ShaderType type, const char *name) {
+            ShaderModuleDesc desc;
+            desc.name = name;
+            desc.source.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+            desc.source_kind = ShaderSourceKind::SPIRV;
+            desc.entry_point = "main";
+            desc.type = type;
+            return desc;
+        };
+        // 顶点阶段用 skybox 变体：它消费 location 0 的 vec3 位置输入，这样顶点输入 state
+        // 能真正被 validation 检查（triangle 变体完全靠 gl_VertexIndex，不消费属性）。
+        // 片段阶段用 triangle 变体：它只写 location 0 的 vec4，且不采样任何描述符，
+        // 因此可以直接配一个空的 pipeline layout（两家接口的 location 0 vec3 也匹配）。
+        ShaderHandle vertex_module = device->create_shader_module(
+            make_module_desc(skybox.vertex, ShaderType::VERTEX, "smoke-pipeline.vert"));
+        ShaderHandle fragment_module = device->create_shader_module(
+            make_module_desc(triangle.fragment, ShaderType::FRAGMENT, "smoke-pipeline.frag"));
+        if (!vertex_module.is_valid() || !fragment_module.is_valid())
+        {
+            std::printf("[TEST] create_shader_module(pipeline shaders) failed.\n");
+            return 1;
+        }
+
+        PipelineLayoutDesc layout_desc;
+        layout_desc.label = "smoke-pipeline-layout";
+        // skybox 顶点 shader 声明了 set 0 / binding 0 的 UBO，pipeline layout 必须声明同一个
+        // set，否则 validation 会报 VUID-VkGraphicsPipelineCreateInfo-layout-07988。
+        BindGroupLayoutDesc pipeline_layout_bgl_desc;
+        pipeline_layout_bgl_desc.label = "smoke-pipeline-bgl";
+        BindGroupLayoutEntry ubo_entry;
+        ubo_entry.binding = 0;
+        ubo_entry.visibility = ShaderStage::VERTEX;
+        ubo_entry.type = BindingType::UniformBuffer;
+        pipeline_layout_bgl_desc.entries.push_back(ubo_entry);
+        BindGroupLayoutHandle pipeline_layout_bgl = device->create_bind_group_layout(pipeline_layout_bgl_desc);
+        if (!pipeline_layout_bgl.is_valid())
+        {
+            std::printf("[TEST] create_bind_group_layout(pipeline layout) failed.\n");
+            return 1;
+        }
+        layout_desc.bind_group_layouts.push_back(pipeline_layout_bgl);
+        PipelineLayoutHandle pipeline_layout = device->create_pipeline_layout(layout_desc);
+        if (!pipeline_layout.is_valid())
+        {
+            std::printf("[TEST] create_pipeline_layout(empty) failed.\n");
+            return 1;
+        }
+
+        RenderPipelineDesc pipeline_desc;
+        pipeline_desc.label = "smoke-pipeline-opaque";
+        pipeline_desc.pipeline_layout = pipeline_layout;
+        pipeline_desc.vertex.module = vertex_module;
+        pipeline_desc.vertex.entry_point = "main";
+        BufferLayout vertex_layout;
+        vertex_layout.array_stride = 12;
+        BufferLayout::Attribute position_attribute;
+        position_attribute.shader_location = 0;
+        position_attribute.offset = 0;
+        position_attribute.format = VertexFormat::Float32x3;
+        vertex_layout.attributes.push_back(position_attribute);
+        pipeline_desc.vertex.buffers.push_back(vertex_layout);
+
+        pipeline_desc.fragment.module = fragment_module;
+        pipeline_desc.fragment.entry_point = "main";
+        ColorTargetState color_target;
+        color_target.format = Format::RGBA8Unorm; // 与下面录制的显式 render pass 一致
+        color_target.write_mask = ColorWriteMask::ALL;
+        pipeline_desc.fragment.targets.push_back(color_target);
+
+        pipeline_desc.primitive.topology = Primitive::Topology::TriangleList;
+        pipeline_desc.primitive.cull_mode = Primitive::CullMode::Back;
+        pipeline_desc.primitive.front_face = Primitive::FrontFace::CCW;
+        pipeline_desc.depth_stencil.format = Format::Depth32Float;
+        pipeline_desc.depth_stencil.depth_write_enabled = true;
+        pipeline_desc.depth_stencil.depth_compare = CompareFunction::LessEqual;
+
+        RenderPipelineHandle opaque_pipeline = device->create_render_pipeline(pipeline_desc);
+        if (!opaque_pipeline.is_valid())
+        {
+            std::printf("[TEST] create_render_pipeline(opaque) failed.\n");
+            return 1;
+        }
+
+        // 第二种状态组合：alpha 混合、只写 RGB、depth test 恒通过且不写深度、
+        // 无背面剔除 + CW、triangle strip。用于覆盖 blend/write mask/深度/光栅化映射。
+        pipeline_desc.label = "smoke-pipeline-blend";
+        pipeline_desc.fragment.targets[0].blend.enabled = true;
+        pipeline_desc.fragment.targets[0].blend.color.src_factor = BlendFactor::SrcAlpha;
+        pipeline_desc.fragment.targets[0].blend.color.dst_factor = BlendFactor::OneMinusSrcAlpha;
+        pipeline_desc.fragment.targets[0].blend.color.operation = BlendOperation::Add;
+        pipeline_desc.fragment.targets[0].blend.alpha.src_factor = BlendFactor::One;
+        pipeline_desc.fragment.targets[0].blend.alpha.dst_factor = BlendFactor::OneMinusSrcAlpha;
+        pipeline_desc.fragment.targets[0].blend.alpha.operation = BlendOperation::Add;
+        pipeline_desc.fragment.targets[0].write_mask =
+            ColorWriteMask::R | ColorWriteMask::G | ColorWriteMask::B;
+        pipeline_desc.depth_stencil.depth_write_enabled = false;
+        pipeline_desc.depth_stencil.depth_compare = CompareFunction::Always;
+        pipeline_desc.primitive.topology = Primitive::Topology::TriangleStrip;
+        pipeline_desc.primitive.cull_mode = Primitive::CullMode::None;
+        pipeline_desc.primitive.front_face = Primitive::FrontFace::CW;
+
+        RenderPipelineHandle blend_pipeline = device->create_render_pipeline(pipeline_desc);
+        if (!blend_pipeline.is_valid())
+        {
+            std::printf("[TEST] create_render_pipeline(blend) failed.\n");
+            return 1;
+        }
+
+        // 绑定到格式一致的显式 render pass：validation 会检查管线与 pass 的兼容性
+        // （附件格式/采样数/subpass 引用必须一致，G-09）。
+        TextureDescRefactor pipeline_color_desc;
+        pipeline_color_desc.label = "smoke-pipeline-color";
+        pipeline_color_desc.format = Format::RGBA8Unorm;
+        pipeline_color_desc.width = 128;
+        pipeline_color_desc.height = 96;
+        pipeline_color_desc.mip_levels = 1;
+        pipeline_color_desc.usage = TextureUsage::RENDER_ATTACHMENT | TextureUsage::TEXTURE_BINDING;
+        TextureHandle pipeline_color = device->create_texture(pipeline_color_desc);
+
+        TextureDescRefactor pipeline_depth_desc;
+        pipeline_depth_desc.label = "smoke-pipeline-depth";
+        pipeline_depth_desc.format = Format::Depth32Float;
+        pipeline_depth_desc.width = 128;
+        pipeline_depth_desc.height = 96;
+        pipeline_depth_desc.mip_levels = 1;
+        pipeline_depth_desc.usage = TextureUsage::RENDER_ATTACHMENT | TextureUsage::TEXTURE_BINDING;
+        TextureHandle pipeline_depth = device->create_texture(pipeline_depth_desc);
+        if (!pipeline_color.is_valid() || !pipeline_depth.is_valid())
+        {
+            std::printf("[TEST] create_texture(pipeline attachments) failed.\n");
+            return 1;
+        }
+
+        TextureViewDesc pipeline_color_view_desc;
+        pipeline_color_view_desc.dim = TextureViewDimension::Texture2D;
+        pipeline_color_view_desc.aspect = TextureAspect::Color;
+        TextureViewHandle pipeline_color_view =
+            device->create_texture_view(pipeline_color, pipeline_color_view_desc);
+        TextureViewDesc pipeline_depth_view_desc;
+        pipeline_depth_view_desc.aspect = TextureAspect::DepthOnly;
+        TextureViewHandle pipeline_depth_view =
+            device->create_texture_view(pipeline_depth, pipeline_depth_view_desc);
+
+        RenderPassDesc bind_pass_desc;
+        bind_pass_desc.label = "smoke-pipeline-bind";
+        ColorAttachmentDesc bind_color_attachment;
+        bind_color_attachment.view = pipeline_color_view;
+        bind_color_attachment.load_op = LoadOp::Clear;
+        bind_color_attachment.store_op = StoreOp::Store;
+        bind_pass_desc.color_attachments.push_back(bind_color_attachment);
+        DepthAttachmentDesc bind_depth_attachment;
+        bind_depth_attachment.view = pipeline_depth_view;
+        bind_depth_attachment.load_op = LoadOp::Clear;
+        bind_depth_attachment.store_op = StoreOp::Discard;
+        bind_pass_desc.depth_attachments.push_back(bind_depth_attachment);
+
+        CommandEncoderHandle pipeline_encoder = device->create_command_encoder();
+        RenderPassHandle pipeline_pass = device->encoder_begin_render_pass(pipeline_encoder, bind_pass_desc);
+        if (!pipeline_encoder.is_valid() || !pipeline_pass.is_valid())
+        {
+            std::printf("[TEST] encoder_begin_render_pass(pipeline bind) failed.\n");
+            return 1;
+        }
+        device->pass_set_pipeline(pipeline_pass, opaque_pipeline);
+        device->pass_set_viewport(pipeline_pass, 0.0f, 0.0f, 128.0f, 96.0f, 0.0f, 1.0f);
+        device->pass_end(pipeline_pass);
+        CommandBufferHandle pipeline_cb = device->encoder_finish(pipeline_encoder);
+        if (!pipeline_cb.is_valid())
+        {
+            std::printf("[TEST] encoder_finish(pipeline bind) failed.\n");
+            return 1;
+        }
+        device->destroy_command_buffer(pipeline_cb);
+
+        // 拒绝路径：完整状态下仍必须经过共享校验/后端能力检查。
+        RenderPipelineDesc reject_desc = pipeline_desc;
+        reject_desc.label = "reject-pipeline-samples";
+        reject_desc.samples_count = 2; // 当前只支持 1
+        if (device->create_render_pipeline(reject_desc).is_valid())
+        {
+            std::printf("[TEST] create_render_pipeline accepted samples_count = 2.\n");
+            return 1;
+        }
+
+        reject_desc = pipeline_desc;
+        reject_desc.label = "reject-pipeline-stride";
+        reject_desc.vertex.buffers[0].array_stride = 0;
+        if (device->create_render_pipeline(reject_desc).is_valid())
+        {
+            std::printf("[TEST] create_render_pipeline accepted a zero vertex stride.\n");
+            return 1;
+        }
+
+        reject_desc = pipeline_desc;
+        reject_desc.label = "reject-pipeline-no-fragment";
+        reject_desc.fragment.module = ShaderHandle{}; // 纯深度 pass 仍需要 fragment 模块
+        if (device->create_render_pipeline(reject_desc).is_valid())
+        {
+            std::printf("[TEST] create_render_pipeline accepted a pipeline without a fragment shader.\n");
+            return 1;
+        }
+
+        device->destroy_render_pipeline(blend_pipeline);
+        device->destroy_render_pipeline(opaque_pipeline);
+        device->destroy_texture_view(pipeline_depth_view);
+        device->destroy_texture_view(pipeline_color_view);
+        device->destroy_texture(pipeline_depth);
+        device->destroy_texture(pipeline_color);
+        device->destroy_pipeline_layout(pipeline_layout);
+        device->destroy_bind_group_layout(pipeline_layout_bgl);
+        device->destroy_shader_module(fragment_module);
+        device->destroy_shader_module(vertex_module);
+        std::printf("[TEST] render pipeline create/bind OK (vertex input + blend + depth + write mask).\n");
+        std::printf("[TEST] render pipeline rejection paths OK (samples/stride/no-fragment).\n");
+    }
+
     // V5：绑定组 / 管线布局。descriptor set layout、descriptor set（每个 bind group 独占
     // 一个 pool）与 pipeline layout 必须能创建，且非法布局/资源在入口被拒绝。
     {
