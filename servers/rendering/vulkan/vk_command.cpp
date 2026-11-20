@@ -268,6 +268,33 @@ namespace
             return false;
         }
     }
+
+    /// @brief 校验 pass 句柄可用于录制，并返回它的私有数据。
+    ///
+    /// 统一的入口检查：句柄有效、encoder 未 finish（`encoder_finish` 之后不能再录制）、
+    /// pass 未 `pass_end`。失败时打印 `[ERROR]` 并返回 nullptr，调用方直接返回即可。
+    /// 这样所有 pass 级命令（绑定/draw）都不会在 vkCmdEndRenderPass 之后继续录制，
+    /// 也不会在 encoder 失效后访问已释放的命令缓冲。
+    VkRenderPassHandleData *resolve_recording_pass(const char *what, RenderPassHandle pass)
+    {
+        if (!pass.is_valid() || pass.data == nullptr)
+        {
+            std::printf("[ERROR] Vulkan %s: invalid render pass handle\n", what);
+            return nullptr;
+        }
+        auto *render_pass_data = static_cast<VkRenderPassHandleData *>(pass.data);
+        if (render_pass_data->command_encoder_data == nullptr)
+        {
+            std::printf("[ERROR] Vulkan %s: encoder 已 finish，不能再录制\n", what);
+            return nullptr;
+        }
+        if (!render_pass_data->active)
+        {
+            std::printf("[ERROR] Vulkan %s: render pass 已经 pass_end，不能再录制\n", what);
+            return nullptr;
+        }
+        return render_pass_data;
+    }
 } // namespace
 
 /// @brief 创建指令编码器（命令池 + 已 begin 的主 command buffer）。
@@ -358,12 +385,12 @@ RenderPassHandle VkRenderingDevice::encoder_begin_render_pass(CommandEncoderHand
                 std::printf("[ERROR] Vulkan encoder_begin_render_pass(%s): 交换链默认帧缓冲尚未创建\n", label);
                 return render_pass;
             }
-            // 默认帧缓冲必须使用已 acquire 的交换链图像；acquire/present 的接线属于 V3-2。
-            if (current_swapchain_image == UINT32_MAX ||
-                current_swapchain_image >= swapchain_framebuffers.size())
+            // 默认帧缓冲必须使用已 acquire 的交换链图像。接口没有独立的 acquire 入口
+            // （G-08），由本后端在第一次进入默认帧缓冲时惰性 acquire（V3-2），同一帧内
+            // 后续的默认帧缓冲 pass 复用同一张图像。
+            if (!acquire_next_swapchain_image())
             {
-                std::printf("[ERROR] Vulkan encoder_begin_render_pass(%s): 默认帧缓冲需要先 acquire "
-                            "交换链图像（acquire/present 未接线，V3-2）\n", label);
+                std::printf("[ERROR] Vulkan encoder_begin_render_pass(%s): 无法 acquire 交换链图像\n", label);
                 return render_pass;
             }
             // 默认 render pass 的 load/store 是固有能力：color Clear+Store、depth Clear+DontCare。
@@ -560,41 +587,11 @@ RenderPassHandle VkRenderingDevice::encoder_begin_render_pass(CommandEncoderHand
             if (has_depth)
                 subpass.setPDepthStencilAttachment(&depth_reference);
 
-            // 外部 → subpass：让之前的写入（上传/上一个 pass）对附件布局转换与读写可见。
-            vk::PipelineStageFlags attachment_stages = vk::PipelineStageFlagBits::eColorAttachmentOutput |
-                                                       vk::PipelineStageFlagBits::eEarlyFragmentTests |
-                                                       vk::PipelineStageFlagBits::eLateFragmentTests;
-            vk::AccessFlags attachment_reads;
-            vk::AccessFlags attachment_writes;
-            if (!resolved_colors.empty())
-            {
-                attachment_reads |= vk::AccessFlagBits::eColorAttachmentRead;
-                attachment_writes |= vk::AccessFlagBits::eColorAttachmentWrite;
-            }
-            if (has_depth)
-            {
-                attachment_reads |= vk::AccessFlagBits::eDepthStencilAttachmentRead;
-                attachment_writes |= vk::AccessFlagBits::eDepthStencilAttachmentWrite;
-            }
-
-            vk::SubpassDependency incoming;
-            incoming.setSrcSubpass(vk::SubpassExternal);
-            incoming.setDstSubpass(0);
-            incoming.setSrcStageMask(vk::PipelineStageFlagBits::eAllCommands);
-            incoming.setSrcAccessMask(vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite);
-            incoming.setDstStageMask(attachment_stages);
-            incoming.setDstAccessMask(attachment_reads | attachment_writes);
-
-            // subpass → 外部：附件写入对之后的采样/传输可见（finalLayout 转换也在这里完成）。
-            vk::SubpassDependency outgoing;
-            outgoing.setSrcSubpass(0);
-            outgoing.setDstSubpass(vk::SubpassExternal);
-            outgoing.setSrcStageMask(attachment_stages);
-            outgoing.setSrcAccessMask(attachment_writes);
-            outgoing.setDstStageMask(vk::PipelineStageFlagBits::eAllCommands);
-            outgoing.setDstAccessMask(vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite);
-
-            std::array<vk::SubpassDependency, 2> dependencies = {incoming, outgoing};
+            // 所有 render pass（默认帧缓冲 / 显式附件 / 管线兼容 pass）必须使用同一组
+            // dependency：Vulkan 的 render pass 兼容性要求它们除 initial/final layout、
+            // load/store 与 attachment reference 的 layout 之外完全一致（G-09）。
+            std::array<vk::SubpassDependency, 2> dependencies =
+                vk_render_pass_util::make_render_pass_dependencies();
 
             vk::RenderPassCreateInfo create_info;
             create_info.setAttachments(vk_attachments);
@@ -650,15 +647,16 @@ RenderPassHandle VkRenderingDevice::encoder_begin_render_pass(CommandEncoderHand
 /// @brief 绑定渲染管线。
 void VkRenderingDevice::pass_set_pipeline(RenderPassHandle pass, RenderPipelineHandle pipeline)
 {
-    if (!pass.is_valid() || pass.data == nullptr)
+    const auto render_pass_data = resolve_recording_pass("pass_set_pipeline", pass);
+    if (render_pass_data == nullptr)
         return;
     if (!pipeline.is_valid() || pipeline.data == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_set_pipeline: invalid render pipeline handle\n");
         return;
-    const auto render_pass_data = static_cast<VkRenderPassHandleData *>(pass.data);
-    if (render_pass_data->command_encoder_data == nullptr)
-        return;
+    }
     const auto render_pipeline_data = static_cast<VkGraphicsPipelineHandleData *>(pipeline.data);
-    // 记录当前管线：后续的 bind group / vertex buffer / index buffer 校验依赖它的
+    // 记录当前管线：后续的 bind group / vertex buffer / index buffer / draw 校验依赖它的
     // pipeline layout 与 vertex input 布局。
     render_pass_data->pipeline = render_pipeline_data;
     render_pass_data->command_encoder_data->command_buffer.bindPipeline(
@@ -678,14 +676,9 @@ void VkRenderingDevice::pass_set_bind_group(RenderPassHandle pass, uint32_t grou
                                             BindGroupHandle bind_group, const uint32_t *dynamic_offsets,
                                             uint32_t dynamic_offset_count)
 {
-    if (!pass.is_valid() || pass.data == nullptr)
+    const auto render_pass_data = resolve_recording_pass("pass_set_bind_group", pass);
+    if (render_pass_data == nullptr)
         return;
-    const auto render_pass_data = static_cast<VkRenderPassHandleData *>(pass.data);
-    if (render_pass_data->command_encoder_data == nullptr)
-    {
-        std::printf("[ERROR] Vulkan pass_set_bind_group: encoder 已 finish，不能再录制\n");
-        return;
-    }
     if (!bind_group.is_valid() || bind_group.data == nullptr)
     {
         std::printf("[ERROR] Vulkan pass_set_bind_group: invalid bind group handle\n");
@@ -800,14 +793,9 @@ void VkRenderingDevice::pass_set_bind_group(RenderPassHandle pass, uint32_t grou
 void VkRenderingDevice::pass_set_vertex_buffer(RenderPassHandle pass, uint32_t slot, GPUBufferHandle buffer,
                                                uint64_t offset)
 {
-    if (!pass.is_valid() || pass.data == nullptr)
+    const auto render_pass_data = resolve_recording_pass("pass_set_vertex_buffer", pass);
+    if (render_pass_data == nullptr)
         return;
-    const auto render_pass_data = static_cast<VkRenderPassHandleData *>(pass.data);
-    if (render_pass_data->command_encoder_data == nullptr)
-    {
-        std::printf("[ERROR] Vulkan pass_set_vertex_buffer: encoder 已 finish，不能再录制\n");
-        return;
-    }
     if (!buffer.is_valid() || buffer.data == nullptr)
     {
         std::printf("[ERROR] Vulkan pass_set_vertex_buffer: invalid buffer handle\n");
@@ -858,14 +846,9 @@ void VkRenderingDevice::pass_set_vertex_buffer(RenderPassHandle pass, uint32_t s
 void VkRenderingDevice::pass_set_index_buffer(RenderPassHandle pass, GPUBufferHandle buffer, uint64_t offset,
                                               IndexFormat format)
 {
-    if (!pass.is_valid() || pass.data == nullptr)
+    const auto render_pass_data = resolve_recording_pass("pass_set_index_buffer", pass);
+    if (render_pass_data == nullptr)
         return;
-    const auto render_pass_data = static_cast<VkRenderPassHandleData *>(pass.data);
-    if (render_pass_data->command_encoder_data == nullptr)
-    {
-        std::printf("[ERROR] Vulkan pass_set_index_buffer: encoder 已 finish，不能再录制\n");
-        return;
-    }
     if (!buffer.is_valid() || buffer.data == nullptr)
     {
         std::printf("[ERROR] Vulkan pass_set_index_buffer: invalid buffer handle\n");
@@ -900,6 +883,11 @@ void VkRenderingDevice::pass_set_index_buffer(RenderPassHandle pass, GPUBufferHa
                     static_cast<unsigned long long>(buffer_data->size));
         return;
     }
+    // 记录索引缓冲区状态供 pass_draw_indexed 校验索引区间。索引缓冲状态与管线无关
+    // （Vulkan 的顶点/索引绑定是独立动态状态），切换管线不需要清空。
+    render_pass_data->index_buffer = buffer_data;
+    render_pass_data->index_buffer_offset = offset;
+    render_pass_data->index_element_size = element_size;
     render_pass_data->command_encoder_data->command_buffer.bindIndexBuffer(
         *buffer_data->buffer, static_cast<vk::DeviceSize>(offset), index_type);
 }
@@ -908,14 +896,9 @@ void VkRenderingDevice::pass_set_index_buffer(RenderPassHandle pass, GPUBufferHa
 void VkRenderingDevice::pass_set_viewport(RenderPassHandle pass, float x, float y, float width, float height,
                                           float min_depth, float max_depth)
 {
-    if (!pass.is_valid() || pass.data == nullptr)
+    const auto render_pass_data = resolve_recording_pass("pass_set_viewport", pass);
+    if (render_pass_data == nullptr)
         return;
-    const auto render_pass_data = static_cast<VkRenderPassHandleData *>(pass.data);
-    if (render_pass_data->command_encoder_data == nullptr)
-    {
-        std::printf("[ERROR] Vulkan pass_set_viewport: encoder 已 finish，不能再录制\n");
-        return;
-    }
     if (!validate_viewport(physical_device.getProperties().limits, x, y, width, height, min_depth, max_depth))
         return;
     const vk::Viewport viewport(x, y, width, height, min_depth, max_depth);
@@ -923,39 +906,85 @@ void VkRenderingDevice::pass_set_viewport(RenderPassHandle pass, float x, float 
                                 render_pass_data->render_area, viewport);
 }
 
+/// @brief 索引绘制（V6-2b）。
+///
+/// Vulkan 要求 `vkCmdDrawIndexed` 之前已经绑定索引缓冲区，因此这里校验：
+///   - pass 仍在录制（`resolve_recording_pass`）、已经 `pass_set_pipeline`；
+///   - 已经 `pass_set_index_buffer`；
+///   - `offset + (first_index + index_count) * element_size` 不越过索引缓冲区。
+/// index_count / instance_count 为 0 时不产生图元，直接返回（合法空操作）。
 void VkRenderingDevice::pass_draw_indexed(RenderPassHandle pass, uint32_t index_count, uint32_t instance_count,
                                           uint32_t first_index, int32_t base_vertex)
 {
-    (void)pass;
-    (void)index_count;
-    (void)instance_count;
-    (void)first_index;
-    (void)base_vertex;
+    const auto render_pass_data = resolve_recording_pass("pass_draw_indexed", pass);
+    if (render_pass_data == nullptr)
+        return;
+    if (render_pass_data->pipeline == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_draw_indexed: 必须先 pass_set_pipeline\n");
+        return;
+    }
+    if (render_pass_data->index_buffer == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_draw_indexed: 必须先 pass_set_index_buffer\n");
+        return;
+    }
+    if (index_count == 0 || instance_count == 0)
+        return;
+
+    const uint64_t index_end = static_cast<uint64_t>(first_index) + static_cast<uint64_t>(index_count);
+    const uint64_t byte_end =
+        render_pass_data->index_buffer_offset + index_end * render_pass_data->index_element_size;
+    if (byte_end > render_pass_data->index_buffer->size)
+    {
+        std::printf("[ERROR] Vulkan pass_draw_indexed: 索引区间 [%llu, %llu) 超出索引缓冲区(%s) 的 %llu 字节"
+                    "（first_index %u, index_count %u, 元素大小 %llu）\n",
+                    static_cast<unsigned long long>(render_pass_data->index_buffer_offset),
+                    static_cast<unsigned long long>(byte_end),
+                    render_pass_data->index_buffer->label.c_str(),
+                    static_cast<unsigned long long>(render_pass_data->index_buffer->size), first_index,
+                    index_count, static_cast<unsigned long long>(render_pass_data->index_element_size));
+        return;
+    }
+
+    render_pass_data->command_encoder_data->command_buffer.drawIndexed(
+        index_count, instance_count, first_index, base_vertex, 0);
 }
 
+/// @brief 非索引绘制（V6-2b）。
+///
+/// 只要求 pass 仍在录制且已经 `pass_set_pipeline`：顶点数据来源由管线声明的顶点
+/// 缓冲区决定，完全用 `gl_VertexIndex` 的 shader 合法地不需要顶点缓冲区，因此这里
+/// 不强制要求 `pass_set_vertex_buffer`。vertex_count / instance_count 为 0 时直接返回。
 void VkRenderingDevice::pass_draw(RenderPassHandle pass, uint32_t vertex_count, uint32_t instance_count,
                                   uint32_t first_vertex)
 {
-    (void)pass;
-    (void)vertex_count;
-    (void)instance_count;
-    (void)first_vertex;
-}
-
-void VkRenderingDevice::pass_end(RenderPassHandle pass)
-{
-    if (!pass.is_valid() || pass.data == nullptr)
+    const auto render_pass_data = resolve_recording_pass("pass_draw", pass);
+    if (render_pass_data == nullptr)
         return;
-    const auto render_pass_data = static_cast<VkRenderPassHandleData *>(pass.data);
-    if (render_pass_data->command_encoder_data == nullptr)
+    if (render_pass_data->pipeline == nullptr)
     {
-        std::printf("[ERROR] Vulkan pass_end: encoder 已 finish，不能再结束 render pass\n");
+        std::printf("[ERROR] Vulkan pass_draw: 必须先 pass_set_pipeline\n");
         return;
     }
+    if (vertex_count == 0 || instance_count == 0)
+        return;
+    render_pass_data->command_encoder_data->command_buffer.draw(vertex_count, instance_count, first_vertex, 0);
+}
+
+/// @brief 结束渲染通道。
+void VkRenderingDevice::pass_end(RenderPassHandle pass)
+{
+    const auto render_pass_data = resolve_recording_pass("pass_end", pass);
+    if (render_pass_data == nullptr)
+        return;
     render_pass_data->command_encoder_data->command_buffer.endRenderPass();
+    // pass 结束后不再接受任何绑定/draw 命令（否则 vkCmdEndRenderPass 之后录制的命令
+    // 在 submit 时会被 validation 拒绝）。
+    render_pass_data->active = false;
 
     // 布局状态按录制顺序推进：后续 pass/上传会把它当作 oldLayout。这里假设录制最终会被
-    // 提交并按顺序执行（queue_submit 仍是桩）；录制后被丢弃会留下错误的布局簿记。
+    // 提交并按顺序执行（queue_submit 会真正提交）；录制后被丢弃会让布局簿记失真。
     for (const auto &update : render_pass_data->layout_updates)
     {
         if (update.texture != nullptr)
@@ -1067,7 +1096,14 @@ bool VkRenderingDevice::submit_immediate_commands(
         submit_info.setCommandBuffers(raw_command_buffer);
         vk::raii::Fence fence(device, vk::FenceCreateInfo{});
         (*graphics_queue).submit(submit_info, *fence);
-        device.waitForFences(*fence, VK_TRUE, UINT64_MAX);
+        // D-38：wait 的返回值必须处理（超时意味着 GPU 没有在预期时间内完成），
+        // 不能直接忽略 nodiscard 结果。
+        const vk::Result wait_result = device.waitForFences(*fence, VK_TRUE, UINT64_MAX);
+        if (wait_result != vk::Result::eSuccess)
+        {
+            std::printf("[ERROR] Vulkan %s: waitForFences 返回 %d\n", what, static_cast<int>(wait_result));
+            return false;
+        }
         return true;
     }
     catch (const vk::SystemError &error)
@@ -1077,8 +1113,101 @@ bool VkRenderingDevice::submit_immediate_commands(
     }
 }
 
+/// @brief 提交录制的命令缓冲（V6-3：帧 fence + acquire/present semaphore 链）。
+///
+/// 帧同步由后端内部维护（接口没有显式帧对象，G-08）：
+///   1. 本帧第一次进入默认帧缓冲的 `encoder_begin_render_pass` 会 acquire 交换链图像，
+///      同时等待并 reset 本帧槽位的 in_flight fence（见 `frame_fence_reset`）；
+///   2. `queue_submit` 等待 image_available（本帧 acquire 过时）、以 in_flight 作为
+///      完成 fence 提交命令、signal render_finished；
+///   3. `present` 等 render_finished 后调用 vkQueuePresentKHR，并推进 frame 槽位。
+///
+/// 当前一次 present 之间只接受一次 queue_submit：多个命令缓冲需要额外的 semaphore
+/// 链（最后一个提交才 signal render_finished），留到 V6-4/G-10（多帧在飞与延迟销毁）。
 void VkRenderingDevice::queue_submit(CommandBufferHandle cmd)
 {
-    (void)cmd;
-    // TODO(V6)：vkQueueSubmit + semaphore/fence。
+    if (!cmd.is_valid() || cmd.data == nullptr)
+    {
+        std::printf("[ERROR] Vulkan queue_submit: invalid command buffer handle\n");
+        return;
+    }
+    if (device == nullptr || graphics_queue == nullptr)
+    {
+        std::printf("[ERROR] Vulkan queue_submit: device/queue 尚未初始化\n");
+        return;
+    }
+    if (frame_submitted)
+    {
+        std::printf("[ERROR] Vulkan queue_submit: 本帧已经提交过命令缓冲；一次 present 之间只允许一次 "
+                    "queue_submit（多提交见 V6-4）\n");
+        return;
+    }
+
+    auto cmd_buffer_data = static_cast<VkCommandBufferHandleData *>(cmd.data);
+    if (cmd_buffer_data->submitted)
+    {
+        std::printf("[ERROR] Vulkan queue_submit: 同一个 command buffer 不能重复提交\n");
+        return;
+    }
+
+    FrameSync *sync = nullptr;
+    if (!frame_syncs.empty() && current_frame < frame_syncs.size())
+        sync = &frame_syncs[current_frame];
+
+    const bool uses_swapchain_image = current_swapchain_image != UINT32_MAX;
+    if (uses_swapchain_image && sync == nullptr)
+    {
+        std::printf("[ERROR] Vulkan queue_submit: 默认帧缓冲需要帧同步对象，但 init_swapchain 尚未创建\n");
+        return;
+    }
+
+    try
+    {
+        // 默认帧缓冲的 acquire 已经等待/重置过 fence；纯 offscreen 帧没有 acquire，
+        // 在这里补齐等待，保证同一槽位的 fence 下一轮复用时上一轮提交已完成。
+        if (!frame_fence_reset && sync != nullptr)
+        {
+            const vk::Result wait_result = device.waitForFences(*sync->in_flight, VK_TRUE, UINT64_MAX);
+            if (wait_result != vk::Result::eSuccess)
+            {
+                std::printf("[ERROR] Vulkan queue_submit: waitForFences 返回 %d\n",
+                            static_cast<int>(wait_result));
+                return;
+            }
+            device.resetFences(*sync->in_flight);
+            frame_fence_reset = true;
+        }
+
+        std::vector<vk::Semaphore> wait_semaphores;
+        std::vector<vk::PipelineStageFlags> wait_stages;
+        std::vector<vk::Semaphore> signal_semaphores;
+        if (uses_swapchain_image)
+        {
+            // 等待 acquire 完成后再写交换链图像（颜色附件输出阶段）。
+            wait_semaphores.push_back(*sync->image_available);
+            wait_stages.push_back(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+            // 渲染完成后 signal，present 等待它，保证呈现的不是半成品。
+            signal_semaphores.push_back(*sync->render_finished);
+        }
+
+        const vk::CommandBuffer raw_command_buffer = *cmd_buffer_data->command_buffer;
+        vk::SubmitInfo submit_info;
+        submit_info.setWaitSemaphores(wait_semaphores);
+        submit_info.setWaitDstStageMask(wait_stages);
+        submit_info.setCommandBuffers(raw_command_buffer);
+        submit_info.setSignalSemaphores(signal_semaphores);
+
+        // setCommandBuffers 只接受 ArrayProxyNoTemporaries，必须传入 lvalue 句柄。
+        if (sync != nullptr)
+            (*graphics_queue).submit(submit_info, *sync->in_flight);
+        else
+            (*graphics_queue).submit(submit_info); // 交换链尚未初始化（纯 offscreen 早期用法）
+
+        cmd_buffer_data->submitted = true;
+        frame_submitted = true;
+    }
+    catch (const vk::SystemError &error)
+    {
+        print_vk_error("queue_submit", error);
+    }
 }

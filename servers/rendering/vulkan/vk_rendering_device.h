@@ -38,7 +38,10 @@ struct SwapChainSupportDetails {
 /// V6-2 完成 pass 级绑定：`pass_set_bind_group`（含动态偏移校验）、
 /// `pass_set_vertex_buffer`、`pass_set_index_buffer`、`pass_set_viewport`
 /// （同时派生并裁剪 scissor，pass 开始时设默认 viewport/scissor）。
-/// `pass_draw`/`pass_draw_indexed`、`queue_submit`、`present` 仍未实现。
+/// V6-2b/V6-3 完成绘制与提交：`pass_draw`/`pass_draw_indexed` 录制
+/// `vkCmdDraw`/`vkCmdDrawIndexed`（校验管线、索引缓冲与区间），默认帧缓冲
+/// 在 begin pass 时 acquire 交换链图像，`queue_submit` 走帧 fence +
+/// image_available/render_finished semaphore 链，`present()` 呈现并推进帧。
 /// 进度见 docs/vulkan_rhi_checklist_v2.md。
 class VkRenderingDevice : public RenderingDeviceRefactor
 {
@@ -99,10 +102,10 @@ private:
 
     /// @brief 每帧在飞的 acquire/present 同步对象（V3-2 / D-24 的基础设施）。
     ///
-    /// `queue_submit` 目前仍是桩，V3-2/V6 接线后由它使用：
+    /// 帧边界由 `present()` 界定，`queue_submit` 使用：
     /// acquire 时 signal `image_available`、submit 时等待它并 signal
     /// `render_finished`、present 时等待 `render_finished`；`in_flight` 初始为
-    /// signaled，用于限制 CPU 超前后复用同一组对象。
+    /// signaled，用于限制 CPU 超前后复用同一组对象（acquire 之前等待并 reset）。
     struct FrameSync
     {
         vk::raii::Semaphore image_available { nullptr };
@@ -115,6 +118,14 @@ private:
     uint32_t current_swapchain_image = UINT32_MAX;
     /// @brief 当前使用的 `frame_syncs` 下标。
     uint32_t current_frame = 0;
+    /// @brief 本帧是否已经等待并重置过 `frame_syncs[current_frame].in_flight`。
+    ///
+    /// 默认帧缓冲的 acquire 会先等待上一轮该槽位的提交完成并 reset fence，
+    /// `queue_submit` 据此避免重复等待；没有 acquire 的纯 offscreen 帧由 submit
+    /// 自己完成这一次等待。
+    bool frame_fence_reset = false;
+    /// @brief 本帧是否已经 `queue_submit`（一次 present 之间只允许一次提交）。
+    bool frame_submitted = false;
 private:
     void create_instance();
     void create_debug_messenger();
@@ -143,6 +154,17 @@ private:
     /// 释放顺序：framebuffer → render pass → 深度 view/image/memory → 颜色 view。
     /// 这些对象必须先于 swapchain 释放，否则违反 Vulkan 的父子对象销毁约束。
     void destroy_swapchain_dependents();
+
+    /// @brief 为当前帧 acquire 下一张交换链图像（V3-2）。
+    ///
+    /// 默认帧缓冲的 render pass 在开始录制时必须知道 framebuffer 对应的图像，
+    /// 因此 acquire 由 `encoder_begin_render_pass` 在第一次进入默认帧缓冲时惰性
+    /// 触发（接口没有独立的 acquire 入口，G-08）。再次调用时如果本帧已经
+    /// acquire 过就直接复用。进入时先等待并 reset 本帧槽位的 in_flight fence，
+    /// 避免复用仍被在途提交引用的 semaphore/fence。交换链 out-of-date 时重建
+    /// 一次再重试。
+    /// @return 成功?
+    bool acquire_next_swapchain_image();
 
     /// @brief 复用的 host-visible staging buffer（缓冲区上传用）。
     ///

@@ -21,15 +21,23 @@
 //    destroy_* 可以在任意时刻调用（包括提交后、帧中间）。Vulkan 后端内部自行处理
 //    延迟销毁：在帧 fence 信号之后回收，避免删除仍被在途命令引用的资源。
 
-// 3. 命令录制
+// 3. 命令录制与帧边界
 //    一帧的流程是：create_command_encoder -> encoder_begin_render_pass ...
-//    -> pass_end -> encoder_finish -> queue_submit。
+//    -> pass_end -> encoder_finish -> queue_submit -> present。
 //    queue_write_* 与 queue_submit 的先后顺序决定了数据可见性：
 //    在同一帧内先写入、后提交的数据对本次提交的绘制可见。
+//    "一帧"由 present() 界定：一次 present 之间只接受一次 queue_submit
+//    （当前 Vulkan 后端用帧 fence + 单组 acquire/present semaphore，多提交
+//    在飞时的 semaphore 链属于后续工作）。
+//    提交后资源仍在途：destroy_command_buffer 必须等 queue_wait_idle()（或
+//    帧 fence 确认）之后再调用，否则会销毁仍在执行的命令缓冲（D-15 的延迟
+//    销毁表尚未实现）。
 
 // 4. 默认帧缓冲
 //    ColorAttachmentDesc.view 为无效句柄时表示"默认帧缓冲"（交换链）。
 //    此时 viewport 由交换链尺寸决定，深度附件由交换链的深度缓冲承担。
+//    后端会在第一个使用默认帧缓冲的 encoder_begin_render_pass 里 acquire
+//    交换链图像；present() 把它交还给 presentation engine 并推进帧。
 
 // 5. 绑定组的名字字段
 //    BindGroupLayoutEntry.name 是调试/未来后端的保留字段（按 uniform 名绑定）。
@@ -644,7 +652,12 @@ public:
     /// 不传附件 view 的 render pass 用它确定 viewport。
     virtual void get_swapchain_size(uint32_t &width, uint32_t &height) const = 0;
 
-    /// @brief 呈现一帧。Vulkan 后端在这里做 vkQueuePresentKHR。
+    /// @brief 呈现一帧并推进帧边界。Vulkan 后端在这里做 vkQueuePresentKHR。
+    ///
+    /// 本帧没有使用默认帧缓冲（没有 acquire 交换链图像）时只推进帧、不做呈现；
+    /// 默认帧缓冲的 acquire 由第一个默认帧缓冲 render pass 的
+    /// `encoder_begin_render_pass` 完成。present 之后交换链图像归还给 presentation
+    /// engine，下一帧重新 acquire；返回时本帧的 `queue_submit` 已经消费完 semaphore。
     virtual void present() = 0;
 
     virtual void shutdown() = 0;
@@ -697,6 +710,10 @@ public:
     virtual CommandEncoderHandle create_command_encoder() = 0;
 
     /// @brief 开始一个渲染通道的指令录制
+    ///
+    /// color/depth 附件使用无效句柄时表示默认帧缓冲：后端在第一次进入默认帧缓冲
+    /// 时 acquire 当前帧的交换链图像（同一帧内多个默认帧缓冲 pass 复用同一张图），
+    /// 因此默认帧缓冲 pass 录制后必须在本帧 `queue_submit` + `present`。
     virtual RenderPassHandle encoder_begin_render_pass(CommandEncoderHandle encoder, const RenderPassDesc &desc) = 0;
 
     /// @brief 绑定渲染管线
@@ -740,10 +757,18 @@ public:
                                    float min_depth = 0.0f, float max_depth = 1.0f) = 0;
 
     /// @brief 索引绘制
+    ///
+    /// 调用前必须已经 `pass_set_pipeline`，且已经 `pass_set_index_buffer`。
+    /// `first_index + index_count` 对应的索引区间必须完整落在索引缓冲区内；
+    /// 数量为 0 时是合法的空操作（不录制 draw 命令）。
     virtual void pass_draw_indexed(RenderPassHandle pass, uint32_t index_count, uint32_t instance_count = 1,
                                    uint32_t first_index = 0, int32_t base_vertex = 0) = 0;
 
     /// @brief 非索引绘制
+    ///
+    /// 调用前必须已经 `pass_set_pipeline`；顶点数据由管线声明的顶点缓冲区提供
+    /// （也可以用 `gl_VertexIndex` 不绑顶点缓冲，此时 `first_vertex/vertex_count`
+    /// 仍然决定绘制范围）。数量为 0 时是合法的空操作。
     virtual void pass_draw(RenderPassHandle pass, uint32_t vertex_count, uint32_t instance_count = 1,
                            uint32_t first_vertex = 0) = 0;
 
@@ -756,11 +781,20 @@ public:
     /// @brief 销毁 command buffer（提交完成后由调用方释放）
     ///        该录制创建的 render pass/framebuffer 等内部对象随之释放，
     ///        之后对应的 RenderPassHandle 不再有效。
+    ///
+    /// 当前实现是立即销毁：必须在 `queue_submit` 的命令执行完之后调用
+    /// （`queue_wait_idle()` 或帧 fence 已确认）。延迟销毁表见 D-15/V6-4。
     virtual void destroy_command_buffer(CommandBufferHandle cmd) = 0;
 
     // ------------------------- 设备指令队列 ----------------------------------
 
-    /// @brief 提交录制的指令 buffer
+    /// @brief 提交录制的指令 buffer（Vulkan：vkQueueSubmit）
+    ///
+    /// 帧同步由后端维护：第一次 submit 等待帧 fence 并等待本帧 acquire 的
+    /// image_available semaphore，提交结束后 signal render_finished；
+    /// 下一次 `present()` 等待它呈现并把交换链图像交还 presentation engine。
+    /// 当前实现一次 present 之间只接受一次 queue_submit（多命令缓冲/多帧
+    /// 在飞见 V6-4/G-10）。
     virtual void queue_submit(CommandBufferHandle cmd) = 0;
     /// @brief 阻塞等待队列空闲
     virtual void queue_wait_idle() = 0;

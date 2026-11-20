@@ -3,6 +3,7 @@
 #include "vk_format.h"
 #include "vk_rendering_device.h"
 
+#include <array>
 #include <vector>
 
 // =============================================================================
@@ -14,6 +15,43 @@
 //   - 需要"父对象先于子对象销毁"的依赖（command buffer → command pool、
 //     image view → image），依靠成员声明顺序保证析构逆序正确。
 // =============================================================================
+
+namespace vk_render_pass_util
+{
+    /// @brief 本后端所有 render pass 统一使用的 subpass dependency 模板（G-09）。
+    ///
+    /// Vulkan 的 render pass 兼容性要求两个 pass "除 initial/final layout、load/store
+    /// 操作、attachment reference 的 image layout 之外完全一致"——**包括 subpass
+    /// dependency 的数量与内容**。`create_render_pipeline` 创建的每管线兼容 render pass
+    /// 与真正录制的 pass 必须满足这条规则，因此默认帧缓冲、显式附件、管线兼容性三处
+    /// 都调用本函数生成同一组两道 dependency：
+    ///   - external → subpass：全命令 + 内存读写可见性，保证之前的上传/上一个 pass
+    ///     的写入对附件布局转换与读写可见；
+    ///   - subpass → external：全命令 + 内存读写可见性，保证附件写入对之后的采样/传输
+    ///     可见，并在 pass 结束时完成 finalLayout 转换。
+    ///
+    /// 任何改动（例如按附件类型收窄 stage/access）都必须三处一起走本函数，不能只改
+    /// 其中一处，否则 draw 时 validation 会报 VUID-vkCmdDraw-renderPass-02684。
+    inline std::array<vk::SubpassDependency, 2> make_render_pass_dependencies()
+    {
+        vk::SubpassDependency incoming;
+        incoming.setSrcSubpass(vk::SubpassExternal);
+        incoming.setDstSubpass(0);
+        incoming.setSrcStageMask(vk::PipelineStageFlagBits::eAllCommands);
+        incoming.setSrcAccessMask(vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite);
+        incoming.setDstStageMask(vk::PipelineStageFlagBits::eAllCommands);
+        incoming.setDstAccessMask(vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite);
+
+        vk::SubpassDependency outgoing;
+        outgoing.setSrcSubpass(0);
+        outgoing.setDstSubpass(vk::SubpassExternal);
+        outgoing.setSrcStageMask(vk::PipelineStageFlagBits::eAllCommands);
+        outgoing.setSrcAccessMask(vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite);
+        outgoing.setDstStageMask(vk::PipelineStageFlagBits::eAllCommands);
+        outgoing.setDstAccessMask(vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite);
+        return {incoming, outgoing};
+    }
+} // namespace vk_render_pass_util
 
 struct VkRenderPassHandleData;
 
@@ -214,13 +252,27 @@ struct VkRenderPassHandleData
     /// @brief 当前绑定的 graphics pipeline（非拥有指针，由 pass_set_pipeline 更新）。
     ///
     /// pass_set_bind_group 需要从它取 pipeline layout；pass_set_vertex_buffer 用它校验
-    /// slot 数量。调用方必须保证管线在 pass 录制期间存活。
+    /// slot 数量；`pass_draw`/`pass_draw_indexed` 要求它非空。调用方必须保证管线在
+    /// pass 录制期间存活。
     VkGraphicsPipelineHandleData *pipeline = nullptr;
     /// @brief 本 pass 的 render area（framebuffer 内的录制区域）。
     ///
     /// `pass_set_viewport` 派生 scissor 时按它裁剪（G-04：接口没有单独的 scissor 命令）；
     /// 默认 viewport/scissor 也在 begin 时按这个区域设置。
     vk::Rect2D render_area {};
+    /// @brief pass 是否仍在录制（`pass_end` 之后置 false）。
+    ///
+    /// 所有 pass 级命令都先经过 `resolve_recording_pass`，避免在 `vkCmdEndRenderPass`
+    /// 之后继续录制绑定/draw 命令（那会在 submit 时被 validation 拒绝）。
+    bool active = true;
+    /// @brief 当前索引缓冲区及其布局（由 `pass_set_index_buffer` 更新，非拥有指针）。
+    ///
+    /// `pass_draw_indexed` 用它校验索引区间是否落在缓冲区内；Vulkan 要求
+    /// vkCmdDrawIndexed 之前已经绑定索引缓冲区。
+    VkBufferHandleData *index_buffer = nullptr;
+    uint64_t index_buffer_offset = 0;
+    /// @brief 当前索引格式的单个元素字节数（2 = Uint16，4 = Uint32）。
+    uint64_t index_element_size = 0;
     /// @brief pass_end 后要写回父纹理的布局（仅在录制被提交执行后才真实生效）。
     std::vector<VkRenderPassLayoutUpdate> layout_updates;
 };
@@ -232,6 +284,9 @@ struct VkCommandBufferHandleData
     vk::raii::CommandPool command_pool { nullptr };
     vk::raii::CommandBuffer command_buffer { nullptr };
     /// @brief 录制期间创建的 render pass/framebuffer；destroy_command_buffer 时释放。
-    ///        调用约定：必须在命令缓冲提交并执行完之后再销毁。
+    ///        调用约定：必须在命令缓冲提交并执行完之后再销毁（当前仍是立即销毁，
+    ///        帧 fence 之后的延迟销毁见 D-15/V6-4）。
     std::vector<VkRenderPassHandleData *> render_passes;
+    /// @brief 该 command buffer 是否已经成功 `queue_submit`（防止同一缓冲重复提交）。
+    bool submitted = false;
 };

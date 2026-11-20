@@ -1,4 +1,5 @@
 #include "vk_rendering_device.h"
+#include "vk_internal.h"
 #include "vk_format.h"
 #include "vk_memory.h"
 #include "rhi_validation.h"
@@ -347,27 +348,13 @@ bool VkRenderingDevice::create_swapchain_render_pass_and_framebuffers()
         subpass.setColorAttachments(color_reference);
         subpass.setPDepthStencilAttachment(&depth_reference);
 
-        // 外部 → subpass：保证清屏/附件布局转换与后续颜色/深度写入的可见性。
-        vk::SubpassDependency incoming;
-        incoming.setSrcSubpass(vk::SubpassExternal);
-        incoming.setDstSubpass(0);
-        incoming.setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput |
-                                 vk::PipelineStageFlagBits::eEarlyFragmentTests);
-        incoming.setDstStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput |
-                                 vk::PipelineStageFlagBits::eEarlyFragmentTests);
-        incoming.setDstAccessMask(vk::AccessFlagBits::eColorAttachmentWrite |
-                                  vk::AccessFlagBits::eDepthStencilAttachmentWrite);
-
-        // subpass → 外部：颜色写入先于把 finalLayout 转成 PresentSrcKHR（供 present 使用）。
-        vk::SubpassDependency outgoing;
-        outgoing.setSrcSubpass(0);
-        outgoing.setDstSubpass(vk::SubpassExternal);
-        outgoing.setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
-        outgoing.setSrcAccessMask(vk::AccessFlagBits::eColorAttachmentWrite);
-        outgoing.setDstStageMask(vk::PipelineStageFlagBits::eBottomOfPipe);
+        // 外部 → subpass / subpass → 外部两道 dependency 必须与显式附件 pass、管线兼容
+        // render pass 完全一致（Vulkan 的 render pass 兼容性包含 dependency 的数量与
+        // 内容），统一由 vk_render_pass_util 生成（G-09）。
+        std::array<vk::SubpassDependency, 2> dependencies =
+            vk_render_pass_util::make_render_pass_dependencies();
 
         std::array<vk::AttachmentDescription, 2> attachments = {color_attachment, depth_attachment};
-        std::array<vk::SubpassDependency, 2> dependencies = {incoming, outgoing};
 
         vk::RenderPassCreateInfo render_pass_info;
         render_pass_info.setAttachments(attachments);
@@ -434,6 +421,103 @@ bool VkRenderingDevice::create_frame_sync_objects()
     return true;
 }
 
+/// @brief 为当前帧 acquire 下一张交换链图像（V3-2）。
+///
+/// 默认帧缓冲的 render pass 在开始录制时就需要知道 framebuffer 对应的图像，
+/// 因此 acquire 由 `encoder_begin_render_pass` 惰性触发（接口没有独立的 acquire
+/// 入口，G-08）。本帧已经 acquire 过时直接复用；进入时先等待并 reset 本帧槽位的
+/// in_flight fence，保证上一轮使用同一组 semaphore/fence 的提交已经完成
+/// （MAX_FRAMES_IN_FLIGHT 的标准节流方式）。交换链 out-of-date 时重建一次再重试。
+/// @return 成功?
+bool VkRenderingDevice::acquire_next_swapchain_image()
+{
+    if (current_swapchain_image != UINT32_MAX)
+        return true;
+
+    if (device == nullptr || swapchain == nullptr || swapchain_images.empty() || frame_syncs.empty())
+    {
+        std::printf("[ERROR] Vulkan acquire_next_swapchain_image: 交换链/帧同步对象尚未创建\n");
+        return false;
+    }
+    if (current_frame >= frame_syncs.size())
+    {
+        std::printf("[ERROR] Vulkan acquire_next_swapchain_image: current_frame %u 超出 %zu 组同步对象\n",
+                    current_frame, frame_syncs.size());
+        return false;
+    }
+
+    try
+    {
+        FrameSync &sync = frame_syncs[current_frame];
+
+        // 该槽位上一轮的提交必须先完成，之后才能复用它的 fence/semaphore
+        // （MAX_FRAMES_IN_FLIGHT 的标准做法：wait fence → acquire → reset fence → submit）。
+        if (!frame_fence_reset)
+        {
+            const vk::Result wait_result = device.waitForFences(*sync.in_flight, VK_TRUE, UINT64_MAX);
+            if (wait_result != vk::Result::eSuccess)
+            {
+                std::printf("[ERROR] Vulkan acquire_next_swapchain_image: waitForFences 返回 %d\n",
+                            static_cast<int>(wait_result));
+                return false;
+            }
+            device.resetFences(*sync.in_flight);
+            frame_fence_reset = true;
+        }
+
+        // eSuboptimalKHR 不是错误（窗口尺寸与 surface 不再完全匹配），本帧仍可继续使用。
+        uint32_t image_index = UINT32_MAX;
+        vk::Result acquire_result = vk::Result::eSuccess;
+        try
+        {
+            const vk::ResultValue<uint32_t> acquired =
+                swapchain.acquireNextImage(UINT64_MAX, *sync.image_available, nullptr);
+            acquire_result = acquired.result;
+            image_index = acquired.value;
+        }
+        catch (const vk::SystemError &error)
+        {
+            // vulkan.hpp 把 eErrorOutOfDateKHR 当作错误抛出；这是可恢复状态，重建后重试。
+            if (error.code() != vk::Result::eErrorOutOfDateKHR)
+            {
+                print_vk_error("acquireNextImage", error);
+                return false;
+            }
+            acquire_result = vk::Result::eErrorOutOfDateKHR;
+        }
+
+        if (acquire_result == vk::Result::eErrorOutOfDateKHR)
+        {
+            std::printf("[INFO] Vulkan acquire_next_swapchain_image: 交换链 out-of-date，重建后重试\n");
+            if (!init_swapchain())
+                return false;
+            // init_swapchain 会重置 current_frame/frame_fence_reset 并重建同步对象，
+            // 重新走一遍"等待 fence → acquire"即可。
+            return acquire_next_swapchain_image();
+        }
+
+        if (acquire_result == vk::Result::eSuboptimalKHR)
+        {
+            std::printf("[WARN] Vulkan acquire_next_swapchain_image: suboptimal swapchain"
+                        "（建议按窗口尺寸调用 resize_swapchain）\n");
+        }
+        if (image_index >= swapchain_framebuffers.size())
+        {
+            std::printf("[ERROR] Vulkan acquire_next_swapchain_image: 图像索引 %u 超出 %zu 个 framebuffer\n",
+                        image_index, swapchain_framebuffers.size());
+            return false;
+        }
+
+        current_swapchain_image = image_index;
+        return true;
+    }
+    catch (const vk::SystemError &error)
+    {
+        print_vk_error("acquire_next_swapchain_image", error);
+        return false;
+    }
+}
+
 /// @brief 释放所有依赖交换链的资源（保留 swapchain 本身）。
 void VkRenderingDevice::destroy_swapchain_dependents()
 {
@@ -448,6 +532,8 @@ void VkRenderingDevice::destroy_swapchain_dependents()
     swapchain_depth_format = vk::Format::eUndefined;
     current_swapchain_image = UINT32_MAX;
     current_frame = 0;
+    frame_fence_reset = false;
+    frame_submitted = false;
 }
 
 /// @brief 初始化交换链及默认帧缓冲依赖资源。
@@ -599,7 +685,7 @@ bool VkRenderingDevice::init_swapchain()
 /// 因此：
 /// - 目标是 0 尺寸（窗口最小化）时只记录尺寸并推迟重建，等下一次非零 resize；
 /// - 计算出的 extent 与当前一致时不重建（live resize 会连续触发同尺寸事件）；
-/// - 平台 resize 事件转发仍属于 V3-5，`present` 仍属于 V3-4。
+/// - 平台 resize 事件转发仍属于 V3-5；acquire/present 已由 V3-2/V3-4 接上。
 void VkRenderingDevice::resize_swapchain(uint32_t width, uint32_t height)
 {
     window_info.width = width;

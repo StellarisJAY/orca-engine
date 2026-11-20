@@ -387,16 +387,21 @@ int main()
             return 1;
         }
 
-        // 默认帧缓冲在 acquire 接线（V3-2）之前必须被明确拒绝，不能退化成非法 render pass。
+        // V3-2：默认帧缓冲会在 encoder_begin_render_pass 里惰性 acquire 交换链图像
+        // （接口没有独立的 acquire 入口，G-08）。这里验证 begin→pass_end 的录制路径；
+        // 真正的 submit+present 在 V5-3 的端到端帧里验证。
         RenderPassDesc default_fb_desc;
-        default_fb_desc.label = "reject-default-fb-before-acquire";
+        default_fb_desc.label = "default-fb-begin";
         ColorAttachmentDesc default_color; // view 无效 = 默认帧缓冲
         default_fb_desc.color_attachments.push_back(default_color);
-        if (device->encoder_begin_render_pass(reject_encoder, default_fb_desc).is_valid())
+        RenderPassHandle default_fb_pass = device->encoder_begin_render_pass(reject_encoder, default_fb_desc);
+        if (!default_fb_pass.is_valid())
         {
-            std::printf("[TEST] encoder_begin_render_pass accepted the default framebuffer before acquire.\n");
+            std::printf("[TEST] encoder_begin_render_pass(default framebuffer acquire) failed.\n");
             return 1;
         }
+        device->pass_end(default_fb_pass);
+        std::printf("[TEST] default framebuffer acquire/begin OK.\n");
 
         CommandBufferHandle reject_cb = device->encoder_finish(reject_encoder);
         if (!reject_cb.is_valid())
@@ -405,7 +410,7 @@ int main()
             return 1;
         }
         device->destroy_command_buffer(reject_cb);
-        std::printf("[TEST] render pass rejection paths OK (empty/mismatch/overflow/mixed/cube/default-fb).\n");
+        std::printf("[TEST] render pass rejection paths OK (empty/mismatch/overflow/mixed/cube).\n");
 
         device->destroy_texture_view(cube_view);
         device->destroy_texture(attachment_cube);
@@ -540,6 +545,9 @@ int main()
         ubo_entry.binding = 0;
         ubo_entry.visibility = ShaderStage::VERTEX;
         ubo_entry.type = BindingType::UniformBuffer;
+        // skybox 顶点 shader 静态访问 u_view + u_projection 两个 mat4（128 字节），
+        // 因此 descriptor 区间至少要是 128 字节。
+        ubo_entry.min_binding_size = 128;
         pipeline_layout_bgl_desc.entries.push_back(ubo_entry);
         // V6-2：加一个动态 UBO 项，用于验证 vkCmdBindDescriptorSets 的 dynamic offsets。
         BindGroupLayoutEntry dynamic_ubo_entry;
@@ -597,8 +605,11 @@ int main()
 
         const float pipeline_vertices[9] = {-0.5f, -0.5f, 0.0f, 0.5f, -0.5f, 0.0f, 0.0f, 0.5f, 0.0f};
         const uint32_t pipeline_indices[3] = {0, 1, 2};
-        const float pipeline_ubo_data[16] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
-                                              0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+        // 两个单位矩阵：u_view + u_projection（正好 128 字节，匹配 binding 0 的区间）。
+        const float pipeline_ubo_data[32] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                                             0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+                                             1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                                             0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
         device->queue_write_buffer(vertex_buffer, 0, pipeline_vertices, sizeof(pipeline_vertices));
         device->queue_write_buffer(index_buffer, 0, pipeline_indices, sizeof(pipeline_indices));
         device->queue_write_buffer(static_ubo, 0, pipeline_ubo_data, sizeof(pipeline_ubo_data));
@@ -612,7 +623,7 @@ int main()
         pipeline_bind_group_entry.resource.type = BindingType::UniformBuffer;
         pipeline_bind_group_entry.resource.buffer = static_ubo;
         pipeline_bind_group_entry.resource.offset = 0;
-        pipeline_bind_group_entry.resource.size = 64;
+        pipeline_bind_group_entry.resource.size = 128;
         pipeline_bind_group_desc.entries.push_back(pipeline_bind_group_entry);
         pipeline_bind_group_entry.binding = 1;
         pipeline_bind_group_entry.resource.buffer = dynamic_ubo;
@@ -660,6 +671,9 @@ int main()
             std::printf("[TEST] create_render_pipeline(opaque) failed.\n");
             return 1;
         }
+        // 保存"不透明管线"的完整描述：下面会改 pipeline_desc 造 blend 变体，端到端帧
+        // 还需要一份基线描述来创建颜色格式匹配交换链的管线。
+        const RenderPipelineDesc opaque_pipeline_desc = pipeline_desc;
 
         // 第二种状态组合：alpha 混合、只写 RGB、depth test 恒通过且不写深度、
         // 无背面剔除 + CW、triangle strip。用于覆盖 blend/write mask/深度/光栅化映射。
@@ -772,6 +786,97 @@ int main()
             return 1;
         }
         device->destroy_command_buffer(pipeline_cb);
+
+        // V6-2b/V6-3：端到端帧（默认帧缓冲 acquire → 管线/绑定 → draw → queue_submit → present）。
+        // 默认帧缓冲的颜色附件是交换链格式，因此用同一份基线描述再建一条目标格式匹配的管线；
+        // 深度格式保持 Depth32Float（与 init_swapchain 选择的内部深度一致）。
+        RenderPipelineDesc present_pipeline_desc = opaque_pipeline_desc;
+        present_pipeline_desc.label = "smoke-pipeline-present";
+        present_pipeline_desc.fragment.targets[0].format = device->get_swapchain_format();
+        // 顶点 shader 显式翻转了 NDC y 轴，绕序跟着反转；这里关掉背面剔除保证图元可见。
+        present_pipeline_desc.primitive.cull_mode = Primitive::CullMode::None;
+        RenderPipelineHandle present_pipeline = device->create_render_pipeline(present_pipeline_desc);
+        if (!present_pipeline.is_valid())
+        {
+            std::printf("[TEST] create_render_pipeline(present target) failed.\n");
+            return 1;
+        }
+
+        uint32_t frame_width = 0;
+        uint32_t frame_height = 0;
+        device->get_swapchain_size(frame_width, frame_height);
+
+        CommandEncoderHandle frame_encoder = device->create_command_encoder();
+        if (!frame_encoder.is_valid())
+        {
+            std::printf("[TEST] create_command_encoder(frame) failed.\n");
+            return 1;
+        }
+        RenderPassDesc frame_desc;
+        frame_desc.label = "smoke-frame";
+        ColorAttachmentDesc frame_color; // 无效 view = 默认帧缓冲（begin 时 acquire 交换链图像）
+        frame_color.clear_color[0] = 0.02f;
+        frame_color.clear_color[1] = 0.03f;
+        frame_color.clear_color[2] = 0.05f;
+        frame_color.clear_color[3] = 1.0f;
+        frame_desc.color_attachments.push_back(frame_color);
+        DepthAttachmentDesc frame_depth; // 无效 view = 交换链内部深度缓冲
+        frame_depth.store_op = StoreOp::Discard;
+        frame_desc.depth_attachments.push_back(frame_depth);
+        RenderPassHandle frame_pass = device->encoder_begin_render_pass(frame_encoder, frame_desc);
+        if (!frame_pass.is_valid())
+        {
+            std::printf("[TEST] encoder_begin_render_pass(default framebuffer) failed.\n");
+            return 1;
+        }
+
+        // 拒绝路径：没有管线/索引缓冲、索引区间越界、pass_end 之后的 draw 都必须在入口
+        // 被拒绝，不能把非法命令录进 command buffer（否则 draw 录制时 validation 会报 VUID）。
+        device->pass_draw(frame_pass, 3);         // 未 pass_set_pipeline
+        device->pass_draw_indexed(frame_pass, 3); // 未 pass_set_pipeline
+
+        device->pass_set_pipeline(frame_pass, present_pipeline);
+        device->pass_draw_indexed(frame_pass, 3); // 未 pass_set_index_buffer
+
+        device->pass_set_bind_group(frame_pass, 0, pipeline_bind_group, &dynamic_offset, 1);
+        device->pass_set_vertex_buffer(frame_pass, 0, vertex_buffer, 0);
+        device->pass_set_index_buffer(frame_pass, index_buffer, 0, IndexFormat::Uint32);
+        device->pass_draw_indexed(frame_pass, 3, 1, 2); // first_index 2 + 3 超出 3 个索引
+        device->pass_set_viewport(frame_pass, 0.0f, 0.0f, static_cast<float>(frame_width),
+                                  static_cast<float>(frame_height), 0.0f, 1.0f);
+
+        // 合法绘制：索引绘制 + 非索引绘制（两条 draw 都会真正进入 command buffer）。
+        device->pass_draw_indexed(frame_pass, 3, 1, 0, 0);
+        device->pass_draw(frame_pass, 3, 1, 0);
+        device->pass_end(frame_pass);
+        device->pass_draw(frame_pass, 3); // pass 已 end，必须被拒绝
+
+        CommandBufferHandle frame_cb = device->encoder_finish(frame_encoder);
+        if (!frame_cb.is_valid())
+        {
+            std::printf("[TEST] encoder_finish(frame) failed.\n");
+            return 1;
+        }
+        device->queue_submit(frame_cb);
+
+        // 一次 present 之间只允许一次 queue_submit：第二次提交必须被入口拒绝。
+        CommandEncoderHandle extra_encoder = device->create_command_encoder();
+        CommandBufferHandle extra_cb = device->encoder_finish(extra_encoder);
+        if (extra_cb.is_valid())
+        {
+            device->queue_submit(extra_cb);
+            device->destroy_command_buffer(extra_cb); // 未提交，可以立即销毁
+        }
+
+        device->present();
+        // destroy_command_buffer 当前是立即销毁，必须先确认 GPU 已经执行完（D-15 之前）。
+        device->queue_wait_idle();
+        device->destroy_command_buffer(frame_cb);
+        device->destroy_render_pipeline(present_pipeline);
+        std::printf("[TEST] pass draw/draw_indexed recorded OK (indexed + non-indexed).\n");
+        std::printf("[TEST] pass draw rejection paths OK "
+                    "(pipeline order/index buffer/index range/pass ended).\n");
+        std::printf("[TEST] queue_submit + present OK (acquire/submit/present frame round-trip).\n");
 
         // 拒绝路径：完整状态下仍必须经过共享校验/后端能力检查。
         RenderPipelineDesc reject_desc = pipeline_desc;

@@ -115,6 +115,11 @@ namespace
         vk::RenderPassCreateInfo create_info;
         create_info.setAttachments(attachments);
         create_info.setSubpasses(subpass);
+        // 兼容性还要求 subpass dependency 的数量与内容完全一致（Vulkan 的 render pass
+        // 兼容性只豁免 initial/final layout、load/store 与 attachment reference 的
+        // layout）。默认帧缓冲与显式附件 pass 都用同一组 dependency，这里必须一致。
+        const auto dependencies = vk_render_pass_util::make_render_pass_dependencies();
+        create_info.setDependencies(dependencies);
         return device.createRenderPass(create_info);
     }
 } // namespace
