@@ -6,6 +6,7 @@
 #include "math/vector2.h"
 #include "math/vector3.h"
 #include "math/color.h"
+#include "rendering_device_refactor.h"
 #include <cstdint>
 #include <vector>
 
@@ -40,6 +41,7 @@ struct Surface
     uint32_t surface = 0; // device surface 句柄（OpenGL: VAO）
     uint32_t index_count = 0;
     RID material = 0;
+    GPUBufferHandle handle;
 };
 
 struct MeshData

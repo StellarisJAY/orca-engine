@@ -221,37 +221,37 @@ void RenderingServer::set_skybox_cubemap(RID skybox, uint32_t width, uint32_t he
     }
 }
 
-RID RenderingServer::create_mesh()
-{
-    // 只分配存储；真正的 GPU surface 在顶点 + 索引都到齐后创建。
-    return storage.meshes.create(MeshData{});
-}
+// RID RenderingServer::create_mesh()
+// {
+//     // 只分配存储；真正的 GPU surface 在顶点 + 索引都到齐后创建。
+//     return storage.meshes.create(MeshData{});
+// }
 
-void RenderingServer::add_mesh_surface(
-    RID mesh,
-    RID material,
-    const std::vector<Vector3> &vertices,
-    const std::vector<Vector3> &normals,
-    const std::vector<Vector2> &uvs,
-    const std::vector<Vector3> &tangents,
-    const std::vector<Vector3> &bitangents,
-    const std::vector<uint32_t> &indices)
-{
-    MeshData *data = storage.meshes.get_data(mesh);
-    if (data == nullptr)
-        return;
-    Surface surface;
-    surface.material = material;
-    surface.index_count = indices.size();
-    surface.surface = RenderingDevice::get_singleton()->create_mesh_surface(
-        vertices,
-        normals,
-        uvs,
-        tangents,
-        bitangents,
-        indices);
-    data->surfaces.push_back(surface);
-}
+// void RenderingServer::add_mesh_surface(
+//     RID mesh,
+//     RID material,
+//     const std::vector<Vector3> &vertices,
+//     const std::vector<Vector3> &normals,
+//     const std::vector<Vector2> &uvs,
+//     const std::vector<Vector3> &tangents,
+//     const std::vector<Vector3> &bitangents,
+//     const std::vector<uint32_t> &indices)
+// {
+//     MeshData *data = storage.meshes.get_data(mesh);
+//     if (data == nullptr)
+//         return;
+//     Surface surface;
+//     surface.material = material;
+//     surface.index_count = indices.size();
+//     surface.surface = RenderingDevice::get_singleton()->create_mesh_surface(
+//         vertices,
+//         normals,
+//         uvs,
+//         tangents,
+//         bitangents,
+//         indices);
+//     data->surfaces.push_back(surface);
+// }
 
 RID RenderingServer::create_instance()
 {
