@@ -35,7 +35,10 @@ struct SwapChainSupportDetails {
 /// 尺寸推导、默认帧缓冲分支，pass 内部对象随 command buffer 释放）；V5-1/V5-2 完成
 /// 绑定组布局、绑定组（独占 descriptor pool + descriptor set）与管线布局，
 /// `create_render_pipeline` 改为使用调用方传入的 `pipeline_layout`。
-/// `pass_set_bind_group`、完整管线状态、draw/submit/present 仍未实现。
+/// V6-2 完成 pass 级绑定：`pass_set_bind_group`（含动态偏移校验）、
+/// `pass_set_vertex_buffer`、`pass_set_index_buffer`、`pass_set_viewport`
+/// （同时派生并裁剪 scissor，pass 开始时设默认 viewport/scissor）。
+/// `pass_draw`/`pass_draw_indexed`、`queue_submit`、`present` 仍未实现。
 /// 进度见 docs/vulkan_rhi_checklist_v2.md。
 class VkRenderingDevice : public RenderingDeviceRefactor
 {

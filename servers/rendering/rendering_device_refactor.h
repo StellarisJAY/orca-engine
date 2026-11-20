@@ -700,22 +700,42 @@ public:
     virtual RenderPassHandle encoder_begin_render_pass(CommandEncoderHandle encoder, const RenderPassDesc &desc) = 0;
 
     /// @brief 绑定渲染管线
+    ///
+    /// 调用顺序约定：本命令必须先于 `pass_set_bind_group`、`pass_set_vertex_buffer`
+    /// 与 `pass_set_index_buffer`，后三者需要从当前管线取 pipeline layout / 顶点布局做校验。
+    /// 管线与 pass 的附件格式/采样数必须兼容（Vulkan 的 render pass 兼容性）。
     virtual void pass_set_pipeline(RenderPassHandle pass, RenderPipelineHandle pipeline) = 0;
 
     /// @brief 绑定绑定组
     /// @param group_index 组下标，对应 PipelineLayoutDesc::bind_group_layouts 的下标
     /// @param dynamic_offsets 动态偏移数组，与布局中 has_dynamic_offset 的项按顺序对应
+    ///
+    /// 绑定组的布局必须与当前管线的 pipeline layout 在 `group_index` 处的布局一致；
+    /// 动态偏移的数量必须等于该布局中 `has_dynamic_offset` 的项数，每个偏移按
+    /// uniform buffer 对齐要求校验，并且 offset + 动态偏移 + 区间不得超过缓冲区大小。
     virtual void pass_set_bind_group(RenderPassHandle pass, uint32_t group_index, BindGroupHandle bind_group,
                                      const uint32_t *dynamic_offsets = nullptr, uint32_t dynamic_offset_count = 0) = 0;
 
     /// @brief 设置某个 slot 的顶点缓冲区
+    /// @param slot 顶点缓冲区槽位，对应 VertexStage::buffers 的下标
+    /// @param offset 缓冲区内的起始字节偏移
+    ///
+    /// 缓冲区必须带 `GPUBufferUsage::VERTEX`；offset 不能越过缓冲区末尾。
+    /// 已绑定管线时 slot 必须小于管线声明的顶点缓冲区数量。
     virtual void pass_set_vertex_buffer(RenderPassHandle pass, uint32_t slot, GPUBufferHandle buffer, uint64_t offset = 0) = 0;
 
     /// @brief 设置索引缓冲区
+    /// @param offset 缓冲区内的起始字节偏移，必须是索引元素大小的整数倍
+    ///
+    /// 缓冲区必须带 `GPUBufferUsage::INDEX`，offset 不能越过缓冲区末尾。
     virtual void pass_set_index_buffer(RenderPassHandle pass, GPUBufferHandle buffer, uint64_t offset = 0,
                                        IndexFormat format = IndexFormat::Uint32) = 0;
 
     /// @brief 设置 viewport（x/y/width/height 为像素；min_depth/max_depth 为 0..1 的深度范围）
+    ///
+    /// 本接口没有独立的 scissor 命令（G-04）：后端按 viewport 派生 scissor 并裁剪到
+    /// render area。render pass 开始时后端会先设置一个覆盖整个 render area 的默认
+    /// viewport/scissor，因此不调用本命令也能绘制；需要局部渲染时再覆盖它。
     virtual void pass_set_viewport(RenderPassHandle pass, float x, float y, float width, float height,
                                    float min_depth = 0.0f, float max_depth = 1.0f) = 0;
 

@@ -358,6 +358,7 @@ RenderPipelineHandle VkRenderingDevice::create_render_pipeline(const RenderPipel
 
         data = memnew(VkGraphicsPipelineHandleData);
         data->pipeline_layout = pipeline_layout_data;
+        data->vertex_buffer_count = static_cast<uint32_t>(desc.vertex.buffers.size());
         data->label = desc.label;
 
         // ================================================================

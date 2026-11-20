@@ -541,6 +541,14 @@ int main()
         ubo_entry.visibility = ShaderStage::VERTEX;
         ubo_entry.type = BindingType::UniformBuffer;
         pipeline_layout_bgl_desc.entries.push_back(ubo_entry);
+        // V6-2：加一个动态 UBO 项，用于验证 vkCmdBindDescriptorSets 的 dynamic offsets。
+        BindGroupLayoutEntry dynamic_ubo_entry;
+        dynamic_ubo_entry.binding = 1;
+        dynamic_ubo_entry.visibility = ShaderStage::VERTEX;
+        dynamic_ubo_entry.type = BindingType::UniformBuffer;
+        dynamic_ubo_entry.min_binding_size = 64;
+        dynamic_ubo_entry.has_dynamic_offset = true;
+        pipeline_layout_bgl_desc.entries.push_back(dynamic_ubo_entry);
         BindGroupLayoutHandle pipeline_layout_bgl = device->create_bind_group_layout(pipeline_layout_bgl_desc);
         if (!pipeline_layout_bgl.is_valid())
         {
@@ -552,6 +560,69 @@ int main()
         if (!pipeline_layout.is_valid())
         {
             std::printf("[TEST] create_pipeline_layout(empty) failed.\n");
+            return 1;
+        }
+
+        // V6-2 的绑定资源：静态 UBO、动态 UBO、顶点缓冲与索引缓冲。内容只为覆盖
+        // queue_write_buffer 路径；本用例只验证命令录制，不提交也不读回。
+        GPUBufferDesc static_ubo_desc;
+        static_ubo_desc.label = "smoke-pipeline-static-ubo";
+        static_ubo_desc.size = 256;
+        static_ubo_desc.usage = GPUBufferUsage::UNIFORM | GPUBufferUsage::COPY_DST;
+        GPUBufferHandle static_ubo = device->create_buffer(static_ubo_desc);
+
+        GPUBufferDesc dynamic_ubo_desc;
+        dynamic_ubo_desc.label = "smoke-pipeline-dynamic-ubo";
+        dynamic_ubo_desc.size = 256;
+        dynamic_ubo_desc.usage = GPUBufferUsage::UNIFORM | GPUBufferUsage::COPY_DST;
+        GPUBufferHandle dynamic_ubo = device->create_buffer(dynamic_ubo_desc);
+
+        GPUBufferDesc vertex_buffer_desc;
+        vertex_buffer_desc.label = "smoke-pipeline-vertex-buffer";
+        vertex_buffer_desc.size = 36;
+        vertex_buffer_desc.usage = GPUBufferUsage::VERTEX | GPUBufferUsage::COPY_DST;
+        GPUBufferHandle vertex_buffer = device->create_buffer(vertex_buffer_desc);
+
+        GPUBufferDesc index_buffer_desc;
+        index_buffer_desc.label = "smoke-pipeline-index-buffer";
+        index_buffer_desc.size = 12;
+        index_buffer_desc.usage = GPUBufferUsage::INDEX | GPUBufferUsage::COPY_DST;
+        GPUBufferHandle index_buffer = device->create_buffer(index_buffer_desc);
+        if (!static_ubo.is_valid() || !dynamic_ubo.is_valid() || !vertex_buffer.is_valid() ||
+            !index_buffer.is_valid())
+        {
+            std::printf("[TEST] create_buffer(pipeline bindings) failed.\n");
+            return 1;
+        }
+
+        const float pipeline_vertices[9] = {-0.5f, -0.5f, 0.0f, 0.5f, -0.5f, 0.0f, 0.0f, 0.5f, 0.0f};
+        const uint32_t pipeline_indices[3] = {0, 1, 2};
+        const float pipeline_ubo_data[16] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                                              0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+        device->queue_write_buffer(vertex_buffer, 0, pipeline_vertices, sizeof(pipeline_vertices));
+        device->queue_write_buffer(index_buffer, 0, pipeline_indices, sizeof(pipeline_indices));
+        device->queue_write_buffer(static_ubo, 0, pipeline_ubo_data, sizeof(pipeline_ubo_data));
+        device->queue_write_buffer(dynamic_ubo, 0, pipeline_ubo_data, sizeof(pipeline_ubo_data));
+
+        BindGroupDesc pipeline_bind_group_desc;
+        pipeline_bind_group_desc.label = "smoke-pipeline-bind-group";
+        pipeline_bind_group_desc.layout = pipeline_layout_bgl;
+        BindGroupEntry pipeline_bind_group_entry;
+        pipeline_bind_group_entry.binding = 0;
+        pipeline_bind_group_entry.resource.type = BindingType::UniformBuffer;
+        pipeline_bind_group_entry.resource.buffer = static_ubo;
+        pipeline_bind_group_entry.resource.offset = 0;
+        pipeline_bind_group_entry.resource.size = 64;
+        pipeline_bind_group_desc.entries.push_back(pipeline_bind_group_entry);
+        pipeline_bind_group_entry.binding = 1;
+        pipeline_bind_group_entry.resource.buffer = dynamic_ubo;
+        pipeline_bind_group_entry.resource.offset = 0;
+        pipeline_bind_group_entry.resource.size = 64;
+        pipeline_bind_group_desc.entries.push_back(pipeline_bind_group_entry);
+        BindGroupHandle pipeline_bind_group = device->create_bind_group(pipeline_bind_group_desc);
+        if (!pipeline_bind_group.is_valid())
+        {
+            std::printf("[TEST] create_bind_group(pipeline) failed.\n");
             return 1;
         }
 
@@ -671,7 +742,28 @@ int main()
             return 1;
         }
         device->pass_set_pipeline(pipeline_pass, opaque_pipeline);
-        device->pass_set_viewport(pipeline_pass, 0.0f, 0.0f, 128.0f, 96.0f, 0.0f, 1.0f);
+
+        // V6-2：绑定组（set 0，带 1 个动态偏移）、顶点缓冲、索引缓冲与 viewport。
+        // viewport 故意部分移出 render area（x/y 为负），验证后端同时把派生 scissor
+        // 裁剪到 render area（G-04），validation 不应报 scissor 越界。
+        const uint32_t dynamic_offset = 0;
+        device->pass_set_bind_group(pipeline_pass, 0, pipeline_bind_group, &dynamic_offset, 1);
+        device->pass_set_vertex_buffer(pipeline_pass, 0, vertex_buffer, 0);
+        device->pass_set_index_buffer(pipeline_pass, index_buffer, 0, IndexFormat::Uint32);
+        device->pass_set_viewport(pipeline_pass, -8.0f, -4.0f, 64.0f, 48.0f, 0.0f, 1.0f);
+
+        // 拒绝路径：这些调用必须在本后端入口被拒绝，不能把非法命令录进 command buffer
+        // （否则 validation 会报 VUID，例如无 VERTEX 用途的缓冲区）。
+        device->pass_set_bind_group(pipeline_pass, 1, pipeline_bind_group, &dynamic_offset, 1); // set 越界
+        device->pass_set_bind_group(pipeline_pass, 0, pipeline_bind_group, nullptr, 0); // 缺少动态偏移
+        device->pass_set_vertex_buffer(pipeline_pass, 1, vertex_buffer, 0); // slot 越界
+        device->pass_set_vertex_buffer(pipeline_pass, 0, index_buffer, 0); // 没有 VERTEX 用途
+        device->pass_set_index_buffer(pipeline_pass, vertex_buffer, 0, IndexFormat::Uint32); // 没有 INDEX 用途
+        device->pass_set_index_buffer(pipeline_pass, index_buffer, 1, IndexFormat::Uint16); // offset 未按 2 对齐
+        device->pass_set_viewport(pipeline_pass, 0.0f, 0.0f, 0.0f, 48.0f); // 宽度为 0
+        device->pass_set_viewport(pipeline_pass, 0.0f, 0.0f, 128.0f, 96.0f, 1.0f, 0.0f); // min > max
+        device->pass_set_viewport(pipeline_pass, 0.0f, 0.0f, 128.0f, 96.0f, -0.5f, 1.0f); // 深度越界
+
         device->pass_end(pipeline_pass);
         CommandBufferHandle pipeline_cb = device->encoder_finish(pipeline_encoder);
         if (!pipeline_cb.is_valid())
@@ -709,6 +801,11 @@ int main()
             return 1;
         }
 
+        device->destroy_bind_group(pipeline_bind_group);
+        device->destroy_buffer(index_buffer);
+        device->destroy_buffer(vertex_buffer);
+        device->destroy_buffer(dynamic_ubo);
+        device->destroy_buffer(static_ubo);
         device->destroy_render_pipeline(blend_pipeline);
         device->destroy_render_pipeline(opaque_pipeline);
         device->destroy_texture_view(pipeline_depth_view);
@@ -721,6 +818,9 @@ int main()
         device->destroy_shader_module(vertex_module);
         std::printf("[TEST] render pipeline create/bind OK (vertex input + blend + depth + write mask).\n");
         std::printf("[TEST] render pipeline rejection paths OK (samples/stride/no-fragment).\n");
+        std::printf("[TEST] pass bind group/dynamic offset/vertex+index buffer/viewport+scissor OK.\n");
+        std::printf("[TEST] pass binding rejection paths OK "
+                    "(group index/dynamic count/vertex slot/usage/index alignment/viewport).\n");
     }
 
     // V5：绑定组 / 管线布局。descriptor set layout、descriptor set（每个 bind group 独占

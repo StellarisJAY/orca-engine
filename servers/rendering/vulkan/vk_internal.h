@@ -177,6 +177,11 @@ struct VkGraphicsPipelineHandleData
     vk::raii::Pipeline pipeline { nullptr };
     /// @brief 创建管线时传入的 pipeline layout（非拥有；由调用方保证生命周期）
     VkPipelineLayoutHandleData *pipeline_layout = nullptr;
+    /// @brief 顶点输入 binding 数量（desc.vertex.buffers.size()）。
+    ///
+    /// `pass_set_vertex_buffer` 据此拒绝越界的 slot；`pass_set_bind_group` 还要求当前
+    /// pass 已经绑定本管线（它要从本管线取 pipeline layout，见 §9.2 的顺序约定）。
+    uint32_t vertex_buffer_count = 0;
     /// @brief 调试用标签（创建 desc.label 的副本）
     std::string label;
 };
@@ -206,6 +211,16 @@ struct VkRenderPassHandleData
     // 因为部分命令以 RenderPass 为参数，需要在 RenderPass 记录所属 CommandEncoder。
     // encoder_finish 之后置空（该 encoder 已失效）。
     VkCommandEncoderHandleData *command_encoder_data = nullptr;
+    /// @brief 当前绑定的 graphics pipeline（非拥有指针，由 pass_set_pipeline 更新）。
+    ///
+    /// pass_set_bind_group 需要从它取 pipeline layout；pass_set_vertex_buffer 用它校验
+    /// slot 数量。调用方必须保证管线在 pass 录制期间存活。
+    VkGraphicsPipelineHandleData *pipeline = nullptr;
+    /// @brief 本 pass 的 render area（framebuffer 内的录制区域）。
+    ///
+    /// `pass_set_viewport` 派生 scissor 时按它裁剪（G-04：接口没有单独的 scissor 命令）；
+    /// 默认 viewport/scissor 也在 begin 时按这个区域设置。
+    vk::Rect2D render_area {};
     /// @brief pass_end 后要写回父纹理的布局（仅在录制被提交执行后才真实生效）。
     std::vector<VkRenderPassLayoutUpdate> layout_updates;
 };

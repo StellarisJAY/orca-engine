@@ -2,7 +2,10 @@
 #include "vk_internal.h"
 #include "os/memory.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <utility>
@@ -137,6 +140,134 @@ namespace
         out_area.setExtent(vk::Extent2D(width, height));
         return true;
     }
+
+    // -------------------------------------------------------------------------
+    // V6-2：pass 的 viewport / scissor 与参数校验
+    // -------------------------------------------------------------------------
+
+    /// @brief 把 viewport 的外接整数矩形裁剪到 render area，得到 scissor 矩形（G-04）。
+    ///
+    /// 接口只有 `pass_set_viewport`，没有独立的 scissor 命令；而管线把 scissor 设为
+    /// dynamic，所以本后端在设置 viewport 时必须同时录制 `vkCmdSetScissor`。
+    /// Vulkan 要求 scissor 完全落在 render area 内（偏移非负、右下角不越界），因此
+    /// 这里对 viewport 取 floor/ceil 后与 render area 求交；完全在区域外时返回零尺寸
+    /// 矩形（绘制被裁剪为空）。viewport 本身可以超出 render area（Vulkan 允许），
+    /// 不在这里报错。
+    vk::Rect2D make_scissor_from_viewport(const vk::Viewport &viewport, const vk::Rect2D &render_area)
+    {
+        const int64_t area_left = static_cast<int64_t>(render_area.offset.x);
+        const int64_t area_top = static_cast<int64_t>(render_area.offset.y);
+        const int64_t area_right = area_left + static_cast<int64_t>(render_area.extent.width);
+        const int64_t area_bottom = area_top + static_cast<int64_t>(render_area.extent.height);
+        const int64_t left = static_cast<int64_t>(std::floor(static_cast<double>(viewport.x)));
+        const int64_t top = static_cast<int64_t>(std::floor(static_cast<double>(viewport.y)));
+        const int64_t right = static_cast<int64_t>(
+            std::ceil(static_cast<double>(viewport.x) + static_cast<double>(viewport.width)));
+        const int64_t bottom = static_cast<int64_t>(
+            std::ceil(static_cast<double>(viewport.y) + static_cast<double>(viewport.height)));
+
+        const int64_t clipped_left = std::max<int64_t>(left, area_left);
+        const int64_t clipped_top = std::max<int64_t>(top, area_top);
+        const int64_t clipped_right = std::min<int64_t>(right, area_right);
+        const int64_t clipped_bottom = std::min<int64_t>(bottom, area_bottom);
+        if (clipped_left >= clipped_right || clipped_top >= clipped_bottom)
+        {
+            // 零尺寸矩形也要落在 render area 内；取 render area 的左上角 + 0 尺寸。
+            return vk::Rect2D{vk::Offset2D{render_area.offset.x, render_area.offset.y},
+                              vk::Extent2D{0, 0}};
+        }
+        return vk::Rect2D{
+            vk::Offset2D{static_cast<int32_t>(clipped_left), static_cast<int32_t>(clipped_top)},
+            vk::Extent2D{static_cast<uint32_t>(clipped_right - clipped_left),
+                         static_cast<uint32_t>(clipped_bottom - clipped_top)}};
+    }
+
+    /// @brief 同时录制 viewport 与派生 scissor（接口没有独立 scissor 命令，G-04）。
+    void record_viewport_and_scissor(const vk::raii::CommandBuffer &command_buffer,
+                                     const vk::Rect2D &render_area, const vk::Viewport &viewport)
+    {
+        command_buffer.setViewport(0, viewport);
+        command_buffer.setScissor(0, make_scissor_from_viewport(viewport, render_area));
+    }
+
+    /// @brief render pass 开始时设置覆盖整个 render area 的默认 viewport/scissor。
+    ///
+    /// 这样即使调用方不调用 `pass_set_viewport`，draw 也不会读到未定义的动态状态；
+    /// 需要局部渲染时再用 `pass_set_viewport` 覆盖。
+    void record_default_viewport_and_scissor(const vk::raii::CommandBuffer &command_buffer,
+                                             const vk::Rect2D &render_area)
+    {
+        const vk::Viewport viewport(static_cast<float>(render_area.offset.x),
+                                    static_cast<float>(render_area.offset.y),
+                                    static_cast<float>(render_area.extent.width),
+                                    static_cast<float>(render_area.extent.height), 0.0f, 1.0f);
+        record_viewport_and_scissor(command_buffer, render_area, viewport);
+    }
+
+    /// @brief 校验 `pass_set_viewport` 的入参（Vulkan 的坐标/尺寸/深度合法区间）。
+    bool validate_viewport(const vk::PhysicalDeviceLimits &limits, float x, float y, float width,
+                           float height, float min_depth, float max_depth)
+    {
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(width) || !std::isfinite(height) ||
+            !std::isfinite(min_depth) || !std::isfinite(max_depth))
+        {
+            std::printf("[ERROR] Vulkan pass_set_viewport: viewport 参数必须是有限值\n");
+            return false;
+        }
+        if (width <= 0.0f || height <= 0.0f)
+        {
+            std::printf("[ERROR] Vulkan pass_set_viewport: viewport 尺寸必须大于 0（得到 %.3fx%.3f）\n",
+                        static_cast<double>(width), static_cast<double>(height));
+            return false;
+        }
+        if (min_depth < 0.0f || min_depth > 1.0f || max_depth < 0.0f || max_depth > 1.0f ||
+            min_depth > max_depth)
+        {
+            std::printf("[ERROR] Vulkan pass_set_viewport: 深度范围非法（[%.3f, %.3f]，要求 0 <= min <= max <= 1）\n",
+                        static_cast<double>(min_depth), static_cast<double>(max_depth));
+            return false;
+        }
+        // Vulkan 的 viewport 宽高不能超过 maxViewportDimensions，原点必须落在
+        // viewportBoundsRange（该范围通常包含负值，允许 viewport 部分移出屏幕）。
+        if (width > static_cast<float>(limits.maxViewportDimensions[0]) ||
+            height > static_cast<float>(limits.maxViewportDimensions[1]))
+        {
+            std::printf("[ERROR] Vulkan pass_set_viewport: viewport 尺寸 %.0fx%.0f 超过 "
+                        "maxViewportDimensions %ux%u\n",
+                        static_cast<double>(width), static_cast<double>(height),
+                        limits.maxViewportDimensions[0], limits.maxViewportDimensions[1]);
+            return false;
+        }
+        if (x < limits.viewportBoundsRange[0] || x > limits.viewportBoundsRange[1] ||
+            y < limits.viewportBoundsRange[0] || y > limits.viewportBoundsRange[1])
+        {
+            std::printf("[ERROR] Vulkan pass_set_viewport: viewport 原点 (%.0f, %.0f) 超出 "
+                        "viewportBoundsRange [%.0f, %.0f]\n",
+                        static_cast<double>(x), static_cast<double>(y),
+                        static_cast<double>(limits.viewportBoundsRange[0]),
+                        static_cast<double>(limits.viewportBoundsRange[1]));
+            return false;
+        }
+        return true;
+    }
+
+    /// @brief IndexFormat → Vulkan 索引类型 + 单个元素字节数；未知枚举返回 false。
+    bool get_vk_index_info(IndexFormat format, vk::IndexType &index_type, uint64_t &element_size)
+    {
+        switch (format)
+        {
+        case IndexFormat::Uint16:
+            index_type = vk::IndexType::eUint16;
+            element_size = 2;
+            return true;
+        case IndexFormat::Uint32:
+            index_type = vk::IndexType::eUint32;
+            element_size = 4;
+            return true;
+        default:
+            return false;
+        }
+    }
 } // namespace
 
 /// @brief 创建指令编码器（命令池 + 已 begin 的主 command buffer）。
@@ -262,6 +393,7 @@ RenderPassHandle VkRenderingDevice::encoder_begin_render_pass(CommandEncoderHand
 
             render_pass_data = memnew(VkRenderPassHandleData);
             render_pass_data->command_encoder_data = command_encoder_data;
+            render_pass_data->render_area = render_area;
 
             vk::RenderPassBeginInfo begin_info;
             begin_info.setRenderArea(render_area);
@@ -269,6 +401,8 @@ RenderPassHandle VkRenderingDevice::encoder_begin_render_pass(CommandEncoderHand
             begin_info.setFramebuffer(*swapchain_framebuffers[current_swapchain_image]);
             begin_info.setClearValues(clear_values);
             command_encoder_data->command_buffer.beginRenderPass(begin_info, vk::SubpassContents::eInline);
+            // 默认动态状态：覆盖整个 render area 的 viewport + scissor（G-04）。
+            record_default_viewport_and_scissor(command_encoder_data->command_buffer, render_area);
             std::printf("[INFO] Vulkan began default framebuffer pass(%s): image %u, area %ux%u\n", label,
                         current_swapchain_image, render_area.extent.width, render_area.extent.height);
         }
@@ -470,6 +604,7 @@ RenderPassHandle VkRenderingDevice::encoder_begin_render_pass(CommandEncoderHand
             render_pass_data = memnew(VkRenderPassHandleData);
             render_pass_data->render_pass = device.createRenderPass(create_info);
             render_pass_data->command_encoder_data = command_encoder_data;
+            render_pass_data->render_area = render_area;
             for (const auto &attachment : resolved_colors)
                 render_pass_data->layout_updates.push_back({attachment.texture, attachment.final_layout});
             if (has_depth)
@@ -489,6 +624,8 @@ RenderPassHandle VkRenderingDevice::encoder_begin_render_pass(CommandEncoderHand
             begin_info.setFramebuffer(*render_pass_data->framebuffer);
             begin_info.setClearValues(clear_values);
             command_encoder_data->command_buffer.beginRenderPass(begin_info, vk::SubpassContents::eInline);
+            // 默认动态状态：覆盖整个 render area 的 viewport + scissor（G-04）。
+            record_default_viewport_and_scissor(command_encoder_data->command_buffer, render_area);
             std::printf("[INFO] Vulkan began render pass(%s): %u color + %s depth, framebuffer %ux%u, area %ux%u\n",
                         label, static_cast<uint32_t>(resolved_colors.size()), has_depth ? "1" : "0",
                         framebuffer_width, framebuffer_height, render_area.extent.width,
@@ -521,38 +658,253 @@ void VkRenderingDevice::pass_set_pipeline(RenderPassHandle pass, RenderPipelineH
     if (render_pass_data->command_encoder_data == nullptr)
         return;
     const auto render_pipeline_data = static_cast<VkGraphicsPipelineHandleData *>(pipeline.data);
+    // 记录当前管线：后续的 bind group / vertex buffer / index buffer 校验依赖它的
+    // pipeline layout 与 vertex input 布局。
+    render_pass_data->pipeline = render_pipeline_data;
     render_pass_data->command_encoder_data->command_buffer.bindPipeline(
         vk::PipelineBindPoint::eGraphics, *render_pipeline_data->pipeline);
 }
 
-void VkRenderingDevice::pass_set_bind_group(RenderPassHandle pass, uint32_t group_index, BindGroupHandle bind_group,
-                                            const uint32_t *dynamic_offsets, uint32_t dynamic_offset_count)
+/// @brief 绑定绑定组（VkDescriptorSet + 动态偏移）。
+///
+/// 校验：
+///   - 调用前必须已经 `pass_set_pipeline`（vkCmdBindDescriptorSets 需要 pipeline layout）；
+///   - group_index 必须在 pipeline layout 的 set 范围内，且 bind group 的布局必须与
+///     该 group 的布局完全一致；
+///   - dynamic offsets 的数量必须等于布局里 `has_dynamic_offset` 的项数（按 binding
+///     编号升序消费），每个偏移按 minUniformBufferOffsetAlignment 对齐，并且叠加
+///     descriptor 静态 offset 后区间必须完整落在缓冲区内。
+void VkRenderingDevice::pass_set_bind_group(RenderPassHandle pass, uint32_t group_index,
+                                            BindGroupHandle bind_group, const uint32_t *dynamic_offsets,
+                                            uint32_t dynamic_offset_count)
 {
-    (void)pass;
-    (void)group_index;
-    (void)bind_group;
-    (void)dynamic_offsets;
-    (void)dynamic_offset_count;
+    if (!pass.is_valid() || pass.data == nullptr)
+        return;
+    const auto render_pass_data = static_cast<VkRenderPassHandleData *>(pass.data);
+    if (render_pass_data->command_encoder_data == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_set_bind_group: encoder 已 finish，不能再录制\n");
+        return;
+    }
+    if (!bind_group.is_valid() || bind_group.data == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_set_bind_group: invalid bind group handle\n");
+        return;
+    }
+    // Vulkan 的 vkCmdBindDescriptorSets 需要 pipeline layout，而这个接口不提供显式
+    // layout 参数，只能从当前绑定的管线取得。
+    if (render_pass_data->pipeline == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_set_bind_group: 必须先 pass_set_pipeline（需要 pipeline layout）\n");
+        return;
+    }
+    const auto pipeline_layout_data = render_pass_data->pipeline->pipeline_layout;
+    if (pipeline_layout_data == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_set_bind_group: 当前管线没有 pipeline layout\n");
+        return;
+    }
+    if (group_index >= pipeline_layout_data->bind_group_layouts.size())
+    {
+        std::printf("[ERROR] Vulkan pass_set_bind_group: group index %u 超出 pipeline layout(%s) 的 %zu 个 set\n",
+                    group_index, pipeline_layout_data->label.c_str(),
+                    pipeline_layout_data->bind_group_layouts.size());
+        return;
+    }
+
+    const auto bind_group_data = static_cast<VkBindGroupHandleData *>(bind_group.data);
+    const VkBindGroupLayoutHandleData *expected_layout =
+        pipeline_layout_data->bind_group_layouts[group_index];
+    // Vulkan 要求 set 与 pipeline layout 中对应 set layout 兼容；本后端创建的布局
+    // 是一一对应的对象，因此直接比较指针即可。
+    if (bind_group_data->layout != expected_layout)
+    {
+        std::printf("[ERROR] Vulkan pass_set_bind_group(group %u): bind group(%s) 的布局与 pipeline layout 不一致\n",
+                    group_index, bind_group_data->label.c_str());
+        return;
+    }
+
+    // 动态偏移对应的 binding 按编号升序消费；数量必须与布局完全一致。
+    std::vector<uint32_t> dynamic_bindings;
+    for (const VkBindGroupLayoutEntryData &entry : expected_layout->entries)
+    {
+        if (entry.has_dynamic_offset)
+            dynamic_bindings.push_back(entry.binding);
+    }
+    std::sort(dynamic_bindings.begin(), dynamic_bindings.end());
+    if (dynamic_offset_count != dynamic_bindings.size())
+    {
+        std::printf("[ERROR] Vulkan pass_set_bind_group(group %u): 动态偏移数量 %u 与布局要求的 %zu 不一致\n",
+                    group_index, dynamic_offset_count, dynamic_bindings.size());
+        return;
+    }
+    if (dynamic_offset_count > 0 && dynamic_offsets == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_set_bind_group(group %u): dynamic_offsets 为空但布局要求动态偏移\n",
+                    group_index);
+        return;
+    }
+
+    const uint64_t alignment = physical_device.getProperties().limits.minUniformBufferOffsetAlignment;
+    std::vector<uint32_t> offsets(dynamic_offset_count);
+    for (size_t i = 0; i < dynamic_bindings.size(); ++i)
+    {
+        const uint32_t binding_number = dynamic_bindings[i];
+        const uint32_t offset = dynamic_offsets[i];
+        if (alignment > 1 && (offset % alignment) != 0)
+        {
+            std::printf("[ERROR] Vulkan pass_set_bind_group(group %u, binding %u): 动态偏移 %u 未按 "
+                        "minUniformBufferOffsetAlignment %llu 对齐\n",
+                        group_index, binding_number, offset, static_cast<unsigned long long>(alignment));
+            return;
+        }
+
+        const VkBindGroupBindingData *binding = nullptr;
+        for (const VkBindGroupBindingData &candidate : bind_group_data->bindings)
+        {
+            if (candidate.binding == binding_number)
+            {
+                binding = &candidate;
+                break;
+            }
+        }
+        if (binding == nullptr || binding->buffer == nullptr)
+        {
+            std::printf("[ERROR] Vulkan pass_set_bind_group(group %u, binding %u): 动态绑定缺少缓冲区\n",
+                        group_index, binding_number);
+            return;
+        }
+        // 动态偏移叠加在 descriptor 的静态 offset 上；最终区间必须完整落在缓冲区内。
+        const uint64_t base = binding->offset + offset;
+        if (base > binding->buffer->size || binding->size > binding->buffer->size - base)
+        {
+            std::printf("[ERROR] Vulkan pass_set_bind_group(group %u, binding %u): 动态偏移 %u 使区间 "
+                        "[%llu, %llu) 超出缓冲区(%s) 的 %llu 字节\n",
+                        group_index, binding_number, offset, static_cast<unsigned long long>(base),
+                        static_cast<unsigned long long>(base + binding->size),
+                        binding->buffer->label.c_str(),
+                        static_cast<unsigned long long>(binding->buffer->size));
+            return;
+        }
+        offsets[i] = offset;
+    }
+
+    // 单个 set：firstSet = group_index，后续 set 保持不变（与 WebGPU 的 per-group 绑定一致）。
+    const std::vector<vk::DescriptorSet> descriptor_sets = {*bind_group_data->descriptor_set};
+    render_pass_data->command_encoder_data->command_buffer.bindDescriptorSets(
+        vk::PipelineBindPoint::eGraphics, *pipeline_layout_data->pipeline_layout, group_index,
+        descriptor_sets, offsets);
 }
 
+/// @brief 绑定某个 slot 的顶点缓冲区。
 void VkRenderingDevice::pass_set_vertex_buffer(RenderPassHandle pass, uint32_t slot, GPUBufferHandle buffer,
                                                uint64_t offset)
 {
-    (void)pass;
-    (void)slot;
-    (void)buffer;
-    (void)offset;
+    if (!pass.is_valid() || pass.data == nullptr)
+        return;
+    const auto render_pass_data = static_cast<VkRenderPassHandleData *>(pass.data);
+    if (render_pass_data->command_encoder_data == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_set_vertex_buffer: encoder 已 finish，不能再录制\n");
+        return;
+    }
+    if (!buffer.is_valid() || buffer.data == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_set_vertex_buffer: invalid buffer handle\n");
+        return;
+    }
+    const auto buffer_data = static_cast<VkBufferHandleData *>(buffer.data);
+    if ((buffer_data->usage & GPUBufferUsage::VERTEX) == 0)
+    {
+        std::printf("[ERROR] Vulkan pass_set_vertex_buffer(slot %u): 缓冲区(%s) 没有 VERTEX 用途\n", slot,
+                    buffer_data->label.c_str());
+        return;
+    }
+    if (offset > buffer_data->size)
+    {
+        std::printf("[ERROR] Vulkan pass_set_vertex_buffer(slot %u): offset %llu 越过缓冲区(%s) 的 %llu 字节\n",
+                    slot, static_cast<unsigned long long>(offset), buffer_data->label.c_str(),
+                    static_cast<unsigned long long>(buffer_data->size));
+        return;
+    }
+    if (render_pass_data->pipeline != nullptr)
+    {
+        if (slot >= render_pass_data->pipeline->vertex_buffer_count)
+        {
+            std::printf("[ERROR] Vulkan pass_set_vertex_buffer: slot %u 超出管线(%s) 的 %u 个顶点缓冲区\n",
+                        slot, render_pass_data->pipeline->label.c_str(),
+                        render_pass_data->pipeline->vertex_buffer_count);
+            return;
+        }
+    }
+    else
+    {
+        // 还没绑定管线时只能按设备上限校验 slot；真正的布局校验在 draw 前由管线决定。
+        const uint32_t max_bindings = physical_device.getProperties().limits.maxVertexInputBindings;
+        if (slot >= max_bindings)
+        {
+            std::printf("[ERROR] Vulkan pass_set_vertex_buffer: slot %u 超出 maxVertexInputBindings %u\n", slot,
+                        max_bindings);
+            return;
+        }
+    }
+
+    const std::vector<vk::Buffer> buffers = {*buffer_data->buffer};
+    const std::vector<vk::DeviceSize> offsets = {static_cast<vk::DeviceSize>(offset)};
+    render_pass_data->command_encoder_data->command_buffer.bindVertexBuffers(slot, buffers, offsets);
 }
 
+/// @brief 绑定索引缓冲区。
 void VkRenderingDevice::pass_set_index_buffer(RenderPassHandle pass, GPUBufferHandle buffer, uint64_t offset,
                                               IndexFormat format)
 {
-    (void)pass;
-    (void)buffer;
-    (void)offset;
-    (void)format;
+    if (!pass.is_valid() || pass.data == nullptr)
+        return;
+    const auto render_pass_data = static_cast<VkRenderPassHandleData *>(pass.data);
+    if (render_pass_data->command_encoder_data == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_set_index_buffer: encoder 已 finish，不能再录制\n");
+        return;
+    }
+    if (!buffer.is_valid() || buffer.data == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_set_index_buffer: invalid buffer handle\n");
+        return;
+    }
+    const auto buffer_data = static_cast<VkBufferHandleData *>(buffer.data);
+    if ((buffer_data->usage & GPUBufferUsage::INDEX) == 0)
+    {
+        std::printf("[ERROR] Vulkan pass_set_index_buffer: 缓冲区(%s) 没有 INDEX 用途\n",
+                    buffer_data->label.c_str());
+        return;
+    }
+    vk::IndexType index_type = vk::IndexType::eUint32;
+    uint64_t element_size = 0;
+    if (!get_vk_index_info(format, index_type, element_size))
+    {
+        std::printf("[ERROR] Vulkan pass_set_index_buffer: 未知 IndexFormat\n");
+        return;
+    }
+    // Vulkan 要求索引缓冲的起始地址（缓冲区基址 + offset）按元素大小对齐；基址由
+    // 驱动保证对齐，因此这里要求 offset 是 2/4 的整数倍。
+    if (offset % element_size != 0)
+    {
+        std::printf("[ERROR] Vulkan pass_set_index_buffer: offset %llu 不是索引元素大小 %llu 的整数倍\n",
+                    static_cast<unsigned long long>(offset), static_cast<unsigned long long>(element_size));
+        return;
+    }
+    if (offset > buffer_data->size)
+    {
+        std::printf("[ERROR] Vulkan pass_set_index_buffer: offset %llu 越过缓冲区(%s) 的 %llu 字节\n",
+                    static_cast<unsigned long long>(offset), buffer_data->label.c_str(),
+                    static_cast<unsigned long long>(buffer_data->size));
+        return;
+    }
+    render_pass_data->command_encoder_data->command_buffer.bindIndexBuffer(
+        *buffer_data->buffer, static_cast<vk::DeviceSize>(offset), index_type);
 }
 
+/// @brief 设置 viewport，并同步派生/裁剪 scissor（接口没有独立 scissor 命令，G-04）。
 void VkRenderingDevice::pass_set_viewport(RenderPassHandle pass, float x, float y, float width, float height,
                                           float min_depth, float max_depth)
 {
@@ -560,9 +912,15 @@ void VkRenderingDevice::pass_set_viewport(RenderPassHandle pass, float x, float 
         return;
     const auto render_pass_data = static_cast<VkRenderPassHandleData *>(pass.data);
     if (render_pass_data->command_encoder_data == nullptr)
+    {
+        std::printf("[ERROR] Vulkan pass_set_viewport: encoder 已 finish，不能再录制\n");
+        return;
+    }
+    if (!validate_viewport(physical_device.getProperties().limits, x, y, width, height, min_depth, max_depth))
         return;
     const vk::Viewport viewport(x, y, width, height, min_depth, max_depth);
-    render_pass_data->command_encoder_data->command_buffer.setViewport(0, viewport);
+    record_viewport_and_scissor(render_pass_data->command_encoder_data->command_buffer,
+                                render_pass_data->render_area, viewport);
 }
 
 void VkRenderingDevice::pass_draw_indexed(RenderPassHandle pass, uint32_t index_count, uint32_t instance_count,
