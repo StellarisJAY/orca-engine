@@ -48,6 +48,11 @@ private:
     RID current_camera = 0;
     RID current_scene = 0;
 
+    // 重构版
+
+    /// @brief 帧全局uniform buffer
+    GPUBufferHandle frame_uniform_buffer;
+
 public:
     static void create_singleton();
     static void destroy_singletone();

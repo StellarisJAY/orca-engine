@@ -24,8 +24,11 @@
 // 3. 命令录制与帧边界
 //    一帧的流程是：create_command_encoder -> encoder_begin_render_pass ...
 //    -> pass_end -> encoder_finish -> queue_submit -> present。
-//    queue_write_* 与 queue_submit 的先后顺序决定了数据可见性：
-//    在同一帧内先写入、后提交的数据对本次提交的绘制可见。
+//    queue_write_*（缓冲区/纹理）与 generate_mip_map 是**立即同步**操作，不是
+//    WebGPU 的 queue.writeBuffer/writeTexture 那种"排队到下次提交"的队列写入：
+//    后端录制一次性命令并提交，等待 fence 完成才返回。调用返回时数据已写入显存，
+//    对之后提交的任何帧可见，不要求与 queue_submit 同帧，也不要求先创建 encoder。
+//    （queue_ 前缀是历史命名，不代表帧批次语义；每个方法都注明其同步行为。）
 //    "一帧"由 present() 界定：一次 present 之间只接受一次 queue_submit
 //    （当前 Vulkan 后端用帧 fence + 单组 acquire/present semaphore，多提交
 //    在飞时的 semaphore 链属于后续工作）。
@@ -672,7 +675,15 @@ public:
 
     /// @brief 创建 GPU 缓冲区
     virtual GPUBufferHandle create_buffer(const GPUBufferDesc &desc) = 0;
-    /// @brief 写入 GPU 缓冲区（size 为字节数）
+    /// @brief 写入 GPU 缓冲区（size 为字节数）。
+    ///
+    /// **立即同步写入**：后端把数据拷到 staging、录制一次性命令缓冲并立即提交，等待
+    /// fence 完成后才返回。调用返回时 GPU 已执行完，写入内容对之后提交的任何帧可见，
+    /// 不要求调用方先创建 encoder，也不要求与 queue_submit 同帧。
+    /// 代价是每次调用一次 submit + fence 等待（可能阻塞 CPU），只适合创建期上传或
+    /// 低频更新；**不要**在每帧更新 UBO 的路径上调用（动态 UBO 需要 host-visible 内存
+    /// 或后续的按帧上传批次）。要求 buffer 创建时带 COPY_DST。
+    /// 注意：方法名的 queue_ 是历史命名，不代表帧批次语义（见文件头约定 3）。
     virtual void queue_write_buffer(GPUBufferHandle handle, uint64_t offset, const void *data, uint64_t size) = 0;
     virtual void destroy_buffer(GPUBufferHandle handle) = 0;
 
@@ -681,8 +692,23 @@ public:
     virtual TextureHandle create_texture(const TextureDescRefactor &desc) = 0;
     virtual TextureViewHandle create_texture_view(TextureHandle texture, const TextureViewDesc &desc) = 0;
     virtual SamplerHandle create_sampler(const SamplerDesc &desc) = 0;
+    /// @brief 上传纹理内容（立即同步写入，不是队列批次）。
+    ///
+    /// **立即同步写入**：staging 拷贝、布局切换与 vkCmdCopyBufferToImage 被录制进
+    /// 一次性命令缓冲并立即提交，等待 fence 完成后才返回。返回时 GPU 已执行完，
+    /// 已上传区域的内容对之后提交的任何帧可见；不要求先创建 encoder，也不要求与
+    /// queue_submit 同帧。
+    /// 布局：整张图 current_layout -> TransferDstOptimal -> resting_layout，返回后
+    /// current_layout 已更新为 resting_layout（未上传的 mip/层内容仍未定义）。
+    /// 代价与 queue_write_buffer 相同（每次 submit + fence 等待）；要求纹理创建时
+    /// 带 COPY_DST。
+    /// 注意：方法名的 queue_ 是历史命名，不代表帧批次语义（见文件头约定 3）。
     virtual void queue_write_texture(TextureHandle texture, const TextureWriteDesc &desc) = 0;
-    /// @brief 生成完整 mipmap 链
+    /// @brief 生成完整 mipmap 链。
+    ///
+    /// 同样是**立即同步**操作：逐级 blit 的命令一次性提交并等待 fence 完成，返回时
+    /// mip 链已生成。要求纹理创建时带 COPY_SRC | COPY_DST；格式不支持 blit 时只告警
+    /// 并跳过，mip 内容保持未定义。
     virtual void generate_mip_map(TextureHandle texture) = 0;
     virtual void destroy_texture(TextureHandle texture) = 0;
     virtual void destroy_texture_view(TextureViewHandle view) = 0;
