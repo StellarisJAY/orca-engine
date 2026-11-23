@@ -221,38 +221,6 @@ void RenderingServer::set_skybox_cubemap(RID skybox, uint32_t width, uint32_t he
     }
 }
 
-// RID RenderingServer::create_mesh()
-// {
-//     // 只分配存储；真正的 GPU surface 在顶点 + 索引都到齐后创建。
-//     return storage.meshes.create(MeshData{});
-// }
-
-// void RenderingServer::add_mesh_surface(
-//     RID mesh,
-//     RID material,
-//     const std::vector<Vector3> &vertices,
-//     const std::vector<Vector3> &normals,
-//     const std::vector<Vector2> &uvs,
-//     const std::vector<Vector3> &tangents,
-//     const std::vector<Vector3> &bitangents,
-//     const std::vector<uint32_t> &indices)
-// {
-//     MeshData *data = storage.meshes.get_data(mesh);
-//     if (data == nullptr)
-//         return;
-//     Surface surface;
-//     surface.material = material;
-//     surface.index_count = indices.size();
-//     surface.surface = RenderingDevice::get_singleton()->create_mesh_surface(
-//         vertices,
-//         normals,
-//         uvs,
-//         tangents,
-//         bitangents,
-//         indices);
-//     data->surfaces.push_back(surface);
-// }
-
 RID RenderingServer::create_instance()
 {
     InstanceData data;
@@ -304,108 +272,108 @@ RID RenderingServer::create_material()
     return storage.materials.create(MaterialData());
 }
 
-void RenderingServer::set_material_albedo(RID mat, const Color &color)
-{
-    if (auto material_data = storage.materials.get_data(mat))
-    {
-        material_data->albedo = color;
-    }
-}
+// void RenderingServer::set_material_albedo(RID mat, const Color &color)
+// {
+//     if (auto material_data = storage.materials.get_data(mat))
+//     {
+//         material_data->albedo = color;
+//     }
+// }
 
-void RenderingServer::set_material_roughness(RID mat, float roughness)
-{
-    if (auto material_data = storage.materials.get_data(mat))
-    {
-        material_data->roughness = roughness;
-    }
-}
+// void RenderingServer::set_material_roughness(RID mat, float roughness)
+// {
+//     if (auto material_data = storage.materials.get_data(mat))
+//     {
+//         material_data->roughness = roughness;
+//     }
+// }
 
-void RenderingServer::set_material_metallic(RID mat, float metallic)
-{
-    if (auto material_data = storage.materials.get_data(mat))
-    {
-        material_data->metallic = metallic;
-    }
-}
+// void RenderingServer::set_material_metallic(RID mat, float metallic)
+// {
+//     if (auto material_data = storage.materials.get_data(mat))
+//     {
+//         material_data->metallic = metallic;
+//     }
+// }
 
-void RenderingServer::set_material_texture(RID mat, uint8_t slot, RID texture)
-{
-    MaterialData *material_data = storage.materials.get_data(mat);
-    if (material_data == nullptr || slot > TextureSlotHeight)
-        return;
+// void RenderingServer::set_material_texture(RID mat, uint8_t slot, RID texture)
+// {
+//     MaterialData *material_data = storage.materials.get_data(mat);
+//     if (material_data == nullptr || slot > TextureSlotHeight)
+//         return;
 
-    RID *target = nullptr;
-    switch (slot)
-    {
-    case TextureSlotAlbedo:
-        target = &material_data->texture_albedo;
-        break;
-    case TextureSlotNormal:
-        target = &material_data->texture_normal;
-        break;
-    case TextureSlotRoughness:
-        target = &material_data->texture_roughness;
-        break;
-    case TextureSlotMetallic:
-        target = &material_data->texture_metallic;
-        break;
-    case TextureSlotAO:
-        target = &material_data->texture_ao;
-        break;
-    case TextureSlotHeight:
-        target = &material_data->texture_height;
-        break;
-    default:
-        return;
-    }
+//     RID *target = nullptr;
+//     switch (slot)
+//     {
+//     case TextureSlotAlbedo:
+//         target = &material_data->texture_albedo;
+//         break;
+//     case TextureSlotNormal:
+//         target = &material_data->texture_normal;
+//         break;
+//     case TextureSlotRoughness:
+//         target = &material_data->texture_roughness;
+//         break;
+//     case TextureSlotMetallic:
+//         target = &material_data->texture_metallic;
+//         break;
+//     case TextureSlotAO:
+//         target = &material_data->texture_ao;
+//         break;
+//     case TextureSlotHeight:
+//         target = &material_data->texture_height;
+//         break;
+//     default:
+//         return;
+//     }
 
-    const uint32_t bit = 1u << slot;
+//     const uint32_t bit = 1u << slot;
 
-    // texture == 0 表示显式清空该槽位。
-    if (texture == 0)
-    {
-        *target = 0;
-        material_data->texture_mask &= ~bit;
-        return;
-    }
+//     // texture == 0 表示显式清空该槽位。
+//     if (texture == 0)
+//     {
+//         *target = 0;
+//         material_data->texture_mask &= ~bit;
+//         return;
+//     }
 
-    TextureData *texture_data = storage.textures.get_data(texture);
-    if (texture_data == nullptr || texture_data->texture_2d == 0)
-    {
-        std::printf("[WARN] set_material_texture: invalid or empty texture RID %llu, slot %u cleared\n",
-                    static_cast<unsigned long long>(texture), static_cast<unsigned>(slot));
-        *target = 0;
-        material_data->texture_mask &= ~bit;
-        return;
-    }
+//     TextureData *texture_data = storage.textures.get_data(texture);
+//     if (texture_data == nullptr || texture_data->texture_2d == 0)
+//     {
+//         std::printf("[WARN] set_material_texture: invalid or empty texture RID %llu, slot %u cleared\n",
+//                     static_cast<unsigned long long>(texture), static_cast<unsigned>(slot));
+//         *target = 0;
+//         material_data->texture_mask &= ~bit;
+//         return;
+//     }
 
-    *target = texture;
-    material_data->texture_mask |= bit;
-}
+//     *target = texture;
+//     material_data->texture_mask |= bit;
+// }
 
-void RenderingServer::set_material_scales(RID mat, const Vector2 &uv_scale, float parallax_scale, bool parallax_flip)
-{
-    if (auto material_data = storage.materials.get_data(mat))
-    {
-        material_data->uv_scale = uv_scale;
-        material_data->parallax_flip = parallax_flip;
-        // 视差高度以 UV 为单位，超过 0.1 时一步会跨过多个纹素，
-        // 在 shader 里还会再 clamp 一次，这里提前收敛材质数据。
-        material_data->parallax_scale = std::clamp(parallax_scale, 0.0f, 0.1f);
-    }
-}
+// void RenderingServer::set_material_scales(RID mat, const Vector2 &uv_scale, float parallax_scale, bool parallax_flip)
+// {
+//     if (auto material_data = storage.materials.get_data(mat))
+//     {
+//         material_data->uv_scale = uv_scale;
+//         material_data->parallax_flip = parallax_flip;
+//         // 视差高度以 UV 为单位，超过 0.1 时一步会跨过多个纹素，
+//         // 在 shader 里还会再 clamp 一次，这里提前收敛材质数据。
+//         material_data->parallax_scale = std::clamp(parallax_scale, 0.0f, 0.1f);
+//     }
+// }
 
-void RenderingServer::set_material_normal_scale(RID mat, float normal_scale)
-{
-    if (auto material_data = storage.materials.get_data(mat))
-        material_data->normal_scale = normal_scale;
-}
+// void RenderingServer::set_material_normal_scale(RID mat, float normal_scale)
+// {
+//     if (auto material_data = storage.materials.get_data(mat))
+//         material_data->normal_scale = normal_scale;
+// }
 
-void RenderingServer::set_material_ao_strength(RID mat, float ao_strength)
-{
-    if (auto material_data = storage.materials.get_data(mat))
-        material_data->ao_strength = std::clamp(ao_strength, 0.0f, 1.0f);
-}
+// void RenderingServer::set_material_ao_strength(RID mat, float ao_strength)
+// {
+//     if (auto material_data = storage.materials.get_data(mat))
+//         material_data->ao_strength = std::clamp(ao_strength, 0.0f, 1.0f);
+// }
 
 RID RenderingServer::create_texture()
 {

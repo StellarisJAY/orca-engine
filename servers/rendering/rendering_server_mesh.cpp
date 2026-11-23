@@ -25,15 +25,15 @@ void RenderingServer::add_mesh_surface(
     const auto count_vert = vertices.size();
     if(count_vert == 0)
     {
-        throw std::exception("invalid mesh surface: empty vertices");
+        throw std::invalid_argument("invalid mesh surface: empty vertices");
     }
     if(normals.size() != count_vert || uvs.size() != count_vert || tangents.size() != count_vert || bitangents.size() != count_vert)
     {
-        throw std::exception("invalid mesh surface: vertices count mismatch");
+        throw std::invalid_argument("invalid mesh surface: vertices count mismatch");
     }
     if(indices.empty())
     {
-        throw std::exception("invalid mesh surface: empty indices");
+        throw std::invalid_argument("invalid mesh surface: empty indices");
     }
 
     const size_t element_per_vertex = 14;

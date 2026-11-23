@@ -138,6 +138,7 @@ public:
     /// @brief 创建材质资源
     /// @return RID
     RID create_material();
+    RID create_material_with_texture(const std::vector<RID>& texture_slots);
     /// @brief 设置基础色
     /// @param mat RID
     /// @param color 颜色
@@ -194,6 +195,16 @@ public:
         bool repeat,
         bool linear_filter,
         bool gen_mipmap);
+    
+    RID create_texture_2d(uint32_t width, uint32_t height, uint8_t channels, bool srgb);
+    RID create_texture_3d(uint32_t width, uint32_t height, uint8_t channels, bool srgb);
+    /// @brief 设置纹理采样
+    /// @param texture 
+    /// @param repeat 
+    /// @param linear_filter 
+    void set_texture_sampler(RID texture, bool repeat, bool linear_filter);
+    void write_texture(RID texture,uint8_t layer, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const std::vector<uint8_t> &pixels);
+    void free_texture(RID texture);
 
     // 相机资源
 
