@@ -211,6 +211,8 @@ public:
     void resize_swapchain(uint32_t width, uint32_t height) override;
     Format get_swapchain_format() const override;
     void get_swapchain_size(uint32_t &width, uint32_t &height) const override;
+    uint64_t get_max_uniform_buffer_range() const override;
+    uint64_t get_min_uniform_buffer_offset_alignment() const override;
     void present() override;
     void shutdown() override;
 

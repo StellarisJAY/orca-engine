@@ -223,7 +223,13 @@ void VkRenderingDevice::queue_write_buffer(GPUBufferHandle handle, uint64_t offs
 
     try
     {
-        void *mapped = staging_buffer.memory.mapMemory(0, static_cast<vk::DeviceSize>(size));
+        // 映射整块 staging 显存，而不是只映射本次写入的 size：
+        // VK_WHOLE_SIZE 的 flush 要求当前 mapping 的末尾要么按 nonCoherentAtomSize
+        // 对齐，要么正好等于 memory object 的末尾（VUID-VkMappedMemoryRange-size-01389）。
+        // 只映射 size 时（例如 336/461944 字节）末尾通常两者都不满足；映射整块后
+        // mapping 末尾就是 allocation 末尾，flush 恒合法。映射本身不拷贝数据，
+        // 额外开销只有 map/unmap。
+        void *mapped = staging_buffer.memory.mapMemory(0, VK_WHOLE_SIZE);
         std::memcpy(mapped, data, static_cast<size_t>(size));
         // 无论实际内存类型是否 coherent，刷一次都合法；非 coherent 时才真正生效。
         vk::MappedMemoryRange mapped_range;

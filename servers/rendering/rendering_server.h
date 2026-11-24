@@ -57,6 +57,14 @@ private:
     GPUBufferHandle frame_uniform_buffer;
     /// @brief 物体共享uniform buffer
     GPUBufferHandle objects_uniform_buffer;
+    /// @brief 每个物体 uniform 在 objects_uniform_buffer 中的跨度。
+    ///
+    /// 必须是 minUniformBufferOffsetAlignment 的整数倍（动态偏移要求），同时所有
+    /// 物体数据的总大小不能超过 maxUniformBufferRange（Vulkan 对 UNIFORM buffer
+    /// 的创建/绑定限制），因此跨度与容量都在 init() 里按设备能力计算。
+    uint32_t object_uniform_stride = 0;
+    /// @brief objects_uniform_buffer 能容纳的最大物体数量。
+    uint32_t max_object_count = 0;
     /// @brief 主渲染管线
     RenderPipelineHandle main_pipeline;
     ShaderHandle main_vertex_shader;

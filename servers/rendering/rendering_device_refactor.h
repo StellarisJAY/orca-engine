@@ -687,6 +687,15 @@ public:
     /// 不传附件 view 的 render pass 用它确定 viewport。
     virtual void get_swapchain_size(uint32_t &width, uint32_t &height) const = 0;
 
+    /// @brief 单个 uniform buffer 绑定的最大字节数（Vulkan: maxUniformBufferRange）。
+    ///
+    /// 大小超过该值的 buffer 不能带 UNIFORM 用途；动态 uniform buffer 的分段
+    /// 策略（元素跨度、最大元素数量）必须按它计算，不能直接硬编码。
+    virtual uint64_t get_max_uniform_buffer_range() const = 0;
+
+    /// @brief uniform buffer 动态偏移的对齐要求（Vulkan: minUniformBufferOffsetAlignment）。
+    virtual uint64_t get_min_uniform_buffer_offset_alignment() const = 0;
+
     /// @brief 呈现一帧并推进帧边界。Vulkan 后端在这里做 vkQueuePresentKHR。
     ///
     /// 本帧没有使用默认帧缓冲（没有 acquire 交换链图像）时只推进帧、不做呈现；
