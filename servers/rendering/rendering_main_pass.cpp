@@ -70,10 +70,12 @@ void RenderingServer::init_pass_scene()
     pipeline_desc.vertex.buffers.emplace_back(vertex_layout);
 
     pipeline_desc.fragment.module = main_fragment_shader;
-    pipeline_desc.fragment.targets.emplace_back(ColorTargetState{});
+    pipeline_desc.fragment.targets.emplace_back(ColorTargetState{
+        .format = rendering_device->get_swapchain_format(),
+    });
     // 图元属性
-    pipeline_desc.primitive.cull_mode = Primitive::CullMode::Back;
-    pipeline_desc.primitive.front_face = Primitive::FrontFace::CCW;
+    pipeline_desc.primitive.cull_mode = Primitive::CullMode::None;
+    pipeline_desc.primitive.front_face = Primitive::FrontFace::CW;
     pipeline_desc.primitive.topology = Primitive::Topology::TriangleList;
     // 深度测试
     pipeline_desc.depth_stencil.depth_compare = CompareFunction::LessEqual;
@@ -110,6 +112,7 @@ void RenderingServer::render_pass_scene(SceneData *scene_data, EnvironmentData *
     rendering_device->pass_set_pipeline(render_pass, main_pipeline);
     rendering_device->pass_set_viewport(render_pass, 0, 0, viewport_w, viewport_h, 0, 1.0);
 
+    uint32_t item_idx = 0;
     for (const auto &item : draw_items)
     {
         // TODO 材质绑定
@@ -118,9 +121,10 @@ void RenderingServer::render_pass_scene(SceneData *scene_data, EnvironmentData *
         item.transform.get_mat4(obj_uniforms.model);
         rendering_device->queue_write_buffer(objects_uniform_buffer, 0, &obj_uniforms, sizeof(ObjectUniforms));
         // group(0) frame uniforms， 物体uniforms
-        rendering_device->pass_set_bind_group(render_pass, 0, frame_obj_bind_group, {0}, 1);
+        const uint32_t dynamic_offset = item_idx * sizeof(ObjectUniforms);
+        rendering_device->pass_set_bind_group(render_pass, 0, frame_obj_bind_group, &dynamic_offset, 1);
         rendering_device->pass_set_vertex_buffer(render_pass, 0, item.vertex_buffer, 0);
-        rendering_device->pass_set_index_buffer(render_pass, item.vertex_buffer, 0, IndexFormat::Uint32);
+        rendering_device->pass_set_index_buffer(render_pass, item.index_buffer, 0, IndexFormat::Uint32);
         rendering_device->pass_draw_indexed(render_pass, item.index_count, 1, 0, 0);
     }
 

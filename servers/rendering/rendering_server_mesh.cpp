@@ -46,7 +46,7 @@ void RenderingServer::add_mesh_surface(
     
     // 展平vertex buffer
     std::vector<real_t> buffer_data;
-    buffer_data.resize(bytes_per_vertex * count_vert);
+    buffer_data.resize(element_per_vertex * count_vert);
 
     for(auto i = 0; i < count_vert; i++)
     {

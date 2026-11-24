@@ -16,7 +16,7 @@ layout(std140, set=0, binding=0) uniform FrameUniforms {
 } frame_uniforms;
 
 // 物体uniforms
-layout(std140, set=1, binding=0) uniform ObjectUniforms {
+layout(std140, set=0, binding=1) uniform ObjectUniforms {
     mat4 model;
 } object_uniforms;
 
@@ -29,8 +29,8 @@ layout(location = 0) out VertexOut {
 
 void main()
 {
-    vec4 world_position = object_uniforms.model * vec4(a_position, 0);
-    gl_Position = frame_uniforms.projection * frame_uniforms.view * object_uniforms.model * vec4(a_position, 0);
+    vec4 world_position = object_uniforms.model * vec4(a_position, 1);
+    gl_Position = frame_uniforms.projection * frame_uniforms.view * world_position;
     gl_Position.y = -gl_Position.y;
     vertex_out.world_position = world_position.xyz;
     vertex_out.normal = vec3(object_uniforms.model * vec4(a_normal, 0));

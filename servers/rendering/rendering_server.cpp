@@ -20,6 +20,7 @@ void RenderingServer::destroy_singletone()
 bool RenderingServer::init()
 {
     auto rendering_device = RenderingDeviceRefactor::get_singleton();
+    default_material = storage.materials.create(MaterialData{});
 
     // 创建帧全局uniform buffer
     GPUBufferDesc frame_uniforms_desc;
@@ -403,11 +404,11 @@ void RenderingServer::draw()
         std::printf("[WARN] draw: environment is missing\n");
         return;
     }
-    auto skybox_data = storage.skyboxes.get_data(env_data->skybox);
+    // auto skybox_data = storage.skyboxes.get_data(env_data->skybox);
 
     // 相机变换
-    real_t camera_transform[16];
-    camera_data->transform.affine_inverse().get_mat4(camera_transform);
+    real_t view[16];
+    camera_data->transform.affine_inverse().get_mat4(view);
     real_t *projection = camera_data->projection.data;
 
     draw_items.clear();
@@ -417,7 +418,6 @@ void RenderingServer::draw()
     {
         if (!instance->visible)
             continue;
-        // TODO 渲染surfaces
         MeshData *mesh_data = storage.meshes.get_data(instance->mesh);
         if (mesh_data == nullptr)
         {
@@ -427,20 +427,21 @@ void RenderingServer::draw()
 
         for (const Surface &surface : mesh_data->surfaces)
         {
-            MaterialData *material_data = storage.materials.get_data(surface.material);
+            // TODO 暂时不实现材质
+            // MaterialData *material_data = storage.materials.get_data(surface.material);
             // 没有绑定材质，用回退材质或默认材质
-            if (material_data == nullptr)
-            {
-                material_data = storage.materials.get_data(instance->override_material == 0 ? default_material : instance->override_material);
-            }
-            if (material_data == nullptr)
-            {
-                std::printf("[WARN] drawing surface without a valid material\n");
-                continue;
-            }
+            // if (material_data == nullptr)
+            // {
+            //     material_data = storage.materials.get_data(instance->override_material == 0 ? default_material : instance->override_material);
+            // }
+            // if (material_data == nullptr)
+            // {
+            //     std::printf("[WARN] drawing surface without a valid material\n");
+            //     continue;
+            // }
             DrawItem item;
             item.surface = surface.surface;
-            item.material = material_data;
+            // item.material = material_data;
             item.transform = instance->transfrom;
             item.index_count = surface.index_count;
             item.vertex_buffer = surface.vertex_buffer;
@@ -452,21 +453,39 @@ void RenderingServer::draw()
     // 写入frame uniform buffer
     FrameUniforms frame_uniforms;
     // view变换
-    std::copy(frame_uniforms.view, frame_uniforms.view + 16, camera_transform);
+    memcpy(frame_uniforms.view, view, 16);
     // projection变换
-    std::copy(frame_uniforms.projection, frame_uniforms.projection + 16, camera_data->projection.data);
+    memcpy(frame_uniforms.projection, projection, 16);
     // 相机世界坐标
-    std::copy(frame_uniforms.camera_position, frame_uniforms.camera_position + 3, camera_data->transform.origin.coords);
-    // 环境光颜色和强度
-    real_t ambient_color[3];
-    env_data->ambient_color.normalize_rgb(ambient_color);
-    std::copy(frame_uniforms.ambient_color_strength, frame_uniforms.ambient_color_strength + 3, ambient_color);
-    std::fill(frame_uniforms.ambient_color_strength + 3, frame_uniforms.ambient_color_strength + 4, env_data->ambient_strength);
+    frame_uniforms.camera_position[0] = camera_data->transform.origin.x;
+    frame_uniforms.camera_position[1] = camera_data->transform.origin.y;
+    frame_uniforms.camera_position[2] = camera_data->transform.origin.z;
+    frame_uniforms.camera_position[3] = 1;
+    // TODO 环境光颜色和强度
+    // real_t ambient_color[3];
+    // env_data->ambient_color.normalize_rgb(ambient_color);
+    // memcpy(frame_uniforms.ambient_color_strength, ambient_color, 3);
+    // frame_uniforms.ambient_color_strength[3] = env_data->ambient_strength;
     // TODO 灯光uniforms
 
-    // 写入uniform buffer
+    // 写入frame uniform buffer
     rendering_device->queue_write_buffer(frame_uniform_buffer, 0, &frame_uniforms, sizeof(FrameUniforms));
 
+    // 写入object uniform buffer
+    if(!draw_items.empty())
+    {
+        std::vector<ObjectUniforms> object_buffer;
+        object_buffer.resize(draw_items.size());
+        uint32_t index = 0;
+        for(const auto &item : draw_items)
+        {
+            real_t obj_transform[16];
+            item.transform.get_mat4(obj_transform);
+            memcpy(object_buffer[index].model, obj_transform, 16);
+            index++;
+        }
+        rendering_device->queue_write_buffer(objects_uniform_buffer, 0, object_buffer.data(), sizeof(ObjectUniforms) * draw_items.size());
+    }
 
     encoder = rendering_device->create_command_encoder();
     render_pass_scene(scene_data, env_data, camera_data);

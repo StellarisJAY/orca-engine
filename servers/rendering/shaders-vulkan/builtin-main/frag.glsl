@@ -29,6 +29,9 @@ layout(location=0) out vec4 frag_color;
 
 void main()
 {
+    vec2 uv = vertex_out.uv;
+    vec3 normal = vertex_out.normal;
+    vec3 world_position = vertex_out.world_position;
     // TODO fragment shader
     frag_color = vec4(1.0,1.0,1.0,1.0);
 }
