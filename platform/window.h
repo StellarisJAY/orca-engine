@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-#include "rendering_device.h" // RenderingDriverType / RenderingWindowInfo
+#include "rendering_device_refactor.h" // RenderingDriverType / RenderingWindowInfo
 // 键位与鼠标枚举复用 core/input 的引擎定义，避免平台层和输入层出现两套枚举。
 #include "keyboard.h"      // KeyboardKeyCode
 #include "mouse_button.h"  // MouseButton

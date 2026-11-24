@@ -1,5 +1,4 @@
 #include "rendering_device_refactor.h"
-#include "rendering_device.h"
 #include "shader_loader.h"
 #include "os/memory.h"
 #include "window.h"

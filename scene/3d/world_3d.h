@@ -28,8 +28,6 @@ public:
             ensure_skybox();
             break;
         case NOTIFICATION_EXIT_TREE:
-            if (environment->get_skybox().is_valid())
-                rendering_server->free(environment->get_skybox()->get_rid());
             rendering_server->free(environment->get_rid());
             environment = 0;
             rendering_server->free(scene);

@@ -34,12 +34,6 @@ public:
             instance = RenderingServer::get_singleton()->create_instance();
             RenderingServer::get_singleton()->set_instance_visible(instance, true);
             RenderingServer::get_singleton()->set_instance_transform(instance, get_global_transform());
-            // 如果MeshInstance有override材质，设置instance的材质，表面没有材质时回退到instance override 材质
-            if(override_material.is_valid())
-            {
-                ensure_material(override_material);
-                rendering_server->set_instance_override_material(instance, override_material->get_rid());
-            }
             // 保证instance的所有表面都已传递到渲染端
             upload_if_needed();
             if (mesh.is_valid())

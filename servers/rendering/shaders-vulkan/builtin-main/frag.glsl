@@ -17,13 +17,15 @@ layout(std140, set=1, binding=0) uniform MaterialUniform {
     int parallax_flip;
 } material_uniform;
 
-layout(std140, set=1, binding=1) uniform sampler material_sampler;
-layout(std140, set=1, binding=2) uniform texture2D texture_albedo;
-layout(std140, set=1, binding=3) uniform texture2D texture_normal;
-layout(std140, set=1, binding=4) uniform texture2D texture_roughness;
-layout(std140, set=1, binding=5) uniform texture2D texture_metallic;
-layout(std140, set=1, binding=6) uniform texture2D texture_ao;
-layout(std140, set=1, binding=7) uniform texture2D texture_height;
+layout(set=1, binding=1) uniform sampler material_sampler;
+layout(set=1, binding=2) uniform texture2D texture_albedo;
+layout(set=1, binding=3) uniform texture2D texture_normal;
+layout(set=1, binding=4) uniform texture2D texture_roughness;
+layout(set=1, binding=5) uniform texture2D texture_metallic;
+layout(set=1, binding=6) uniform texture2D texture_ao;
+layout(set=1, binding=7) uniform texture2D texture_height;
+
+layout(location=0) out vec4 frag_color;
 
 void main()
 {

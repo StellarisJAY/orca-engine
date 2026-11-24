@@ -21,8 +21,8 @@ option(ORCA_PLATFORM_SDL3 "Use SDL3 for window and input" OFF)
 # ORCA_RENDERER_OPENGL 只编译旧 RenderingDevice 的 OpenGL 实现（RenderingServer 仍在使用）；
 # 新 RHI（RenderingDeviceRefactor）的 OpenGL 适配层已移除，只保留 Vulkan 实现。
 # 可以同时编译两个后端：旧设备走 OpenGL，新 RHI 走 Vulkan，运行时按接口分别选择。
-option(ORCA_RENDERER_VULKAN "Enable the Vulkan rendering backend" OFF)
-option(ORCA_RENDERER_OPENGL "Enable the legacy OpenGL rendering backend" ON)
+option(ORCA_RENDERER_VULKAN "Enable the Vulkan rendering backend" ON)
+option(ORCA_RENDERER_OPENGL "Enable the legacy OpenGL rendering backend" OFF)
 
 if(ORCA_RENDERER_VULKAN)
     find_package(Vulkan REQUIRED)

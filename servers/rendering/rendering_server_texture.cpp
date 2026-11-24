@@ -18,7 +18,7 @@ namespace
         }
     }
 
-    TextureData &create_texture_internal(uint32_t width, uint32_t height, uint8_t channels, bool srgb, TextureDimension dim)
+    TextureData create_texture_internal(uint32_t width, uint32_t height, uint8_t channels, bool srgb, TextureDimension dim)
     {
         if (width == 0 || height == 0 || channels == 0 || channels > 4)
         {
@@ -100,7 +100,7 @@ void RenderingServer::set_texture_sampler(RID texture, bool repeat, bool linear_
     texture_data->repeat = repeat;
 }
 
-void RenderingServer::write_texture(RID texture, uint8_t layer = 0, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const std::vector<uint8_t> &pixels)
+void RenderingServer::write_texture(RID texture, uint8_t layer, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const std::vector<uint8_t> &pixels)
 {
     const auto texture_data = storage.textures.get_data(texture);
     if (texture_data == nullptr)

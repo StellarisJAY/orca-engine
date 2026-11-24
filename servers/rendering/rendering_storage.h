@@ -41,7 +41,8 @@ struct Surface
     uint32_t surface = 0; // device surface 句柄（OpenGL: VAO）
     uint32_t index_count = 0;
     RID material = 0;
-    GPUBufferHandle handle;
+    GPUBufferHandle vertex_buffer;
+    GPUBufferHandle index_buffer;
 };
 
 struct MeshData
@@ -138,6 +139,17 @@ struct LightData
 struct ShaderData
 {
     uint64_t shader_program; // OpenGL create program
+};
+
+/// @brief 绘制的instance数据
+struct DrawItem
+{
+    Transform3D transform;
+    uint32_t surface = 0;
+    uint32_t index_count = 0;
+    GPUBufferHandle vertex_buffer;
+    GPUBufferHandle index_buffer;
+    MaterialData *material = 0;
 };
 
 class RenderingStorage

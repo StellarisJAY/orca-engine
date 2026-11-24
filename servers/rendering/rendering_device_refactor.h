@@ -6,7 +6,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "rendering_device.h"
 
 // =============================================================================
 // 约定（所有后端必须遵守）
@@ -47,6 +46,39 @@
 //    Vulkan 按 binding 编号创建 descriptor set，忽略该字段；填写它便于把描述
 //    与 shader 里的 uniform 名对照排查。
 // =============================================================================
+
+// 图形后端类型。RenderingDevice 只依赖这个枚举，不依赖任何具体后端 API 的类型。
+enum class RenderingDriverType
+{
+    Vulkan,
+    OpenGL,
+};
+
+// 平台层向图形后端传递的原生窗口/上下文信息。
+//
+// 这里所有字段都是后端无关的（void* / uint32_t / 回调），具体含义由平台层与后端约定：
+//   Win32: window = HWND, instance = HINSTANCE, context = HGLRC
+//   X11:   window = xid,  display  = Display*
+// 平台层因此不需要包含任何 Vulkan/OpenGL 头文件，也不需要认识 RenderingDevice 的具体实现；
+// 反过来 RenderingDevice 也不需要认识 GLFW/SDL/Win32。
+struct RenderingWindowInfo
+{
+    void *window = nullptr;   // 原生窗口句柄
+    void *display = nullptr;  // 原生显示/连接
+    void *instance = nullptr; // 原生实例/模块句柄
+    void *context = nullptr;  // 已创建的图形上下文（OpenGL: HGLRC/GLXContext；Vulkan 为空）
+    uint32_t width = 0;       // framebuffer 宽
+    uint32_t height = 0;      // framebuffer 高
+
+    // 按名称加载后端入口点。OpenGL 后端依赖它动态加载 GL 函数；Vulkan 后端可忽略。
+    std::function<void *(const char *)> get_proc_address;
+    // 为 Vulkan 创建呈现表面。参数为后端原生 instance（VkInstance），
+    // 输出为 VkSurfaceKHR（以 uint64_t 传输，避免在公共头里暴露 Vulkan 类型）。
+    std::function<bool(void *native_instance, uint64_t &out_surface)> create_vulkan_surface;
+    // 平台声明的 Vulkan 实例扩展名（例如 GLFW 的 glfwGetRequiredInstanceExtensions）。
+    std::vector<const char *> vulkan_instance_extensions;
+};
+
 
 // =============================================================================
 // 句柄

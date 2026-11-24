@@ -3,7 +3,6 @@
 
 RID RenderingServer::create_mesh()
 {
-    // 只分配存储；真正的 GPU surface 在顶点 + 索引都到齐后创建。
     return storage.meshes.create(MeshData{});
 }
 
@@ -74,10 +73,19 @@ void RenderingServer::add_mesh_surface(
     }
 
     rendering_device->queue_write_buffer(vertex_buffer, 0, buffer_data.data(), bytes_per_vertex * count_vert);
-    
+
+    // 创建index buffer
+    GPUBufferDesc index_buffer_desc {
+        .size = sizeof(uint32_t) * indices.size(),
+        .usage = GPUBufferUsage::INDEX | GPUBufferUsage::COPY_DST,
+    };
+    const auto index_buffer = rendering_device->create_buffer(index_buffer_desc);
+    rendering_device->queue_write_buffer(index_buffer, 0, indices.data(), sizeof(uint32_t) * indices.size());
+
     Surface surface;
     surface.material = material;
     surface.index_count = indices.size();
-    surface.handle = vertex_buffer;
+    surface.vertex_buffer = vertex_buffer;
+    surface.index_buffer = index_buffer;
     data->surfaces.emplace_back(surface);
 }

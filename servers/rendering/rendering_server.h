@@ -59,6 +59,12 @@ private:
     GPUBufferHandle objects_uniform_buffer;
     /// @brief 主渲染管线
     RenderPipelineHandle main_pipeline;
+    ShaderHandle main_vertex_shader;
+    ShaderHandle main_fragment_shader;
+
+    /// @brief 帧全局和物体uniform buffer绑定组
+    BindGroupHandle frame_obj_bind_group;
+
     /// @brief 物体和帧全局信息的bindGroup布局
     BindGroupLayoutHandle frame_objects_layout;
     /// @brief 主渲染管线的材质bindGroup布局
@@ -267,7 +273,6 @@ public:
     void draw(); // 渲染指令
 
 private:
-    void bind_textures(MaterialData *material, uint64_t program);
     void init_pass_scene();
     void render_pass_scene(SceneData *scene_data, EnvironmentData *env_data, CameraData *camera_data);
     void render_pass_depth_map(const LightData &light);

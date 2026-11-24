@@ -29,10 +29,10 @@ layout(location = 0) out VertexOut {
 
 void main()
 {
-    vec4 world_position = model * vec4(a_position, 0);
-    gl_Position = projection * view * model * vec4(a_position, 0);
+    vec4 world_position = object_uniforms.model * vec4(a_position, 0);
+    gl_Position = frame_uniforms.projection * frame_uniforms.view * object_uniforms.model * vec4(a_position, 0);
     gl_Position.y = -gl_Position.y;
     vertex_out.world_position = world_position.xyz;
-    vertex_out.normal = vec3(model * vec4(a_normal, 0));
+    vertex_out.normal = vec3(object_uniforms.model * vec4(a_normal, 0));
     vertex_out.uv = a_uv;
 }

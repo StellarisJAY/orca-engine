@@ -1,5 +1,4 @@
 #include "rendering_server.h"
-#include "rendering_device.h"
 #include "rendering_uniforms.h"
 #include "os/memory.h"
 #include "shader_loader.h"
@@ -33,7 +32,8 @@ bool RenderingServer::init()
     GPUBufferDesc objects_uniforms_desc;
     objects_uniforms_desc.label = "objects_uniforms";
     // TODO 最大物体数量
-    objects_uniforms_desc.size = sizeof(ObjectUniforms) * 1024;
+    constexpr uint32_t MAX_OBJECTS = 1024;
+    objects_uniforms_desc.size = sizeof(ObjectUniforms) * MAX_OBJECTS;
     objects_uniforms_desc.usage = GPUBufferUsage::COPY_DST | GPUBufferUsage::UNIFORM;
     objects_uniform_buffer = rendering_device->create_buffer(objects_uniforms_desc);
 
@@ -73,10 +73,10 @@ bool RenderingServer::init()
         .type = BindingType::Sampler,
     });
     // binding(2~8) 材质纹理槽
-    for (auto slot = 0; slot < 6; slot++)
+    for (uint32_t slot = 0; slot < 6; slot++)
     {
         group1_desc.entries.emplace_back(BindGroupLayoutEntry{
-            .binding = 2 + slot,
+            .binding = slot + 2,
             .visibility = ShaderStage::FRAGMENT,
             .type = BindingType::Texture2D,
         });
@@ -85,6 +85,32 @@ bool RenderingServer::init()
 
     // TODO
     // bindGroup layout：灯光
+
+    // 物体uniform buffer绑定组
+    BindGroupDesc frame_obj_bg_desc;
+    frame_obj_bg_desc.label = "objects";
+    frame_obj_bg_desc.layout = frame_objects_layout;
+    frame_obj_bg_desc.entries.emplace_back(BindGroupEntry{
+        .binding = 0,
+        .resource = BindingResource{
+            .type = BindingType::UniformBuffer,
+            .buffer = frame_uniform_buffer,
+            .size = sizeof(FrameUniforms),
+        }
+    });
+    frame_obj_bg_desc.entries.emplace_back(BindGroupEntry{
+        .binding = 1,
+        .resource = BindingResource{
+            .type = BindingType::UniformBuffer,
+            .buffer = objects_uniform_buffer,
+            .size = sizeof(ObjectUniforms) * MAX_OBJECTS,
+        }
+    });
+    frame_obj_bind_group = rendering_device->create_bind_group(frame_obj_bg_desc);
+
+    init_pass_scene();
+
+    return true;
 }
 
 RID RenderingServer::create_scene()
@@ -355,8 +381,7 @@ void RenderingServer::sync()
 
 void RenderingServer::draw()
 {
-    RenderingDevice::get_singleton()->clear();
-    auto rendering_device = RenderingDevice::get_singleton();
+    auto rendering_device = RenderingDeviceRefactor::get_singleton();
 
     // 数据准备 ---------------------------------------------------------------------------------
 
@@ -418,14 +443,36 @@ void RenderingServer::draw()
             item.material = material_data;
             item.transform = instance->transfrom;
             item.index_count = surface.index_count;
+            item.vertex_buffer = surface.vertex_buffer;
+            item.index_buffer = surface.index_buffer;
             draw_items.push_back(item);
         }
     }
-}
 
-void RenderingServer::bind_textures(MaterialData *material, uint64_t program)
-{
-    
+    // 写入frame uniform buffer
+    FrameUniforms frame_uniforms;
+    // view变换
+    std::copy(frame_uniforms.view, frame_uniforms.view + 16, camera_transform);
+    // projection变换
+    std::copy(frame_uniforms.projection, frame_uniforms.projection + 16, camera_data->projection.data);
+    // 相机世界坐标
+    std::copy(frame_uniforms.camera_position, frame_uniforms.camera_position + 3, camera_data->transform.origin.coords);
+    // 环境光颜色和强度
+    real_t ambient_color[3];
+    env_data->ambient_color.normalize_rgb(ambient_color);
+    std::copy(frame_uniforms.ambient_color_strength, frame_uniforms.ambient_color_strength + 3, ambient_color);
+    std::fill(frame_uniforms.ambient_color_strength + 3, frame_uniforms.ambient_color_strength + 4, env_data->ambient_strength);
+    // TODO 灯光uniforms
+
+    // 写入uniform buffer
+    rendering_device->queue_write_buffer(frame_uniform_buffer, 0, &frame_uniforms, sizeof(FrameUniforms));
+
+
+    encoder = rendering_device->create_command_encoder();
+    render_pass_scene(scene_data, env_data, camera_data);
+    const auto command_buffer = rendering_device->encoder_finish(encoder);
+    rendering_device->queue_submit(command_buffer);
+    rendering_device->present();
 }
 
 void RenderingServer::render_pass_depth_map(const LightData &light)

@@ -74,26 +74,29 @@ RID RenderingServer::create_material_with_texture(const std::vector<RID> &textur
     desc.entries.emplace_back(sampler_entry);
 
     // binding(2~7) texture
-    uint8_t slot = -1;
+    uint32_t slot = 0;
     material_data.texture_views.resize(6);
     for (const RID texture : texture_slots)
     {
-        slot++;
         const auto texture_data = storage.textures.get_data(texture);
         if (texture_data == nullptr || !texture_data->handle.is_valid())
+        {
+            slot++;
             continue;
+        }
         // 创建view
         const auto texture_view = rendering_device->create_texture_view(texture_data->handle, TextureViewDesc{});
         material_data.texture_views[slot] = texture_view;
 
         BindGroupEntry texture_entry{
-            .binding = 2 + slot,
+            .binding = slot + 2,
             .resource = BindingResource{
                 .type = BindingType::Texture2D,
                 .texture_view = texture_view,
             },
         };
         desc.entries.emplace_back(texture_entry);
+        slot++;
     }
 
     return storage.materials.create(MaterialData{});
