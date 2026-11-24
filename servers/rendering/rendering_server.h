@@ -48,6 +48,27 @@ private:
     RID current_camera = 0;
     RID current_scene = 0;
 
+    // 重构版
+
+    /// @brief 指令录制
+    CommandEncoderHandle encoder;
+
+    /// @brief 帧全局uniform buffer
+    GPUBufferHandle frame_uniform_buffer;
+    /// @brief 物体共享uniform buffer
+    GPUBufferHandle objects_uniform_buffer;
+    /// @brief 主渲染管线
+    RenderPipelineHandle main_pipeline;
+    ShaderHandle main_vertex_shader;
+    ShaderHandle main_fragment_shader;
+
+    /// @brief 帧全局和物体uniform buffer绑定组
+    BindGroupHandle frame_obj_bind_group;
+
+    /// @brief 物体和帧全局信息的bindGroup布局
+    BindGroupLayoutHandle frame_objects_layout;
+    /// @brief 主渲染管线的材质bindGroup布局
+    BindGroupLayoutHandle material_layout;
 public:
     static void create_singleton();
     static void destroy_singletone();
@@ -138,6 +159,7 @@ public:
     /// @brief 创建材质资源
     /// @return RID
     RID create_material();
+    RID create_material_with_texture(const std::vector<RID>& texture_slots);
     /// @brief 设置基础色
     /// @param mat RID
     /// @param color 颜色
@@ -194,6 +216,16 @@ public:
         bool repeat,
         bool linear_filter,
         bool gen_mipmap);
+    
+    RID create_texture_2d(uint32_t width, uint32_t height, uint8_t channels, bool srgb);
+    RID create_texture_3d(uint32_t width, uint32_t height, uint8_t channels, bool srgb);
+    /// @brief 设置纹理采样
+    /// @param texture 
+    /// @param repeat 
+    /// @param linear_filter 
+    void set_texture_sampler(RID texture, bool repeat, bool linear_filter);
+    void write_texture(RID texture,uint8_t layer, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const std::vector<uint8_t> &pixels);
+    void free_texture(RID texture);
 
     // 相机资源
 
@@ -241,13 +273,7 @@ public:
     void draw(); // 渲染指令
 
 private:
-    void bind_textures(MaterialData *material, uint64_t program);
-    void create_default_textures();
-    /// @brief 创建天空盒使用的默认立方体（只有 vertices 与 indices）
-    /// @return 创建成功返回 true
-    bool create_builtin_skybox_cube();
-
-    void create_depth_map_pass();
+    void init_pass_scene();
     void render_pass_scene(SceneData *scene_data, EnvironmentData *env_data, CameraData *camera_data);
     void render_pass_depth_map(const LightData &light);
     void render_pass_skybox(SkyboxData *skybox_data, real_t *camera_transform, real_t *projection);

@@ -6,6 +6,7 @@
 #include "math/vector2.h"
 #include "math/vector3.h"
 #include "math/color.h"
+#include "rendering_device_refactor.h"
 #include <cstdint>
 #include <vector>
 
@@ -40,6 +41,8 @@ struct Surface
     uint32_t surface = 0; // device surface 句柄（OpenGL: VAO）
     uint32_t index_count = 0;
     RID material = 0;
+    GPUBufferHandle vertex_buffer;
+    GPUBufferHandle index_buffer;
 };
 
 struct MeshData
@@ -69,17 +72,32 @@ struct MaterialData
     RID texture_metallic = 0;
     RID texture_ao = 0;
     RID texture_height = 0;
+
+    BindGroupHandle bind_group;
+    uint64_t bind_group_key[6] = {0};
+    bool bind_group_dirty = false;
+
+    GPUBufferHandle uniform_buffer;
+    SamplerHandle sampler;
+    std::vector<TextureViewHandle> texture_views;
 };
 
 struct TextureData
 {
     uint32_t texture_2d = 0; // device层句柄
+
     uint32_t width = 0;
     uint32_t height = 0;
+    uint8_t channels = 4;
+    uint8_t layers = 1; // 区分2D和3D贴图的层数
     bool srgb = true;
     bool repeat = true;
     bool linear_filter = true;
     bool mipmap = true;
+    TextureHandle handle;
+    Format format;
+    /// @brief texture上绑定的sampler
+    SamplerHandle sampler;
 };
 
 struct CameraData
@@ -121,6 +139,17 @@ struct LightData
 struct ShaderData
 {
     uint64_t shader_program; // OpenGL create program
+};
+
+/// @brief 绘制的instance数据
+struct DrawItem
+{
+    Transform3D transform;
+    uint32_t surface = 0;
+    uint32_t index_count = 0;
+    GPUBufferHandle vertex_buffer;
+    GPUBufferHandle index_buffer;
+    MaterialData *material = 0;
 };
 
 class RenderingStorage

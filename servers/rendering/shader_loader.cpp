@@ -7,6 +7,8 @@
 namespace
 {
     constexpr const char *RUNTIME_SHADER_ROOT = "res://shaders/";
+    // Vulkan 变体由 CMake 的 orca-shader-spirv 目标编译到构建目录，没有源码树回退。
+    constexpr const char *RUNTIME_SPIRV_ROOT = "res://shaders-vulkan/";
 
     std::string join_path(const std::string &root, const std::string &name, const std::string &file)
     {
@@ -80,6 +82,33 @@ ShaderSource ShaderLoader::load(const std::string &shader_name)
     if (!source.is_valid())
     {
         std::printf("[ERROR] failed to load shader '%s'\n", shader_name.c_str());
+    }
+    return source;
+}
+
+std::vector<uint8_t> ShaderLoader::resolve_and_read_binary(const std::string &shader_name, const std::string &file_name)
+{
+    const std::string path = join_path(RUNTIME_SPIRV_ROOT, shader_name, file_name);
+    std::vector<uint8_t> bytes;
+    if (!FileAccess::read_file_bytes(path, bytes))
+    {
+        std::printf("[ERROR] SPIR-V shader file not found: %s\n", path.c_str());
+        return {};
+    }
+    return bytes;
+}
+
+ShaderBinarySource ShaderLoader::load_spirv(const std::string &shader_name)
+{
+    ShaderBinarySource source;
+    source.vertex = resolve_and_read_binary(shader_name, "vert.spv");
+    source.fragment = resolve_and_read_binary(shader_name, "frag.spv");
+
+    if (!source.is_valid())
+    {
+        std::printf("[ERROR] failed to load SPIR-V shader '%s'; build the project (orca-shader-spirv) "
+                    "and run from the build directory\n",
+                    shader_name.c_str());
     }
     return source;
 }

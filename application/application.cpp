@@ -1,6 +1,6 @@
 #include "application.h"
 #include "window.h"
-#include "rendering_device.h"
+#include "rendering_device_refactor.h"
 #include "rendering_server.h"
 #include "os/memory.h"
 #include "os/time.h"
@@ -14,8 +14,13 @@ bool Application::init(const ApplicationInitDesc &desc)
     ResourceLoader::create_singleton();
     ResourceCache::create_singleton();
     // 创建rendering device
-    RenderingDevice::create_singleton();
-    auto device = RenderingDevice::get_singleton();
+    RenderingDeviceRefactor::create_singleton();
+    auto device = RenderingDeviceRefactor::get_singleton();
+    if (!device)
+    {
+        std::fprintf(stderr, "[ERROR] rendering device is not available in this build\n");
+        return false;
+    }
 
     WindowDesc d;
     d.fullscreen = desc.fullscreen;
@@ -120,7 +125,7 @@ void Application::shutdown()
     Input::destroy_singleton();
 
     RenderingServer::destroy_singletone();
-    RenderingDevice::destroy_singleton();
+    RenderingDeviceRefactor::destroy_singleton();
     ResourceLoader::destroy_singleton();
     ResourceCache::destroy_singleton();
     window->shutdown();
