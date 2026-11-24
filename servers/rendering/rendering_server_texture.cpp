@@ -49,6 +49,25 @@ namespace
     }
 };
 
+RID RenderingServer::create_texture()
+{
+    return storage.textures.create(TextureData());
+}
+
+void RenderingServer::set_texture_image(
+    RID texture,
+    uint32_t width,
+    uint32_t height,
+    uint8_t channels,
+    const std::vector<uint8_t> &pixels,
+    bool srgb,
+    bool repeat,
+    bool linear_filter,
+    bool gen_mipmap)
+{
+    
+}
+
 RID RenderingServer::create_texture_2d(uint32_t width, uint32_t height, uint8_t channels, bool srgb)
 {
     return storage.textures.create(create_texture_internal(width, height, channels, srgb, TextureDimension::Texture2D));

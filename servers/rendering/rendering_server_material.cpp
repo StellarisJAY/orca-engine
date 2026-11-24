@@ -34,6 +34,11 @@ namespace
     }
 };
 
+RID RenderingServer::create_material()
+{
+    return storage.materials.create(MaterialData());
+}
+
 RID RenderingServer::create_material_with_texture(const std::vector<RID> &texture_slots)
 {
     auto rendering_device = RenderingDeviceRefactor::get_singleton();

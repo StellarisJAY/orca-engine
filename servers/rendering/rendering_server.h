@@ -50,9 +50,19 @@ private:
 
     // 重构版
 
+    /// @brief 指令录制
+    CommandEncoderHandle encoder;
+
     /// @brief 帧全局uniform buffer
     GPUBufferHandle frame_uniform_buffer;
-
+    /// @brief 物体共享uniform buffer
+    GPUBufferHandle objects_uniform_buffer;
+    /// @brief 主渲染管线
+    RenderPipelineHandle main_pipeline;
+    /// @brief 物体和帧全局信息的bindGroup布局
+    BindGroupLayoutHandle frame_objects_layout;
+    /// @brief 主渲染管线的材质bindGroup布局
+    BindGroupLayoutHandle material_layout;
 public:
     static void create_singleton();
     static void destroy_singletone();
@@ -258,12 +268,7 @@ public:
 
 private:
     void bind_textures(MaterialData *material, uint64_t program);
-    void create_default_textures();
-    /// @brief 创建天空盒使用的默认立方体（只有 vertices 与 indices）
-    /// @return 创建成功返回 true
-    bool create_builtin_skybox_cube();
-
-    void create_depth_map_pass();
+    void init_pass_scene();
     void render_pass_scene(SceneData *scene_data, EnvironmentData *env_data, CameraData *camera_data);
     void render_pass_depth_map(const LightData &light);
     void render_pass_skybox(SkyboxData *skybox_data, real_t *camera_transform, real_t *projection);
