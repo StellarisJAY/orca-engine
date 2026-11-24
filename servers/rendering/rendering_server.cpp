@@ -451,11 +451,11 @@ void RenderingServer::draw()
     }
 
     // 写入frame uniform buffer
-    FrameUniforms frame_uniforms;
+    FrameUniforms frame_uniforms{};
     // view变换
-    memcpy(frame_uniforms.view, view, 16);
+    memcpy(frame_uniforms.view, view, sizeof(view));
     // projection变换
-    memcpy(frame_uniforms.projection, projection, 16);
+    memcpy(frame_uniforms.projection, projection, 16 * sizeof(real_t));
     // 相机世界坐标
     frame_uniforms.camera_position[0] = camera_data->transform.origin.x;
     frame_uniforms.camera_position[1] = camera_data->transform.origin.y;
@@ -481,7 +481,7 @@ void RenderingServer::draw()
         {
             real_t obj_transform[16];
             item.transform.get_mat4(obj_transform);
-            memcpy(object_buffer[index].model, obj_transform, 16);
+            memcpy(object_buffer[index].model, obj_transform, sizeof(obj_transform));
             index++;
         }
         rendering_device->queue_write_buffer(objects_uniform_buffer, 0, object_buffer.data(), sizeof(ObjectUniforms) * draw_items.size());
