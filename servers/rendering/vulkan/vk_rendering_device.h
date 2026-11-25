@@ -210,6 +210,7 @@ public:
     bool init_swapchain() override;
     void resize_swapchain(uint32_t width, uint32_t height) override;
     Format get_swapchain_format() const override;
+    Format get_swapchain_depth_format() const override;
     void get_swapchain_size(uint32_t &width, uint32_t &height) const override;
     void present() override;
     void shutdown() override;

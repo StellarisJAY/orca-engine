@@ -65,6 +65,17 @@ Format VkRenderingDevice::get_swapchain_format() const
     return format;
 }
 
+Format VkRenderingDevice::get_swapchain_depth_format() const
+{
+    Format format = Format::Undefined;
+    if (!vk_format_from_vulkan(swapchain_depth_format, format))
+    {
+        std::printf("[WARN] Vulkan swapchain depth format is not representable by interface Format\n");
+        return Format::Undefined;
+    }
+    return format;
+}
+
 void VkRenderingDevice::get_swapchain_size(uint32_t &width, uint32_t &height) const
 {
     if (swapchain_image_extent.width != 0 && swapchain_image_extent.height != 0)

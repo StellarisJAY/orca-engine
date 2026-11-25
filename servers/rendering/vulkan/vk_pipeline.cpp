@@ -15,6 +15,12 @@ namespace
     {
         switch (orca_topology)
         {
+        case Primitive::Topology::PointList:
+            return vk::PrimitiveTopology::ePointList;
+        case Primitive::Topology::LineList:
+            return vk::PrimitiveTopology::eLineList;
+        case Primitive::Topology::LineStrip:
+            return vk::PrimitiveTopology::eLineStrip;
         case Primitive::Topology::TriangleList:
             return vk::PrimitiveTopology::eTriangleList;
         case Primitive::Topology::TriangleStrip:

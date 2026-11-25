@@ -425,6 +425,9 @@ struct Primitive
 {
     enum class Topology
     {
+        PointList,
+        LineList,
+        LineStrip,
         TriangleList,
         TriangleStrip,
     };
@@ -682,6 +685,9 @@ public:
     /// @brief 默认帧缓冲（交换链）的像素格式。
     /// 创建渲染管线时，ColorTargetState::format 必须使用该格式。
     virtual Format get_swapchain_format() const = 0;
+
+    /// @brief 默认帧缓冲（交换链）的深度格式
+    virtual Format get_swapchain_depth_format() const = 0;
 
     /// @brief 默认帧缓冲（交换链）的当前尺寸。
     /// 不传附件 view 的 render pass 用它确定 viewport。
