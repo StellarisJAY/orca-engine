@@ -89,3 +89,16 @@ void RenderingServer::add_mesh_surface(
     surface.index_buffer = index_buffer;
     data->surfaces.emplace_back(surface);
 }
+
+void RenderingServer::free_mesh(RID mesh)
+{
+    auto mesh_data = storage.meshes.get_data(mesh);
+    if(!mesh_data) return;
+    auto rendering_device = RenderingDeviceRefactor::get_singleton();
+
+    for(const auto &surface : mesh_data->surfaces)
+    {
+        rendering_device->destroy_buffer(surface.index_buffer);
+        rendering_device->destroy_buffer(surface.vertex_buffer);
+    }
+}

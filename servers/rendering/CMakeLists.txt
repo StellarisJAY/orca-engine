@@ -9,6 +9,7 @@ add_library(orca-rendering STATIC
     rendering_server_texture.cpp
     rendering_server_material.cpp
     rendering_main_pass.cpp
+    rendering_shadow_pass.cpp
     rendering_storage.cpp
     rhi_validation.cpp
     shader_loader.cpp

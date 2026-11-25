@@ -1,6 +1,7 @@
 #include "rendering_server.h"
 #include "rendering_uniforms.h"
 #include "shader_loader.h"
+#include "rendering_pass.h"
 #include <algorithm>
 
 namespace
@@ -58,7 +59,7 @@ namespace
     }
 }
 
-void RenderingServer::init_pass_scene()
+void RenderingMainPass::init(const RenderPassContext &context)
 {
     auto rendering_device = RenderingDeviceRefactor::get_singleton();
     RenderPipelineDesc pipeline_desc;
@@ -70,28 +71,30 @@ void RenderingServer::init_pass_scene()
     pipeline_desc.vertex.buffers.emplace_back(vertex_layout);
 
     pipeline_desc.fragment.module = main_fragment_shader;
+    // 用交换链的像素格式
     pipeline_desc.fragment.targets.emplace_back(ColorTargetState{
         .format = rendering_device->get_swapchain_format(),
     });
     // 图元属性
-    pipeline_desc.primitive.cull_mode = Primitive::CullMode::None;
-    pipeline_desc.primitive.front_face = Primitive::FrontFace::CW;
+    pipeline_desc.primitive.cull_mode = Primitive::CullMode::Back;
+    pipeline_desc.primitive.front_face = Primitive::FrontFace::CCW;
     pipeline_desc.primitive.topology = Primitive::Topology::TriangleList;
     // 深度测试
     pipeline_desc.depth_stencil.depth_compare = CompareFunction::LessEqual;
     pipeline_desc.depth_stencil.depth_write_enabled = true;
-    pipeline_desc.depth_stencil.format = Format::Depth32Float;
+    // 用交换链的深度格式
+    pipeline_desc.depth_stencil.format = rendering_device->get_swapchain_depth_format();
     // 管线布局
     PipelineLayoutDesc pipeline_layout_desc;
     pipeline_layout_desc.label = "main";
-    pipeline_layout_desc.bind_group_layouts.emplace_back(frame_objects_layout);
-    pipeline_layout_desc.bind_group_layouts.emplace_back(material_layout);
-    pipeline_desc.pipeline_layout = rendering_device->create_pipeline_layout(pipeline_layout_desc);
-
+    pipeline_layout_desc.bind_group_layouts.emplace_back(context.frame_objects_layout);
+    pipeline_layout_desc.bind_group_layouts.emplace_back(context.material_layout);
+    main_pipeline_layout = rendering_device->create_pipeline_layout(pipeline_layout_desc);
+    pipeline_desc.pipeline_layout = main_pipeline_layout;
     main_pipeline = rendering_device->create_render_pipeline(pipeline_desc);
 }
 
-void RenderingServer::render_pass_scene(SceneData *scene_data, EnvironmentData *env_data, CameraData *camera_data)
+void RenderingMainPass::process(const RenderPassContext &context, const std::vector<DrawItem> &draw_items, void *custom_data)
 {
     auto rendering_device = RenderingDeviceRefactor::get_singleton();
 
@@ -108,7 +111,7 @@ void RenderingServer::render_pass_scene(SceneData *scene_data, EnvironmentData *
         .clear_depth = 1.0});
 
     // 开始render pass，绑定渲染管线
-    const auto render_pass = rendering_device->encoder_begin_render_pass(encoder, pass_desc);
+    const auto render_pass = rendering_device->encoder_begin_render_pass(context.encoder, pass_desc);
     rendering_device->pass_set_pipeline(render_pass, main_pipeline);
     rendering_device->pass_set_viewport(render_pass, 0, 0, viewport_w, viewport_h, 0, 1.0);
 
@@ -116,17 +119,22 @@ void RenderingServer::render_pass_scene(SceneData *scene_data, EnvironmentData *
     for (const auto &item : draw_items)
     {
         // TODO 材质绑定
-        // 写入物体最新变换
-        ObjectUniforms obj_uniforms;
-        item.transform.get_mat4(obj_uniforms.model);
-        rendering_device->queue_write_buffer(objects_uniform_buffer, 0, &obj_uniforms, sizeof(ObjectUniforms));
         // group(0) frame uniforms， 物体uniforms
         const uint32_t dynamic_offset = item_idx * sizeof(ObjectUniforms);
-        rendering_device->pass_set_bind_group(render_pass, 0, frame_obj_bind_group, &dynamic_offset, 1);
+        rendering_device->pass_set_bind_group(render_pass, 0, context.frame_obj_bind_group, &dynamic_offset, 1);
         rendering_device->pass_set_vertex_buffer(render_pass, 0, item.vertex_buffer, 0);
         rendering_device->pass_set_index_buffer(render_pass, item.index_buffer, 0, IndexFormat::Uint32);
         rendering_device->pass_draw_indexed(render_pass, item.index_count, 1, 0, 0);
     }
 
     rendering_device->pass_end(render_pass);
+}
+
+void RenderingMainPass::destroy()
+{
+    auto rendering_device = RenderingDeviceRefactor::get_singleton();
+    rendering_device->destroy_render_pipeline(main_pipeline);
+    rendering_device->destroy_pipeline_layout(main_pipeline_layout);
+    rendering_device->destroy_shader_module(main_vertex_shader);
+    rendering_device->destroy_shader_module(main_fragment_shader);
 }

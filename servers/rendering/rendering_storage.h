@@ -130,10 +130,12 @@ struct LightData
     bool cast_shadow = false;
     bool visible = true;
 
-    uint32_t depth_map = 0;
     uint32_t shadow_size = 1024;
     real_t shadow_range = 20.0f;
     real_t shadow_distance = 100.0f;
+
+    TextureHandle depth_map;
+    TextureViewHandle depth_map_view;
 };
 
 struct ShaderData

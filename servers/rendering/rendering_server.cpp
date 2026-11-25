@@ -9,12 +9,17 @@
 
 void RenderingServer::create_singleton()
 {
-    singleton = memnew(RenderingServer);
+    if (!singleton)
+        singleton = memnew(RenderingServer);
 }
 
 void RenderingServer::destroy_singletone()
 {
-    memdelete(singleton);
+    if (singleton)
+    {
+        singleton->destroy();
+        memdelete(singleton);
+    }
 }
 
 bool RenderingServer::init()
@@ -97,21 +102,55 @@ bool RenderingServer::init()
             .type = BindingType::UniformBuffer,
             .buffer = frame_uniform_buffer,
             .size = sizeof(FrameUniforms),
-        }
-    });
+        }});
     frame_obj_bg_desc.entries.emplace_back(BindGroupEntry{
         .binding = 1,
         .resource = BindingResource{
             .type = BindingType::UniformBuffer,
             .buffer = objects_uniform_buffer,
             .size = sizeof(ObjectUniforms) * MAX_OBJECTS,
-        }
-    });
+        }});
     frame_obj_bind_group = rendering_device->create_bind_group(frame_obj_bg_desc);
 
-    init_pass_scene();
+    RenderPassContext context;
+    context.frame_obj_bind_group = frame_obj_bind_group;
+    context.frame_uniform_buffer = frame_uniform_buffer;
+    context.frame_objects_layout = frame_objects_layout;
+    context.objects_uniform_buffer = objects_uniform_buffer;
+    context.material_layout = material_layout;
 
+    main_pass = memnew(RenderingMainPass);
+    main_pass->init(context);
     return true;
+}
+
+void RenderingServer::destroy()
+{
+    auto rendering_device = RenderingDeviceRefactor::get_singleton();
+    rendering_device->queue_wait_idle();
+
+    if (main_pass != nullptr)
+    {
+        main_pass->destroy();
+        memdelete(main_pass);
+    }
+
+    rendering_device->destroy_bind_group(frame_obj_bind_group);
+    rendering_device->destroy_bind_group_layout(frame_objects_layout);
+    rendering_device->destroy_bind_group_layout(material_layout);
+    rendering_device->destroy_buffer(objects_uniform_buffer);
+    rendering_device->destroy_buffer(frame_uniform_buffer);
+
+    // TODO storage中的资源销毁
+    for (const auto mesh : storage.meshes)
+    {
+        for (const auto &surface : mesh->surfaces)
+        {
+            rendering_device->destroy_buffer(surface.index_buffer);
+            rendering_device->destroy_buffer(surface.vertex_buffer);
+        }
+    }
+    storage.meshes.clear();
 }
 
 RID RenderingServer::create_scene()
@@ -173,7 +212,6 @@ RID RenderingServer::create_skybox()
 
 void RenderingServer::set_skybox_cubemap(RID skybox, uint32_t width, uint32_t height, uint8_t channels, const std::vector<uint8_t> &pixels, bool srgb, bool linear_filter)
 {
-    
 }
 
 RID RenderingServer::create_instance()
@@ -249,89 +287,6 @@ void RenderingServer::set_camera_orthogonal(RID camera, real_t left, real_t righ
     if (auto camera_data = storage.cameras.get_data(camera))
     {
         camera_data->projection = Projection::create_orthogonal(left, right, bottom, top, near, far);
-    }
-}
-
-RID RenderingServer::create_light()
-{
-    return storage.lights.create(LightData{
-        .transform = Transform3D(),
-        .final_color = Color(255, 255, 255),
-        .type = 0,
-        .intensity = 1.0f,
-    });
-}
-
-void RenderingServer::set_light_transform(RID light, const Transform3D &transform)
-{
-    if (auto light_data = storage.lights.get_data(light))
-    {
-        light_data->transform = transform;
-    }
-}
-
-void RenderingServer::set_light_color(RID light, const Color &color)
-{
-    LightData *light_data = storage.lights.get_data(light);
-    if (light_data)
-    {
-        // TODO 温度和颜色计算最终颜色
-        light_data->final_color = color;
-        light_data->base_color = color;
-    }
-}
-
-void RenderingServer::set_light_type(RID light, int type)
-{
-    if (auto light_data = storage.lights.get_data(light))
-    {
-        light_data->type = type;
-    }
-}
-
-void RenderingServer::set_light_scene(RID light, RID scene)
-{
-    SceneData *scene_data = storage.scenes.get_data(scene);
-    if (scene_data)
-    {
-        for (auto l : scene_data->lights)
-        {
-            if (l == light)
-                return;
-        }
-        scene_data->lights.push_back(light);
-    }
-}
-
-void RenderingServer::set_light_cast_shadow(RID light, bool shadow)
-{
-    
-}
-
-void RenderingServer::set_light_temperature(RID light, float temperature)
-{
-    LightData *light_data = storage.lights.get_data(light);
-    if (light_data)
-    {
-        // TODO 温度和颜色计算最终颜色
-        light_data->temperature = temperature;
-    }
-}
-
-void RenderingServer::set_light_direction(RID light, const Vector3 &direction)
-{
-    if (auto light_data = storage.lights.get_data(light))
-    {
-        light_data->direction = direction;
-        light_data->light_space_transform = Transform3D::look_at(direction * light_data->shadow_distance * -1, direction, Vector3::UP);
-    }
-}
-
-void RenderingServer::set_light_intensity(RID light, float intensity)
-{
-    if (auto light_data = storage.lights.get_data(light))
-    {
-        light_data->intensity = std::max(0.0f, intensity);
     }
 }
 
@@ -472,12 +427,12 @@ void RenderingServer::draw()
     rendering_device->queue_write_buffer(frame_uniform_buffer, 0, &frame_uniforms, sizeof(FrameUniforms));
 
     // 写入object uniform buffer
-    if(!draw_items.empty())
+    if (!draw_items.empty())
     {
         std::vector<ObjectUniforms> object_buffer;
         object_buffer.resize(draw_items.size());
         uint32_t index = 0;
-        for(const auto &item : draw_items)
+        for (const auto &item : draw_items)
         {
             real_t obj_transform[16];
             item.transform.get_mat4(obj_transform);
@@ -488,18 +443,23 @@ void RenderingServer::draw()
     }
 
     encoder = rendering_device->create_command_encoder();
-    render_pass_scene(scene_data, env_data, camera_data);
+
+    RenderPassContext context{
+        .encoder = encoder,
+        .frame_uniform_buffer = frame_uniform_buffer,
+        .objects_uniform_buffer = objects_uniform_buffer,
+        .frame_obj_bind_group = frame_obj_bind_group,
+        .frame_objects_layout = frame_objects_layout,
+        .material_layout = material_layout,
+    };
+
+    main_pass->process(context, draw_items, nullptr);
+
     const auto command_buffer = rendering_device->encoder_finish(encoder);
     rendering_device->queue_submit(command_buffer);
     rendering_device->present();
-}
 
-void RenderingServer::render_pass_depth_map(const LightData &light)
-{
-    
-}
-
-void RenderingServer::render_pass_skybox(SkyboxData *skybox_data, real_t *camera_transform, real_t *projection)
-{
-    
+    // 一帧渲染完成，销毁命令缓冲
+    rendering_device->queue_wait_idle();
+    rendering_device->destroy_command_buffer(command_buffer);
 }

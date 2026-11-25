@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rendering_storage.h"
+#include "rendering_pass.h"
 #include "math/transform_3d.h"
 #include "math/projection.h"
 #include "math/vector2.h"
@@ -52,29 +53,25 @@ private:
 
     /// @brief 指令录制
     CommandEncoderHandle encoder;
-
     /// @brief 帧全局uniform buffer
     GPUBufferHandle frame_uniform_buffer;
     /// @brief 物体共享uniform buffer
     GPUBufferHandle objects_uniform_buffer;
-    /// @brief 主渲染管线
-    RenderPipelineHandle main_pipeline;
-    ShaderHandle main_vertex_shader;
-    ShaderHandle main_fragment_shader;
-
     /// @brief 帧全局和物体uniform buffer绑定组
     BindGroupHandle frame_obj_bind_group;
-
     /// @brief 物体和帧全局信息的bindGroup布局
     BindGroupLayoutHandle frame_objects_layout;
     /// @brief 主渲染管线的材质bindGroup布局
     BindGroupLayoutHandle material_layout;
+
+    RenderingPass *main_pass = nullptr;
 public:
     static void create_singleton();
     static void destroy_singletone();
     static RenderingServer *get_singleton() { return singleton; }
 
     bool init();
+    void destroy();
 
     // 场景资源
 
@@ -127,6 +124,9 @@ public:
         const std::vector<Vector3> &tangents, 
         const std::vector<Vector3> &bitangents, 
         const std::vector<uint32_t> &indices);
+    /// @brief 释放网格体资源
+    /// @param mesh RID
+    void free_mesh(RID mesh);
 
     // 渲染实例资源
     
@@ -271,12 +271,6 @@ public:
     void free(RID rid);
     void sync(); // 同步指令
     void draw(); // 渲染指令
-
-private:
-    void init_pass_scene();
-    void render_pass_scene(SceneData *scene_data, EnvironmentData *env_data, CameraData *camera_data);
-    void render_pass_depth_map(const LightData &light);
-    void render_pass_skybox(SkyboxData *skybox_data, real_t *camera_transform, real_t *projection);
 };
 
 inline RenderingServer *RenderingServer::singleton;
