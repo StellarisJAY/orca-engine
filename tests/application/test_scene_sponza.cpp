@@ -43,8 +43,8 @@ public:
 Ref<CubeMapSkybox> load_skybox()
 {
     auto resource_loader = ResourceLoader::get_singleton();
-    Ref<Resource> front_res = resource_loader->load("res://tests/skybox/front.jpg");
-    Ref<Resource> back_res = resource_loader->load("res://tests/skybox/back.jpg");
+    Ref<Resource> front_res = resource_loader->load("res://tests/skybox/back.jpg");
+    Ref<Resource> back_res = resource_loader->load("res://tests/skybox/front.jpg");
     Ref<Resource> left_res = resource_loader->load("res://tests/skybox/left.jpg");
     Ref<Resource> right_res = resource_loader->load("res://tests/skybox/right.jpg");
     Ref<Resource> bottom_res = resource_loader->load("res://tests/skybox/bottom.jpg");
@@ -66,8 +66,8 @@ int main()
     Application app;
     ApplicationInitDesc desc;
     desc.fullscreen = false;
-    desc.screen_w = 800;
-    desc.screen_h = 600;
+    desc.screen_w = 2560;
+    desc.screen_h = 1440;
     if (!app.init(desc))
         return -1;
 
@@ -93,8 +93,8 @@ int main()
     Light3D *sun = memnew(Light3D);
     sun->set_color({255,255,255});
     sun->set_position({50, 50, 50});
-    sun->set_direction({-1, -1, -1});
-    sun->set_intensity(5.0);
+    sun->set_direction({-0.3, -1, -0.1});
+    sun->set_intensity(8.0);
     sun->set_shadow(true);
     world->add_child(sun);
 
