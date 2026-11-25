@@ -142,9 +142,6 @@ bool RenderingServer::init()
             // 指向具体物体。若这里填整块 buffer 大小，range 会超过
             // maxUniformBufferRange（VUID-VkDescriptorBufferInfo-range-00330）。
             .size = sizeof(ObjectUniforms),
-        }
-    });
-            .size = sizeof(ObjectUniforms) * MAX_OBJECTS,
         }});
     frame_obj_bind_group = rendering_device->create_bind_group(frame_obj_bg_desc);
     if (!frame_obj_bind_group.is_valid())
@@ -470,7 +467,6 @@ void RenderingServer::draw()
     // 写入object uniform buffer。每个物体按 object_uniform_stride 排列，后面的
     // 动态偏移与之一一对应（不能按 sizeof(ObjectUniforms) 紧密排列，偏移可能不满足
     // minUniformBufferOffsetAlignment）。
-    if (!draw_items.empty())
     // 写入object uniform buffer
     if (!draw_items.empty())
     {
@@ -483,16 +479,12 @@ void RenderingServer::draw()
         }
         std::vector<uint8_t> object_buffer(
             static_cast<size_t>(object_uniform_stride) * draw_items.size(), 0);
-        for (size_t i = 0; i < draw_items.size(); ++i)
-        std::vector<ObjectUniforms> object_buffer;
-        object_buffer.resize(draw_items.size());
         uint32_t index = 0;
         for (const auto &item : draw_items)
         {
             real_t obj_transform[16];
-            draw_items[i].transform.get_mat4(obj_transform);
-            auto *uniforms = reinterpret_cast<ObjectUniforms *>(
-                object_buffer.data() + static_cast<size_t>(object_uniform_stride) * i);
+            item.transform.get_mat4(obj_transform);
+            auto uniforms = reinterpret_cast<ObjectUniforms *>(object_buffer.data() + static_cast<size_t>(object_uniform_stride) * index);
             memcpy(uniforms->model, obj_transform, sizeof(obj_transform));
         }
         rendering_device->queue_write_buffer(objects_uniform_buffer, 0, object_buffer.data(),

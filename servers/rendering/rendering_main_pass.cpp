@@ -119,13 +119,8 @@ void RenderingMainPass::process(const RenderPassContext &context, const std::vec
     for (const auto &item : draw_items)
     {
         // TODO 材质绑定
-        // 物体 uniform 已在 draw() 里按 object_uniform_stride 一次性写入，
-        // 这里只按 stride 选择动态偏移（不能再按 sizeof(ObjectUniforms) 紧密排列，
-        // 也不能在这里逐物体 queue_write_buffer 覆盖 offset 0）。
-        const uint32_t dynamic_offset = item_idx * object_uniform_stride;
-        rendering_device->pass_set_bind_group(render_pass, 0, frame_obj_bind_group, &dynamic_offset, 1);
-        // group(0) frame uniforms， 物体uniforms
-        const uint32_t dynamic_offset = item_idx * sizeof(ObjectUniforms);
+        // 按 stride 选择动态偏移
+        const uint32_t dynamic_offset = item_idx * context.object_uniform_stride;
         rendering_device->pass_set_bind_group(render_pass, 0, context.frame_obj_bind_group, &dynamic_offset, 1);
         rendering_device->pass_set_vertex_buffer(render_pass, 0, item.vertex_buffer, 0);
         rendering_device->pass_set_index_buffer(render_pass, item.index_buffer, 0, IndexFormat::Uint32);

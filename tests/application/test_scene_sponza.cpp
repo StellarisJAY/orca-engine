@@ -71,7 +71,7 @@ int main()
     if (!app.init(desc))
         return -1;
 
-    Ref<Resource> sponza_res = ResourceLoader::get_singleton()->load("res://tests/sponza/Sponza.gltf");
+    Ref<Resource> sponza_res = ResourceLoader::get_singleton()->load("res://sponza/Sponza.gltf");
     if(sponza_res.is_null())
     {
         app.shutdown();

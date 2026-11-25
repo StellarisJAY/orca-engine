@@ -19,6 +19,8 @@ struct RenderPassContext
     BindGroupLayoutHandle frame_objects_layout;
     /// @brief 主渲染管线的材质bindGroup布局
     BindGroupLayoutHandle material_layout;
+    /// @brief 物体uniform的数据跨度
+    uint32_t object_uniform_stride = 0;
 };
 
 class RenderingPass
