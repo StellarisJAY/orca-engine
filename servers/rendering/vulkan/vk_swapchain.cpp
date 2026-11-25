@@ -88,6 +88,16 @@ void VkRenderingDevice::get_swapchain_size(uint32_t &width, uint32_t &height) co
     height = window_info.height;
 }
 
+uint64_t VkRenderingDevice::get_max_uniform_buffer_range() const
+{
+    return static_cast<uint64_t>(physical_device.getProperties().limits.maxUniformBufferRange);
+}
+
+uint64_t VkRenderingDevice::get_min_uniform_buffer_offset_alignment() const
+{
+    return static_cast<uint64_t>(physical_device.getProperties().limits.minUniformBufferOffsetAlignment);
+}
+
 SwapChainSupportDetails VkRenderingDevice::query_swapchain_support(const vk::raii::PhysicalDevice &physicalDevice) const
 {
     SwapChainSupportDetails details;

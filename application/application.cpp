@@ -48,9 +48,14 @@ bool Application::init(const ApplicationInitDesc &desc)
     if(!device->init_swapchain()) return false;
     std::printf("Rendering Device initialized.\n");
 
-    // 初始化渲染服务器
+    // 初始化渲染服务器。init() 会创建帧/物体 uniform buffer、绑定组与管线，
+    // 任何一步失败都必须中止启动，否则后续 draw 只会打印无效句柄并画不出任何东西。
     RenderingServer::create_singleton();
-    RenderingServer::get_singleton()->init();
+    if (!RenderingServer::get_singleton()->init())
+    {
+        std::fprintf(stderr, "[ERROR] rendering server initialization failed\n");
+        return false;
+    }
     std::printf("Rendering Server initialized.\n");
 
     // 创建场景树

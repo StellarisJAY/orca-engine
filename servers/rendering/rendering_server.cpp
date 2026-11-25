@@ -33,15 +33,45 @@ bool RenderingServer::init()
     frame_uniforms_desc.size = sizeof(FrameUniforms);
     frame_uniforms_desc.usage = GPUBufferUsage::COPY_DST | GPUBufferUsage::UNIFORM;
     frame_uniform_buffer = rendering_device->create_buffer(frame_uniforms_desc);
+    if (!frame_uniform_buffer.is_valid())
+    {
+        std::printf("[ERROR] RenderingServer::init: failed to create frame_uniform_buffer\n");
+        return false;
+    }
 
-    // 创建物体uniform buffer，dynamic offsets
+    // 创建物体uniform buffer，dynamic offsets。
+    //
+    // 注意两处硬限制（之前直接用 1024 * sizeof(ObjectUniforms) = 128 KiB 导致创建失败）：
+    //   1. 带 UNIFORM 用途的 VkBuffer 大小不能超过 maxUniformBufferRange
+    //      （VUID-VkBufferCreateInfo-size-*；NVIDIA 上是 64 KiB，部分设备只有 16 KiB）；
+    //   2. 动态偏移必须按 minUniformBufferOffsetAlignment 对齐。
+    // 因此跨度按对齐向上取整，容量按设备上限计算，而不是硬编码物体数量。
+    const uint64_t uniform_alignment =
+        std::max<uint64_t>(1, rendering_device->get_min_uniform_buffer_offset_alignment());
+    const uint64_t uniform_range = rendering_device->get_max_uniform_buffer_range();
+    object_uniform_stride = static_cast<uint32_t>(
+        (sizeof(ObjectUniforms) + uniform_alignment - 1) / uniform_alignment * uniform_alignment);
+    max_object_count = static_cast<uint32_t>(
+        std::min<uint64_t>(1024, uniform_range / object_uniform_stride));
+    if (max_object_count == 0)
+    {
+        std::printf("[ERROR] RenderingServer::init: ObjectUniforms(%zu B, stride %u B) does not fit "
+                    "maxUniformBufferRange(%llu B)\n",
+                    sizeof(ObjectUniforms), object_uniform_stride,
+                    static_cast<unsigned long long>(uniform_range));
+        return false;
+    }
+
     GPUBufferDesc objects_uniforms_desc;
     objects_uniforms_desc.label = "objects_uniforms";
-    // TODO 最大物体数量
-    constexpr uint32_t MAX_OBJECTS = 1024;
-    objects_uniforms_desc.size = sizeof(ObjectUniforms) * MAX_OBJECTS;
+    objects_uniforms_desc.size = static_cast<uint64_t>(object_uniform_stride) * max_object_count;
     objects_uniforms_desc.usage = GPUBufferUsage::COPY_DST | GPUBufferUsage::UNIFORM;
     objects_uniform_buffer = rendering_device->create_buffer(objects_uniforms_desc);
+    if (!objects_uniform_buffer.is_valid())
+    {
+        std::printf("[ERROR] RenderingServer::init: failed to create objects_uniform_buffer\n");
+        return false;
+    }
 
     // bindGroup layout： 帧全局uniform和物体uniforms
     BindGroupLayoutDesc group0_desc;
@@ -108,9 +138,20 @@ bool RenderingServer::init()
         .resource = BindingResource{
             .type = BindingType::UniformBuffer,
             .buffer = objects_uniform_buffer,
+            // 动态 UBO 的 descriptor range 是"单个物体"的字节数，动态偏移负责
+            // 指向具体物体。若这里填整块 buffer 大小，range 会超过
+            // maxUniformBufferRange（VUID-VkDescriptorBufferInfo-range-00330）。
+            .size = sizeof(ObjectUniforms),
+        }
+    });
             .size = sizeof(ObjectUniforms) * MAX_OBJECTS,
         }});
     frame_obj_bind_group = rendering_device->create_bind_group(frame_obj_bg_desc);
+    if (!frame_obj_bind_group.is_valid())
+    {
+        std::printf("[ERROR] RenderingServer::init: failed to create frame_obj_bind_group\n");
+        return false;
+    }
 
     RenderPassContext context;
     context.frame_obj_bind_group = frame_obj_bind_group;
@@ -426,20 +467,36 @@ void RenderingServer::draw()
     // 写入frame uniform buffer
     rendering_device->queue_write_buffer(frame_uniform_buffer, 0, &frame_uniforms, sizeof(FrameUniforms));
 
+    // 写入object uniform buffer。每个物体按 object_uniform_stride 排列，后面的
+    // 动态偏移与之一一对应（不能按 sizeof(ObjectUniforms) 紧密排列，偏移可能不满足
+    // minUniformBufferOffsetAlignment）。
+    if (!draw_items.empty())
     // 写入object uniform buffer
     if (!draw_items.empty())
     {
+        if (draw_items.size() > max_object_count)
+        {
+            std::printf("[WARN] RenderingServer::draw: %zu draw items exceed object uniform capacity %u, "
+                        "extra items are skipped\n",
+                        draw_items.size(), max_object_count);
+            draw_items.resize(max_object_count);
+        }
+        std::vector<uint8_t> object_buffer(
+            static_cast<size_t>(object_uniform_stride) * draw_items.size(), 0);
+        for (size_t i = 0; i < draw_items.size(); ++i)
         std::vector<ObjectUniforms> object_buffer;
         object_buffer.resize(draw_items.size());
         uint32_t index = 0;
         for (const auto &item : draw_items)
         {
             real_t obj_transform[16];
-            item.transform.get_mat4(obj_transform);
-            memcpy(object_buffer[index].model, obj_transform, sizeof(obj_transform));
-            index++;
+            draw_items[i].transform.get_mat4(obj_transform);
+            auto *uniforms = reinterpret_cast<ObjectUniforms *>(
+                object_buffer.data() + static_cast<size_t>(object_uniform_stride) * i);
+            memcpy(uniforms->model, obj_transform, sizeof(obj_transform));
         }
-        rendering_device->queue_write_buffer(objects_uniform_buffer, 0, object_buffer.data(), sizeof(ObjectUniforms) * draw_items.size());
+        rendering_device->queue_write_buffer(objects_uniform_buffer, 0, object_buffer.data(),
+                                             object_buffer.size());
     }
 
     encoder = rendering_device->create_command_encoder();
