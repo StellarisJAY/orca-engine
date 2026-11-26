@@ -540,6 +540,13 @@ struct FragmentStage
     std::vector<ColorTargetState> targets;
 };
 
+/// @brief 几何着色阶段
+struct GeometryStage
+{
+    ShaderHandle module;
+    std::string entry_point = "main";
+};
+
 struct DepthStencilState
 {
     /// @brief 必须与深度附件格式一致；Undefined 表示关闭深度读写
@@ -555,6 +562,7 @@ struct RenderPipelineDesc
     PipelineLayoutHandle pipeline_layout;
     VertexStage vertex;
     FragmentStage fragment;
+    GeometryStage gemoetry;
     Primitive primitive;
     DepthStencilState depth_stencil;
     /// @brief 多重采样数；本期必须为 1
@@ -615,6 +623,7 @@ enum class ShaderType
 {
     VERTEX,
     FRAGMENT,
+    GEOMETRY,
 };
 
 /// @brief ShaderModuleDesc::source 的解释方式。

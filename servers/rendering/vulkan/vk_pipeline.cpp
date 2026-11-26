@@ -200,6 +200,8 @@ RenderPipelineHandle VkRenderingDevice::create_render_pipeline(const RenderPipel
         // ================================================================
         const auto &vertex_stage = desc.vertex;
         const auto &fragment_stage = desc.fragment;
+        const auto &geometry_stage = desc.gemoetry;
+
         if (!vertex_stage.module.is_valid() || vertex_stage.module.data == nullptr)
         {
             std::printf("[ERROR] Vulkan create graphics pipeline failed, missing vertex shader\n");
@@ -243,9 +245,24 @@ RenderPipelineHandle VkRenderingDevice::create_render_pipeline(const RenderPipel
         vk_frag_stage.setStage(vk::ShaderStageFlagBits::eFragment);
         vk_frag_stage.setModule(fragment_module_data->module);
         vk_frag_stage.setPName(fragment_entry_point.c_str());
-        std::array<vk::PipelineShaderStageCreateInfo, 2> stages = {vk_vert_stage, vk_frag_stage};
-        create_info.setStages(stages);
+        std::vector<vk::PipelineShaderStageCreateInfo> stages = {vk_vert_stage, vk_frag_stage};
 
+        // 可选的几何着色器
+        const auto geometry_module_data = static_cast<VkShaderModuleData*>(geometry_stage.module.data);
+        if(geometry_stage.module.is_valid() && geometry_module_data != nullptr)
+        {
+            if (geometry_module_data->type != ShaderType::GEOMETRY)
+            {
+                std::printf("[ERROR] Vulkan create graphics pipeline failed, geometry stage module is not a fragment shader\n");
+                return result;
+            }
+            vk::PipelineShaderStageCreateInfo vk_geo_stage;
+            vk_geo_stage.setModule(geometry_module_data->module);
+            vk_geo_stage.setStage(vk::ShaderStageFlagBits::eGeometry);
+            stages.emplace_back(vk_geo_stage);
+        }
+        create_info.setStages(stages);
+        
         // ================================================================
         // 动态状态
         // ================================================================

@@ -430,8 +430,6 @@ RenderPassHandle VkRenderingDevice::encoder_begin_render_pass(CommandEncoderHand
             command_encoder_data->command_buffer.beginRenderPass(begin_info, vk::SubpassContents::eInline);
             // 默认动态状态：覆盖整个 render area 的 viewport + scissor（G-04）。
             record_default_viewport_and_scissor(command_encoder_data->command_buffer, render_area);
-            std::printf("[INFO] Vulkan began default framebuffer pass(%s): image %u, area %ux%u\n", label,
-                        current_swapchain_image, render_area.extent.width, render_area.extent.height);
         }
         else
         {

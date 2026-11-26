@@ -4,25 +4,29 @@
 #include <string>
 #include <vector>
 
-/// @brief 一份完整的 shader 源码（顶点 + 片元）
+/// @brief 一份完整的 shader 源码（顶点 + 片元 + 几何）
 struct ShaderSource
 {
     std::string vertex;
     std::string fragment;
+    std::string geometry;
 
     bool is_valid() const { return !vertex.empty() && !fragment.empty(); }
+    bool has_geometry() const { return !geometry.empty(); }
 };
 
 /// @brief 一份已编译的 SPIR-V shader 二进制（顶点 + 片元）。
 ///
 /// 由 CMake 的 `orca-shader-spirv` 目标用 glslc 从 `shaders-vulkan/` 编译而来，
-/// 输出到 `<build>/resources/shaders-vulkan/<name>/{vert,frag}.spv`。
+/// 输出到 `<build>/resources/shaders-vulkan/<name>/{vert,frag,geo}.spv`。
 struct ShaderBinarySource
 {
     std::vector<uint8_t> vertex;
     std::vector<uint8_t> fragment;
+    std::vector<uint8_t> geometry;
 
     bool is_valid() const { return !vertex.empty() && !fragment.empty(); }
+    bool has_geometry() const { return !geometry.empty(); }
 };
 
 /// @brief 从 glsl 文件加载 shader 源码。
@@ -34,10 +38,10 @@ struct ShaderBinarySource
 class ShaderLoader
 {
 public:
-    /// @brief 加载 shaders/<name>/{vert,frag}.glsl，失败时返回的 ShaderSource 不合法
+    /// @brief 加载 shaders/<name>/{vert,frag,geo}.glsl，失败时返回的 ShaderSource 不合法
     static ShaderSource load(const std::string &shader_name);
 
-    /// @brief 加载 Vulkan 专用的已编译 shader：res://shaders-vulkan/<name>/{vert,frag}.spv。
+    /// @brief 加载 Vulkan 专用的已编译 shader：res://shaders-vulkan/<name>/{vert,frag,geo}.spv。
     ///
     /// 该目录由构建生成（glslc），没有源码树回退；调用方必须从构建目录运行。
     static ShaderBinarySource load_spirv(const std::string &shader_name);

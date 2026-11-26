@@ -78,6 +78,7 @@ ShaderSource ShaderLoader::load(const std::string &shader_name)
     ShaderSource source;
     source.vertex = resolve_and_read(shader_name, "vert.glsl");
     source.fragment = resolve_and_read(shader_name, "frag.glsl");
+    source.geometry = resolve_and_read(shader_name, "geo.glsl");
 
     if (!source.is_valid())
     {
@@ -103,6 +104,7 @@ ShaderBinarySource ShaderLoader::load_spirv(const std::string &shader_name)
     ShaderBinarySource source;
     source.vertex = resolve_and_read_binary(shader_name, "vert.spv");
     source.fragment = resolve_and_read_binary(shader_name, "frag.spv");
+    source.geometry = resolve_and_read_binary(shader_name, "frag.spv");
 
     if (!source.is_valid())
     {
