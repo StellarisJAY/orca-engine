@@ -21,6 +21,17 @@ struct RenderPassContext
     BindGroupLayoutHandle material_layout;
     /// @brief 物体uniform的数据跨度
     uint32_t object_uniform_stride = 0;
+
+    // G-Buffer
+    
+    /// @brief g-buffer position
+    TextureViewHandle g_position;
+    /// @brief g-buffer normal
+    TextureViewHandle g_normal;
+    /// @brief g-buffer metallic and roughness
+    TextureViewHandle g_metallic_roughness;
+    /// @brief g-buffer albedo
+    TextureViewHandle g_albedo;
 };
 
 class RenderingPass
@@ -52,6 +63,19 @@ public:
     void destroy() override;
 private:
     RenderPipelineHandle depthmap_pipeline;
+    ShaderHandle vertex_shader;
+    ShaderHandle fragment_shader;
+};
+
+class RenderingGBufferPass: public RenderingPass
+{
+public:
+    void init(const RenderPassContext &context) override;
+    void process(const RenderPassContext &context, const std::vector<DrawItem> &draw_items, void *custom_data) override;
+    void destroy() override;
+private:
+    PipelineLayoutHandle pipeline_layout;
+    RenderPipelineHandle pipeline;
     ShaderHandle vertex_shader;
     ShaderHandle fragment_shader;
 };

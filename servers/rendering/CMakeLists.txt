@@ -9,6 +9,7 @@ add_library(orca-rendering STATIC
     rendering_server_texture.cpp
     rendering_server_material.cpp
     rendering_main_pass.cpp
+    rendering_gbuffer_pass.cpp
     rendering_shadow_pass.cpp
     rendering_storage.cpp
     rhi_validation.cpp
@@ -68,6 +69,8 @@ if(ORCA_RENDERER_VULKAN)
             set(shader_stage vert)
         elseif(shader_file_name MATCHES "^frag\\.")
             set(shader_stage frag)
+        elseif(shader_file_name MATCHES "^geo\\.")
+            set(shader_stage geom)
         else()
             message(FATAL_ERROR "无法从文件名推断 shader stage: ${shader_source}")
         endif()

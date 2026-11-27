@@ -25,7 +25,31 @@ layout(location = 0) out VertexOut {
     vec3 world_position;
     vec3 normal;
     vec2 uv;
+    mat3 TBN;
 } vertex_out;
+
+mat3 calculate_TBN(mat4 model, vec3 N, vec3 tangent, vec3 bitangent)
+{
+    mat3 model3 = mat3(model);
+
+    // 切线用模型矩阵变换后对法线做正交化，避免 UV 退化时产生 NaN。
+    vec3 T = model3 * tangent;
+    T -= N * dot(N, T);
+    if (dot(T, T) < 1e-8)
+    {
+        vec3 up = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        T = cross(up, N);
+    }
+    T = normalize(T);
+
+    // 使用副切线的方向决定手性，但副切线本身由 N × T 重建，保证正交。
+    vec3 B = model3 * bitangent;
+    vec3 NcrossT = cross(N, T);
+    float handedness = dot(NcrossT, B) < 0.0 ? -1.0 : 1.0;
+    B = NcrossT * handedness;
+
+    return mat3(T, B, N);
+}
 
 void main()
 {
@@ -35,4 +59,5 @@ void main()
     vertex_out.world_position = world_position.xyz;
     vertex_out.normal = vec3(object_uniforms.model * vec4(a_normal, 0));
     vertex_out.uv = a_uv;
+    vertex_out.TBN = calculate_TBN(object_uniforms.model, vertex_out.normal, a_tangent, a_bitangent);
 }

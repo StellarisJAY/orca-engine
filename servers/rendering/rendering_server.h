@@ -77,7 +77,23 @@ private:
     /// @brief 主渲染管线的材质bindGroup布局
     BindGroupLayoutHandle material_layout;
 
+    // G-Buffer
+    
+    /// @brief g-buffer position
+    TextureHandle g_position;
+    TextureViewHandle g_position_view;
+    /// @brief g-buffer normal
+    TextureHandle g_normal;
+    TextureViewHandle g_normal_view;
+    /// @brief g-buffer metallic and roughness
+    TextureHandle g_metallic_roughness;
+    TextureViewHandle g_metallic_roughness_view;
+    /// @brief g-buffer albedo
+    TextureHandle g_albedo;
+    TextureViewHandle g_albedo_view;
+
     RenderingPass *main_pass = nullptr;
+    RenderingPass *gbuffer_pass = nullptr;
 public:
     static void create_singleton();
     static void destroy_singletone();

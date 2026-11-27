@@ -150,15 +150,63 @@ bool RenderingServer::init()
         return false;
     }
 
+    uint32_t scr_width, scr_height;
+    rendering_device->get_swapchain_size(scr_width, scr_height);
+
+    // g-buffer Position
+    g_position = rendering_device->create_texture(TextureDescRefactor{
+        .dim = TextureDimension::Texture2D,
+        .format = Format::RGBA8Unorm,
+        .width = scr_width,
+        .height = scr_height,
+        .usage = TextureUsage::RENDER_ATTACHMENT | TextureUsage::TEXTURE_BINDING,
+    });
+    g_position_view = rendering_device->create_texture_view(g_position, TextureViewDesc{
+        .dim = TextureViewDimension::Texture2D,
+        .aspect = TextureAspect::Color,
+    });
+
+    // g-buffer Normal
+    g_normal = rendering_device->create_texture(TextureDescRefactor{
+        .dim = TextureDimension::Texture2D,
+        .format = Format::RGBA8Unorm,
+        .width = scr_width,
+        .height = scr_height,
+        .usage = TextureUsage::RENDER_ATTACHMENT | TextureUsage::TEXTURE_BINDING,
+    });
+    g_normal_view = rendering_device->create_texture_view(g_normal, TextureViewDesc{
+        .dim = TextureViewDimension::Texture2D,
+        .aspect = TextureAspect::Color,
+    });
+
+    // g-buffer Metallic Roughness
+    g_metallic_roughness = rendering_device->create_texture(TextureDescRefactor{
+        .dim = TextureDimension::Texture2D,
+        .format = Format::RG8Unorm,
+        .width = scr_width,
+        .height = scr_height,
+        .usage = TextureUsage::RENDER_ATTACHMENT | TextureUsage::TEXTURE_BINDING,
+    });
+    g_metallic_roughness_view = rendering_device->create_texture_view(g_metallic_roughness, TextureViewDesc{
+        .dim = TextureViewDimension::Texture2D,
+        .aspect = TextureAspect::Color,
+    });
+
     RenderPassContext context;
     context.frame_obj_bind_group = frame_obj_bind_group;
     context.frame_uniform_buffer = frame_uniform_buffer;
     context.frame_objects_layout = frame_objects_layout;
     context.objects_uniform_buffer = objects_uniform_buffer;
     context.material_layout = material_layout;
+    context.g_position = g_position_view;
+    context.g_normal = g_normal_view;
+    context.g_metallic_roughness = g_metallic_roughness_view;
 
     main_pass = memnew(RenderingMainPass);
     main_pass->init(context);
+
+    gbuffer_pass = memnew(RenderingGBufferPass);
+    gbuffer_pass->init(context);
     return true;
 }
 
@@ -172,6 +220,21 @@ void RenderingServer::destroy()
         main_pass->destroy();
         memdelete(main_pass);
     }
+
+    if (gbuffer_pass != nullptr)
+    {
+        gbuffer_pass->destroy();
+        memdelete(gbuffer_pass);
+    }
+
+    rendering_device->destroy_texture_view(g_position_view);
+    rendering_device->destroy_texture_view(g_normal_view);
+    rendering_device->destroy_texture_view(g_metallic_roughness_view);
+    rendering_device->destroy_texture_view(g_albedo_view);
+    rendering_device->destroy_texture(g_position);
+    rendering_device->destroy_texture(g_normal);
+    rendering_device->destroy_texture(g_metallic_roughness);
+    rendering_device->destroy_texture(g_albedo);
 
     rendering_device->destroy_bind_group(frame_obj_bind_group);
     rendering_device->destroy_bind_group_layout(frame_objects_layout);
@@ -500,8 +563,12 @@ void RenderingServer::draw()
         .frame_obj_bind_group = frame_obj_bind_group,
         .frame_objects_layout = frame_objects_layout,
         .material_layout = material_layout,
+        .g_position = g_position_view,
+        .g_normal = g_normal_view,
+        .g_metallic_roughness = g_metallic_roughness_view,
+        .g_albedo = g_albedo_view,
     };
-
+    gbuffer_pass->process(context, draw_items, nullptr);
     main_pass->process(context, draw_items, nullptr);
 
     const auto command_buffer = rendering_device->encoder_finish(encoder);
