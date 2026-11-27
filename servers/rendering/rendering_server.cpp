@@ -156,28 +156,28 @@ bool RenderingServer::init()
     // g-buffer Position
     g_position = rendering_device->create_texture(TextureDescRefactor{
         .dim = TextureDimension::Texture2D,
-        .format = Format::RGBA8Unorm,
+        .format = Format::RGBA16Float,
         .width = scr_width,
         .height = scr_height,
         .usage = TextureUsage::RENDER_ATTACHMENT | TextureUsage::TEXTURE_BINDING,
     });
     g_position_view = rendering_device->create_texture_view(g_position, TextureViewDesc{
-        .dim = TextureViewDimension::Texture2D,
-        .aspect = TextureAspect::Color,
-    });
+                                                                            .dim = TextureViewDimension::Texture2D,
+                                                                            .aspect = TextureAspect::Color,
+                                                                        });
 
     // g-buffer Normal
     g_normal = rendering_device->create_texture(TextureDescRefactor{
         .dim = TextureDimension::Texture2D,
-        .format = Format::RGBA8Unorm,
+        .format = Format::RGBA16Float,
         .width = scr_width,
         .height = scr_height,
         .usage = TextureUsage::RENDER_ATTACHMENT | TextureUsage::TEXTURE_BINDING,
     });
     g_normal_view = rendering_device->create_texture_view(g_normal, TextureViewDesc{
-        .dim = TextureViewDimension::Texture2D,
-        .aspect = TextureAspect::Color,
-    });
+                                                                        .dim = TextureViewDimension::Texture2D,
+                                                                        .aspect = TextureAspect::Color,
+                                                                    });
 
     // g-buffer Metallic Roughness
     g_metallic_roughness = rendering_device->create_texture(TextureDescRefactor{
@@ -188,9 +188,21 @@ bool RenderingServer::init()
         .usage = TextureUsage::RENDER_ATTACHMENT | TextureUsage::TEXTURE_BINDING,
     });
     g_metallic_roughness_view = rendering_device->create_texture_view(g_metallic_roughness, TextureViewDesc{
-        .dim = TextureViewDimension::Texture2D,
-        .aspect = TextureAspect::Color,
+                                                                                                .dim = TextureViewDimension::Texture2D,
+                                                                                                .aspect = TextureAspect::Color,
+                                                                                            });
+
+    g_albedo = rendering_device->create_texture(TextureDescRefactor{
+        .dim = TextureDimension::Texture2D,
+        .format = Format::RGBA8Unorm,
+        .width = scr_width,
+        .height = scr_height,
+        .usage = TextureUsage::RENDER_ATTACHMENT | TextureUsage::TEXTURE_BINDING,
     });
+    g_albedo_view = rendering_device->create_texture_view(g_albedo, TextureViewDesc{
+                                                                        .dim = TextureViewDimension::Texture2D,
+                                                                        .aspect = TextureAspect::Color,
+                                                                    });
 
     RenderPassContext context;
     context.frame_obj_bind_group = frame_obj_bind_group;

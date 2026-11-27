@@ -78,4 +78,6 @@ private:
     RenderPipelineHandle pipeline;
     ShaderHandle vertex_shader;
     ShaderHandle fragment_shader;
+    TextureHandle depth_texture;
+    TextureViewHandle depth_view;
 };

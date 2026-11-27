@@ -164,6 +164,7 @@ enum class Format
     RGBA8Unorm,
     RGBA8UnormSrgb,
     R16Float,
+    RG16Float,
     RGBA16Float,
     Depth32Float,
     /// @brief Vulkan 交换链在部分平台只提供 BGRA 通道顺序。

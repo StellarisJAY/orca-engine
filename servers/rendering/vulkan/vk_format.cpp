@@ -13,6 +13,7 @@ bool vk_format_info(Format format, vk::Format &out)
     case Format::BGRA8Unorm: out = vk::Format::eB8G8R8A8Unorm; return true;
     case Format::BGRA8UnormSrgb: out = vk::Format::eB8G8R8A8Srgb; return true;
     case Format::R16Float: out = vk::Format::eR16Sfloat; return true;
+    case Format::RG16Float: out = vk::Format::eR16G16Sfloat; return true;
     case Format::RGBA16Float: out = vk::Format::eR16G16B16A16Sfloat; return true;
     case Format::Depth32Float: out = vk::Format::eD32Sfloat; return true;
     case Format::Undefined:
